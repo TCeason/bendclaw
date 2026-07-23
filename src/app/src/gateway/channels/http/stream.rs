@@ -50,7 +50,9 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
             for block in content {
                 match block {
                     AssistantBlock::Text { .. } => {}
-                    AssistantBlock::ToolCall { id, name, input } => {
+                    AssistantBlock::ToolCall {
+                        id, name, input, ..
+                    } => {
                         events.push(json!({
                             "type": "tool_call",
                             "data": { "id": id, "name": name, "input": input }

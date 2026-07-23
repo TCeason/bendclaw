@@ -1686,6 +1686,7 @@ async fn test_compaction_after_tool_use_waits_for_tool_results() {
                         id,
                         name: "read".into(),
                         arguments,
+                        metadata: None,
                     }],
                     stop_reason: StopReason::ToolUse,
                     model: "mock".into(),
@@ -2144,9 +2145,20 @@ async fn test_model_switch_compacts_before_clamp_can_fall_to_one() {
     let mut config = make_config(MockProvider::text("unused"));
     config.provider = provider.clone();
     config.model = "new-model".into();
-    let mut model_config = ModelConfig::local("", "new-model");
-    model_config.context_window = 10_000;
-    model_config.max_tokens = 500;
+    let model_config = ModelConfig::resolve(evotengine::provider::ResolveModelRequest {
+        protocol: evotengine::provider::ApiProtocol::OpenAiCompletions,
+        provider: "local".into(),
+        model_id: "new-model".into(),
+        base_url: String::new(),
+        headers: Default::default(),
+        compat: Some(evotengine::provider::OpenAiCompat::default()),
+        route_capabilities: Default::default(),
+        overrides: evotengine::provider::ModelOverrides {
+            context_window: Some(10_000),
+            max_output_tokens: Some(500),
+            ..Default::default()
+        },
+    });
     config.model_config = Some(model_config);
     config.context_config = Some(ContextConfig {
         max_context_tokens: 10_000,
@@ -2420,6 +2432,7 @@ async fn test_same_model_preserves_replayable_tool_use_thinking() {
                         id: "tc-old".into(),
                         name: "bash".into(),
                         arguments: serde_json::json!({"command": "pwd"}),
+                        metadata: None,
                     },
                 ],
                 stop_reason: StopReason::ToolUse,
@@ -2452,6 +2465,7 @@ async fn test_same_model_preserves_replayable_tool_use_thinking() {
                         id: "tc-new".into(),
                         name: "bash".into(),
                         arguments: serde_json::json!({"command": "date"}),
+                        metadata: None,
                     },
                 ],
                 stop_reason: StopReason::ToolUse,

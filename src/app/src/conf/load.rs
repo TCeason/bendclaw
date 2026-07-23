@@ -482,17 +482,10 @@ fn parse_compat_caps(value: &str) -> Result<CompatCaps> {
         if part.is_empty() {
             continue;
         }
-        caps |= match part {
-            "store" => CompatCaps::STORE,
-            "developer_role" => CompatCaps::DEVELOPER_ROLE,
-            "reasoning_effort" => CompatCaps::REASONING_EFFORT,
-            "usage_in_streaming" => CompatCaps::USAGE_IN_STREAMING,
-            "tool_result_name" => CompatCaps::TOOL_RESULT_NAME,
-            "assistant_after_tool_result" => CompatCaps::ASSISTANT_AFTER_TOOL_RESULT,
-            "reasoning_content_required" => CompatCaps::REASONING_CONTENT_REQUIRED,
-            "prompt_cache_key" => CompatCaps::PROMPT_CACHE_KEY,
-            other => return Err(EvotError::Conf(format!("unknown compat cap: {other}"))),
+        let Some(cap) = CompatCaps::from_name(part) else {
+            return Err(EvotError::Conf(format!("unknown compat cap: {part}")));
         };
+        caps |= cap;
     }
     Ok(caps)
 }

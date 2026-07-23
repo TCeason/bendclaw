@@ -4,10 +4,11 @@
 //! selectable. Transport metadata independently determines the wire format and
 //! whether that endpoint can carry an effort value.
 
-use super::model::ApiProtocol;
-use super::model::CompatCaps;
-use super::model::ModelConfig;
-use super::model::ThinkingFormat;
+use super::model::ThinkingLevelPolicy;
+use super::ApiProtocol;
+use super::CompatCaps;
+use super::ModelConfig;
+use super::ThinkingFormat;
 use crate::ThinkingLevel;
 
 /// Default token budgets for Anthropic budget-based thinking (non-adaptive).
@@ -36,14 +37,18 @@ impl ModelConfig {
     /// Whether the configured protocol and transport can carry a selectable
     /// reasoning effort for this model.
     pub fn honors_reasoning_effort(&self) -> bool {
-        match self.api {
+        match self.protocol() {
             ApiProtocol::AnthropicMessages
             | ApiProtocol::OpenAiResponses
             | ApiProtocol::BedrockConverseStream => true,
-            ApiProtocol::OpenAiCompletions => self.compat.as_ref().is_some_and(|compat| {
+            ApiProtocol::OpenAiCompletions => self.compat().is_some_and(|compat| {
                 let format_carries_effort = match compat.thinking_format {
                     ThinkingFormat::OpenRouter => true,
-                    ThinkingFormat::DeepSeek => !self.thinking_level_map.is_empty(),
+                    ThinkingFormat::DeepSeek => {
+                        self.reasoning_has_wire_value("low")
+                            || self.reasoning_has_wire_value("high")
+                            || self.reasoning_has_wire_value("max")
+                    }
                     _ => false,
                 };
                 format_carries_effort || compat.caps.contains(CompatCaps::REASONING_EFFORT)
@@ -52,47 +57,43 @@ impl ModelConfig {
     }
 
     pub fn supported_thinking_levels(&self) -> Vec<ThinkingLevel> {
-        if !self.reasoning {
+        if !self.reasoning() {
             return vec![ThinkingLevel::Off];
         }
-        if self.api == ApiProtocol::OpenAiCompletions && !self.honors_reasoning_effort() {
+        if self.protocol() == ApiProtocol::OpenAiCompletions && !self.honors_reasoning_effort() {
             return Vec::new();
         }
         LEVEL_LADDER
             .into_iter()
-            .filter(|level| {
-                // Adaptive is an evot-only default alias, not a selectable ramp step.
-                *level != ThinkingLevel::Adaptive && self.level_selectable(*level)
-            })
+            .filter(|level| *level != ThinkingLevel::Adaptive && self.level_selectable(*level))
             .collect()
     }
 
     fn level_selectable(&self, level: ThinkingLevel) -> bool {
-        match self.thinking_level_map.get(level.as_str()) {
-            Some(Some(effort)) => {
-                // Hide alias-only xhigh when a real max tier is also present.
+        match self.thinking_level_policy(level) {
+            ThinkingLevelPolicy::Unsupported => false,
+            ThinkingLevelPolicy::WireValue(effort) => {
                 !(level == ThinkingLevel::Xhigh
                     && effort == "max"
-                    && self.thinking_level_map.contains_key("max"))
+                    && !matches!(
+                        self.thinking_level_policy(ThinkingLevel::Max),
+                        ThinkingLevelPolicy::ProtocolDefault
+                    ))
             }
-            Some(None) => false,
-            None => !matches!(level, ThinkingLevel::Xhigh | ThinkingLevel::Max),
+            ThinkingLevelPolicy::ProtocolDefault => {
+                !matches!(level, ThinkingLevel::Xhigh | ThinkingLevel::Max)
+            }
         }
     }
 
-    pub fn thinking_effort_override(&self, level: ThinkingLevel) -> Option<&str> {
-        self.thinking_level_map.get(level.as_str())?.as_deref()
-    }
-
     pub fn can_disable_thinking(&self) -> bool {
-        !matches!(self.thinking_level_map.get("off"), Some(None))
+        !matches!(
+            self.thinking_level_policy(ThinkingLevel::Off),
+            ThinkingLevelPolicy::Unsupported
+        )
     }
 
     /// Clamp a requested level to the nearest supported tier for this model.
-    ///
-    /// Walks the ladder upward first, then downward (mirrors pi's
-    /// `clampThinkingLevel`). Falls back to the first supported level, or
-    /// `Off` when the model has no selectable levels.
     pub fn clamp_thinking_level(&self, level: ThinkingLevel) -> ThinkingLevel {
         let available = self.supported_thinking_levels();
         if available.is_empty() {
@@ -101,13 +102,15 @@ impl ModelConfig {
         if available.contains(&level) {
             return level;
         }
-        // Adaptive is not in the selectable ramp: treat it as High for clamping.
         let anchor = if level == ThinkingLevel::Adaptive {
             ThinkingLevel::High
         } else {
             level
         };
-        let Some(idx) = LEVEL_LADDER.iter().position(|l| *l == anchor) else {
+        let Some(idx) = LEVEL_LADDER
+            .iter()
+            .position(|candidate| *candidate == anchor)
+        else {
             return available[0];
         };
         for candidate in LEVEL_LADDER.iter().skip(idx) {
@@ -124,13 +127,8 @@ impl ModelConfig {
     }
 
     /// Resolve the level used for a request.
-    ///
-    /// Adaptive remains a model-selected alias only when the model has a
-    /// selectable reasoning ramp. Every concrete level, including `Off`, is
-    /// clamped so persisted settings from a previous model cannot bypass the
-    /// current model's restrictions.
     pub fn effective_thinking_level(&self, requested: ThinkingLevel) -> ThinkingLevel {
-        if !self.reasoning || self.supported_thinking_levels().is_empty() {
+        if !self.reasoning() || self.supported_thinking_levels().is_empty() {
             return ThinkingLevel::Off;
         }
         if requested == ThinkingLevel::Adaptive {
@@ -147,16 +145,18 @@ pub fn effective_thinking_level(
     model: Option<&ModelConfig>,
 ) -> ThinkingLevel {
     model
-        .map(|m| m.effective_thinking_level(requested))
+        .map(|model| model.effective_thinking_level(requested))
         .unwrap_or(requested)
 }
 
 /// Map a thinking level to an Anthropic adaptive-thinking effort value.
-///
-/// Per-model overrides win. Adaptive defaults to `"high"` (pi's default branch).
 pub fn anthropic_effort(level: ThinkingLevel, model: Option<&ModelConfig>) -> Option<String> {
-    if let Some(mapped) = model.and_then(|mc| mc.thinking_effort_override(level)) {
-        return Some(mapped.to_string());
+    if let Some(model) = model {
+        match model.thinking_level_policy(level) {
+            ThinkingLevelPolicy::WireValue(value) => return Some(value.to_string()),
+            ThinkingLevelPolicy::Unsupported => return None,
+            ThinkingLevelPolicy::ProtocolDefault => {}
+        }
     }
     match level {
         ThinkingLevel::Off => None,
@@ -180,9 +180,6 @@ pub fn anthropic_thinking_budget(level: ThinkingLevel) -> u32 {
 }
 
 /// Adjust max_tokens so budget-based thinking fits inside the model output cap.
-///
-/// Returns `(max_tokens, thinking_budget)` after fitting the budget and leaving
-/// room for a visible answer (mirrors pi's `adjustMaxTokensForThinking`).
 pub fn adjust_max_tokens_for_thinking(
     explicit_max_tokens: Option<u32>,
     model_max_tokens: u32,
@@ -206,5 +203,7 @@ pub fn thinking_off_disables(model: Option<&ModelConfig>) -> bool {
 
 /// Whether this model uses Anthropic adaptive thinking (`output_config.effort`).
 pub fn force_adaptive_thinking(model: Option<&ModelConfig>) -> bool {
-    model.map(|m| m.force_adaptive_thinking).unwrap_or(false)
+    model
+        .map(ModelConfig::force_adaptive_thinking)
+        .unwrap_or(false)
 }

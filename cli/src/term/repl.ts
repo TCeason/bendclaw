@@ -944,6 +944,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         compaction_level: outcome.compaction_level,
         method,
         remote_blob_bytes: outcome.remote_blob_bytes,
+        fallback_reason: outcome.fallback_reason,
       },
     })
     const detailLines = details.split('\n')

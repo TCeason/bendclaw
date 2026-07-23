@@ -37,6 +37,7 @@ fn tool_call_msg(id: &str, name: &str, path: &str) -> AgentMessage {
             id: id.to_string(),
             name: name.to_string(),
             arguments: serde_json::json!({"path": path}),
+            metadata: None,
         }],
         stop_reason: StopReason::Stop,
         model: "test".into(),
@@ -388,6 +389,7 @@ fn multi_tool_call_msg(ids: &[&str]) -> AgentMessage {
                 id: id.to_string(),
                 name: "read".into(),
                 arguments: serde_json::json!({"path": "foo.rs"}),
+                metadata: None,
             })
             .collect(),
         stop_reason: StopReason::ToolUse,

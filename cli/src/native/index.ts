@@ -197,6 +197,7 @@ export type ManualCompactionOutcome =
       used_fallback: boolean
       method?: 'remote' | 'local' | 'remote_failed_local'
       remote_blob_bytes?: number
+      fallback_reason?: string
     }
   | { status: 'nothing_to_compact' }
   | { status: 'cancelled' }

@@ -129,6 +129,9 @@ pub enum CompactionResult {
         /// Encrypted provider-native payload size, when remote succeeded.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         remote_blob_bytes: Option<usize>,
+        /// Why provider-native compaction was unavailable or failed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fallback_reason: Option<String>,
     },
 }
 

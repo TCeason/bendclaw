@@ -344,6 +344,10 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
 
       const ctx = contextLine(after, contextWindow, saved)
       if (ctx) lines.push(ctx)
+      const fallbackReason = typeof result.fallback_reason === 'string'
+        ? result.fallback_reason.replace(/\s+/g, ' ').trim().slice(0, 240)
+        : ''
+      if (fallbackReason) lines.push(`    fallback  ${fallbackReason}`)
       lines.push(`    summary   ${summary}`)
 
       return lines.join('\n')

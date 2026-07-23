@@ -31,9 +31,9 @@ impl StreamProvider for OpenAiCompatProvider {
         let model_config = config.model_config.as_ref().ok_or_else(|| {
             ProviderError::Other("ModelConfig required for OpenAI provider".into())
         })?;
-        let compat = model_config.compat.as_ref().cloned().unwrap_or_default();
+        let compat = model_config.compat().cloned().unwrap_or_default();
 
-        let base_url = &model_config.base_url;
+        let base_url = model_config.base_url();
         let url = format!("{}/chat/completions", base_url);
 
         let body = request::build_request_body(&config, &compat);
@@ -46,7 +46,7 @@ impl StreamProvider for OpenAiCompatProvider {
             .header("authorization", format!("Bearer {}", config.api_key));
 
         // Add any extra headers from model config
-        for (k, v) in &model_config.headers {
+        for (k, v) in model_config.headers() {
             builder = builder.header(k, v);
         }
 

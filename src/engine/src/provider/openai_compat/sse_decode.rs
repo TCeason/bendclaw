@@ -9,10 +9,10 @@ use tracing::debug;
 
 use super::request::ToolCallBuffer;
 use super::types::*;
+use crate::provider::compat::OpenAiCompat;
+use crate::provider::compat::ThinkingFormat;
 use crate::provider::error::classify_sse_error_event;
 use crate::provider::error::ProviderError;
-use crate::provider::model::OpenAiCompat;
-use crate::provider::model::ThinkingFormat;
 use crate::provider::stream_http;
 use crate::provider::stream_http::SseEvent;
 use crate::provider::traits::StreamConfig;
@@ -113,7 +113,7 @@ pub(crate) async fn decode_sse_stream(
         provider: config
             .model_config
             .as_ref()
-            .map(|mc| mc.provider.clone())
+            .map(|mc| mc.provider().to_string())
             .unwrap_or_else(|| "openai".into()),
         usage,
         timestamp: now_ms(),
@@ -311,6 +311,7 @@ fn process_sse_chunk(
                             id: String::new(),
                             name: String::new(),
                             arguments: serde_json::Value::Object(Default::default()),
+                            metadata: None,
                         });
                         buf.content_index = Some(index);
                         index
@@ -383,6 +384,7 @@ fn finalize_tool_calls(
             id: buf.id.clone(),
             name: buf.name.clone(),
             arguments: args.clone(),
+            metadata: None,
         };
         if content_index < content.len() {
             content[content_index] = tool_call;

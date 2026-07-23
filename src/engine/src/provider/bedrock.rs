@@ -37,7 +37,7 @@ impl StreamProvider for BedrockProvider {
             .as_ref()
             .ok_or_else(|| ProviderError::Other("ModelConfig required".into()))?;
 
-        let base_url = &model_config.base_url;
+        let base_url = model_config.base_url();
         let url = format!("{}/model/{}/converse-stream", base_url, config.model);
 
         let body = build_bedrock_body(&config);
@@ -57,13 +57,13 @@ impl StreamProvider for BedrockProvider {
         // Add AWS auth headers. In a real implementation, this would use SigV4.
         // For now, we support a simplified auth model where the caller provides
         // pre-computed auth headers via model_config.headers, or uses an IAM proxy.
-        for (k, v) in &model_config.headers {
+        for (k, v) in model_config.headers() {
             request = request.header(k, v);
         }
 
         // If no auth headers provided, try basic Bearer auth as fallback
         // (works with some Bedrock proxy configurations)
-        if !model_config.headers.contains_key("authorization") {
+        if !model_config.headers().contains_key("authorization") {
             request = request.header("authorization", format!("Bearer {}", config.api_key));
         }
 
@@ -176,6 +176,7 @@ impl StreamProvider for BedrockProvider {
                                                 id: tool_use.tool_use_id.clone(),
                                                 name: tool_use.name.clone(),
                                                 arguments: serde_json::Value::Object(Default::default()),
+                                                metadata: None,
                                             });
                                             let _ = tx.send(StreamEvent::ToolCallStart {
                                                 content_index: idx,
@@ -241,7 +242,7 @@ impl StreamProvider for BedrockProvider {
             content,
             stop_reason,
             model: config.model.clone(),
-            provider: model_config.provider.clone(),
+            provider: model_config.provider().to_string(),
             usage,
             timestamp: now_ms(),
             error_message: None,
@@ -364,6 +365,7 @@ pub fn content_to_bedrock(content: &[Content]) -> Vec<serde_json::Value> {
                 id,
                 name,
                 arguments,
+                ..
             } => Some(serde_json::json!({
                 "toolUse": {"toolUseId": id, "name": name, "input": arguments},
             })),

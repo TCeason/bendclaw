@@ -75,6 +75,8 @@ pub enum ManualCompactionOutcome {
         method: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         remote_blob_bytes: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fallback_reason: Option<String>,
     },
     NothingToCompact,
     Cancelled,
@@ -178,6 +180,7 @@ pub async fn compact_session_with_status(
     let summary_override = request.summary_override.filter(|s| !s.trim().is_empty());
     let mut used_fallback = !has_summarizer && summary_override.is_none();
     let mut compaction_method: Option<String> = None;
+    let mut fallback_reason: Option<String> = None;
     let mut remote_result: Option<(
         evot_engine::context::compaction::remote::RemoteCompaction,
         evot_engine::SummarizerContext,
@@ -243,6 +246,11 @@ pub async fn compact_session_with_status(
                         tracing::warn!(stage = "compact", status = "remote_failed", %error,
                             "manual remote compaction failed; falling back to local summary");
                         compaction_method = Some("remote_failed_local".into());
+                        fallback_reason = Some(
+                            evot_engine::context::compaction::remote::bounded_fallback_reason(
+                                &error,
+                            ),
+                        );
                         notify_phase(&observer, ManualCompactionPhase::LocalFallback);
                     }
                     Err(_) => {
@@ -253,11 +261,17 @@ pub async fn compact_session_with_status(
                             "manual remote compaction timed out; falling back to local summary"
                         );
                         compaction_method = Some("remote_failed_local".into());
+                        fallback_reason = Some(format!(
+                            "remote compaction timed out after {} seconds",
+                            summarizer.timeout.as_secs()
+                        ));
                         notify_phase(&observer, ManualCompactionPhase::LocalFallback);
                     }
                 }
             } else {
                 compaction_method = Some("local".into());
+                fallback_reason =
+                    evot_engine::context::compaction::remote::unavailable_reason(&ctx);
                 notify_phase(&observer, ManualCompactionPhase::Local);
             }
         }
@@ -366,6 +380,7 @@ pub async fn compact_session_with_status(
     details.modified_files.dedup();
     details.method = compaction_method.clone();
     details.remote_blob_bytes = remote_blob_bytes;
+    details.fallback_reason = fallback_reason;
 
     let mut state = previous_state.unwrap_or_default();
     state

@@ -1276,6 +1276,7 @@ async fn stats_after_compact_filtered_on_resume() -> TestResult {
                 current_run_reclaimed: 0,
                 method: None,
                 remote_blob_bytes: None,
+                fallback_reason: None,
             },
             context_window: 0,
             will_retry: false,

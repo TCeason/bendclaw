@@ -92,6 +92,7 @@ pub fn resolve_engine_context(entries: &[TranscriptEntry]) -> Vec<evot_engine::A
             .map(|entry| entry.item.clone())
             .collect::<Vec<_>>(),
     ));
+    evot_engine::migrate_legacy_responses_tool_ids(&mut messages);
     messages
 }
 

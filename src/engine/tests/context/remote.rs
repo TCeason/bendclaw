@@ -52,7 +52,19 @@ fn context(api: ApiProtocol, model: &str, base_url: &str) -> SummarizerContext {
         cache_config: CacheConfig::default(),
         prompt_cache_key: None,
         model_config: Some(ModelConfig::resolve(
-            api, "openai", model, model, base_url, None,
+            evotengine::provider::ResolveModelRequest {
+                protocol: api,
+                provider: "openai".into(),
+                model_id: model.into(),
+                base_url: base_url.into(),
+                headers: Default::default(),
+                compat: None,
+                route_capabilities: evotengine::provider::RouteCapabilities {
+                    verbosity: false,
+                    remote_compaction: api == ApiProtocol::OpenAiResponses,
+                },
+                overrides: Default::default(),
+            },
         )),
     }
 }
@@ -125,15 +137,20 @@ fn downgrades_only_compaction_replay_items() {
 }
 
 #[test]
-fn supports_only_gpt_or_codex_responses_models() {
+fn supports_only_catalog_profiled_responses_models() {
     assert!(remote::supports(&context(
         ApiProtocol::OpenAiResponses,
         "gpt-5.6-sol",
         "https://example.com/v1",
     )));
-    assert!(remote::supports(&context(
+    assert!(!remote::supports(&context(
         ApiProtocol::OpenAiResponses,
         "codex-mini",
+        "https://example.com/v1",
+    )));
+    assert!(!remote::supports(&context(
+        ApiProtocol::OpenAiResponses,
+        "gpt-5.7-nova",
         "https://example.com/v1",
     )));
     assert!(!remote::supports(&context(
@@ -317,6 +334,11 @@ async fn executor_falls_back_to_local_summary_when_remote_fails() {
         Some(CompactionMethod::RemoteFailedLocal)
     );
     assert_eq!(outcome.stats.remote_blob_bytes, None);
+    assert!(outcome
+        .stats
+        .fallback_reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("remote unavailable")));
     assert!(matches!(
         outcome.messages.get(1),
         Some(AgentMessage::Llm(Message::User { content, .. }))
@@ -332,7 +354,6 @@ async fn posts_compaction_trigger_and_returns_opaque_item() {
         .and(body_partial_json(serde_json::json!({
             "model": "gpt-5.6-sol",
             "stream": true,
-            "store": false,
         })))
         .respond_with(
             ResponseTemplate::new(200)
@@ -373,6 +394,7 @@ async fn posts_compaction_trigger_and_returns_opaque_item() {
         input.last().and_then(|item| item["type"].as_str()),
         Some("compaction_trigger")
     );
+    assert!(body.get("store").is_none());
     assert!(body.get("max_output_tokens").is_none());
     assert_eq!(
         body["include"],

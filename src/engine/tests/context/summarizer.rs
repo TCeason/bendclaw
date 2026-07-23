@@ -53,6 +53,7 @@ fn tool_call_msg(id: &str, name: &str, path: &str) -> AgentMessage {
             id: id.to_string(),
             name: name.to_string(),
             arguments: serde_json::Value::Object(args),
+            metadata: None,
         }],
         stop_reason: StopReason::ToolUse,
         model: "test".into(),
@@ -380,14 +381,17 @@ fn first_user_prompt(captured: &Captured) -> String {
 
 #[tokio::test]
 async fn llm_summarize_preserves_custom_transport_model_config() {
-    let model_config = evotengine::provider::ModelConfig::resolve(
-        evotengine::provider::ApiProtocol::AnthropicMessages,
-        "kimi-coding",
-        "kimi-for-coding",
-        "Kimi For Coding",
-        "https://api.kimi.com/coding",
-        None,
-    );
+    let model_config =
+        evotengine::provider::ModelConfig::resolve(evotengine::provider::ResolveModelRequest {
+            protocol: evotengine::provider::ApiProtocol::AnthropicMessages,
+            provider: "kimi-coding".into(),
+            model_id: "kimi-for-coding".into(),
+            base_url: "https://api.kimi.com/coding".into(),
+            headers: Default::default(),
+            compat: None,
+            route_capabilities: Default::default(),
+            overrides: Default::default(),
+        });
     let (result, captured) = summarize_capturing_with_model_config(
         base_input("[User]: compact this"),
         4096,
@@ -405,8 +409,8 @@ async fn llm_summarize_preserves_custom_transport_model_config() {
         .model_config
         .as_ref()
         .unwrap_or_else(|| panic!("expected model config"));
-    assert_eq!(config.provider, "kimi-coding");
-    assert_eq!(config.base_url, "https://api.kimi.com/coding");
+    assert_eq!(config.provider(), "kimi-coding");
+    assert_eq!(config.base_url(), "https://api.kimi.com/coding");
 }
 
 #[tokio::test]

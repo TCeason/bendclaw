@@ -22,6 +22,22 @@ use wiremock::Mock;
 use wiremock::MockServer;
 use wiremock::ResponseTemplate;
 
+fn responses_model(base_url: &str) -> ModelConfig {
+    ModelConfig::resolve(evotengine::provider::ResolveModelRequest {
+        protocol: ApiProtocol::OpenAiResponses,
+        provider: "openai".into(),
+        model_id: "gpt-5.6-sol".into(),
+        base_url: base_url.into(),
+        headers: Default::default(),
+        compat: None,
+        route_capabilities: evotengine::provider::RouteCapabilities {
+            verbosity: false,
+            remote_compaction: true,
+        },
+        overrides: Default::default(),
+    })
+}
+
 fn user_msg(text: &str) -> AgentMessage {
     AgentMessage::Llm(Message::User {
         content: vec![Content::Text {
@@ -291,6 +307,7 @@ async fn controller_state_carries_across_compactions_and_seed() {
             id: "call-read".into(),
             name: "read".into(),
             arguments: serde_json::json!({ "path": "src/evicted.rs" }),
+            metadata: None,
         }],
         stop_reason: evotengine::StopReason::Stop,
         model: "test".into(),
@@ -387,14 +404,7 @@ async fn controller_retries_remote_after_an_earlier_compaction_failure() {
         max_tokens: Some(1024),
         cache_config: CacheConfig::default(),
         prompt_cache_key: None,
-        model_config: Some(ModelConfig::resolve(
-            ApiProtocol::OpenAiResponses,
-            "openai",
-            "gpt-5.6-sol",
-            "gpt-5.6-sol",
-            server.uri(),
-            None,
-        )),
+        model_config: Some(responses_model(&server.uri())),
     };
     let mut ctrl = CompactionController::new(config_small());
     let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];
@@ -450,14 +460,7 @@ async fn controller_reports_live_remote_fallback_phase_order() {
         max_tokens: Some(1024),
         cache_config: CacheConfig::default(),
         prompt_cache_key: None,
-        model_config: Some(ModelConfig::resolve(
-            ApiProtocol::OpenAiResponses,
-            "openai",
-            "gpt-5.6-sol",
-            "gpt-5.6-sol",
-            server.uri(),
-            None,
-        )),
+        model_config: Some(responses_model(&server.uri())),
     };
 
     let phases = Arc::new(std::sync::Mutex::new(Vec::new()));

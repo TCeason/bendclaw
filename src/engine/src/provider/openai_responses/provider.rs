@@ -24,7 +24,10 @@ impl StreamProvider for OpenAiResponsesProvider {
         let model_config = config.model_config.as_ref().ok_or_else(|| {
             ProviderError::Other("ModelConfig required for OpenAI Responses provider".into())
         })?;
-        let url = format!("{}/responses", model_config.base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/responses",
+            model_config.base_url().trim_end_matches('/')
+        );
         let body = request::build_request_body(&config);
         debug!(
             "OpenAI Responses request: model={} url={}",
@@ -78,7 +81,7 @@ async fn send(
         .post(url)
         .header("content-type", "application/json")
         .header("authorization", format!("Bearer {api_key}"));
-    for (key, value) in &model_config.headers {
+    for (key, value) in model_config.headers() {
         builder = builder.header(key, value);
     }
     stream_http::send_stream_request(builder.json(body)).await

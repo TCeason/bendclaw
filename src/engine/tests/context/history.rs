@@ -5,6 +5,7 @@ use evotengine::Message;
 use evotengine::ReasoningField;
 use evotengine::StopReason;
 use evotengine::ThinkingMetadata;
+use evotengine::ToolCallMetadata;
 use evotengine::Usage;
 
 fn assistant(provider: &str, model: &str, content: Vec<Content>) -> Message {
@@ -76,11 +77,14 @@ fn same_openai_responses_model_preserves_reasoning_item() {
 }
 
 #[test]
-fn cross_openai_responses_model_drops_function_item_id() {
+fn cross_openai_responses_model_drops_function_item_metadata() {
     let message = assistant("openai", "old-model", vec![Content::ToolCall {
-        id: "call_1|fc_1".into(),
+        id: "call_1".into(),
         name: "bash".into(),
         arguments: serde_json::json!({"command": "pwd"}),
+        metadata: Some(ToolCallMetadata::OpenAiResponses {
+            item_id: "fc_1".into(),
+        }),
     }]);
 
     let transformed = transform_messages_for_model(
@@ -93,16 +97,44 @@ fn cross_openai_responses_model_drops_function_item_id() {
     assert!(matches!(
         &transformed[0],
         Message::Assistant { content, .. }
-            if matches!(&content[..], [Content::ToolCall { id, .. }] if id == "call_1")
+            if matches!(&content[..], [Content::ToolCall { id, metadata: None, .. }] if id == "call_1")
     ));
 }
 
 #[test]
-fn same_openai_responses_model_preserves_function_item_id() {
+fn cross_protocol_model_keeps_canonical_tool_id_only() {
     let message = assistant("openai", "gpt-5.5", vec![Content::ToolCall {
-        id: "call_1|fc_1".into(),
+        id: "call_1".into(),
         name: "bash".into(),
         arguments: serde_json::json!({"command": "pwd"}),
+        metadata: Some(ToolCallMetadata::OpenAiResponses {
+            item_id: "fc_1".into(),
+        }),
+    }]);
+
+    let transformed = transform_messages_for_model(
+        vec![message],
+        "kiro",
+        "gpt-5.5",
+        ApiProtocol::AnthropicMessages,
+    );
+
+    assert!(matches!(
+        &transformed[0],
+        Message::Assistant { content, .. }
+            if matches!(&content[..], [Content::ToolCall { id, metadata: None, .. }] if id == "call_1")
+    ));
+}
+
+#[test]
+fn same_openai_responses_model_preserves_function_item_metadata() {
+    let message = assistant("openai", "gpt-5.5", vec![Content::ToolCall {
+        id: "call_1".into(),
+        name: "bash".into(),
+        arguments: serde_json::json!({"command": "pwd"}),
+        metadata: Some(ToolCallMetadata::OpenAiResponses {
+            item_id: "fc_1".into(),
+        }),
     }]);
 
     let transformed = transform_messages_for_model(
@@ -115,7 +147,11 @@ fn same_openai_responses_model_preserves_function_item_id() {
     assert!(matches!(
         &transformed[0],
         Message::Assistant { content, .. }
-            if matches!(&content[..], [Content::ToolCall { id, .. }] if id == "call_1|fc_1")
+            if matches!(&content[..], [Content::ToolCall {
+                id,
+                metadata: Some(ToolCallMetadata::OpenAiResponses { item_id }),
+                ..
+            }] if id == "call_1" && item_id == "fc_1")
     ));
 }
 

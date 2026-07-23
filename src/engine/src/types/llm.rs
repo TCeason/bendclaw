@@ -168,7 +168,7 @@ pub enum CacheStrategy {
 // Thinking level
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ThinkingLevel {
     Off,
@@ -186,8 +186,7 @@ pub enum ThinkingLevel {
 }
 
 impl ThinkingLevel {
-    /// Canonical lowercase name, matching the serde representation and the keys
-    /// used in [`crate::provider::ModelConfig::thinking_level_map`].
+    /// Canonical lowercase name, matching the serde representation.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Off => "off",

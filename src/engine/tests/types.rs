@@ -36,6 +36,7 @@ fn test_message_assistant_roundtrip() {
                 id: "tc-1".into(),
                 name: "read".into(),
                 arguments: serde_json::json!({"path": "foo.rs"}),
+                metadata: None,
             },
         ],
         stop_reason: StopReason::ToolUse,
@@ -115,6 +116,7 @@ fn test_content_variants_roundtrip() {
         id: "tc-1".into(),
         name: "bash".into(),
         arguments: serde_json::json!({"command": "ls"}),
+        metadata: None,
     });
 }
 
@@ -131,6 +133,7 @@ fn test_full_conversation_roundtrip() {
                 id: "tc-1".into(),
                 name: "read".into(),
                 arguments: serde_json::json!({"path": "main.rs"}),
+                metadata: None,
             }],
             stop_reason: StopReason::ToolUse,
             model: "mock".into(),
@@ -173,9 +176,111 @@ fn test_full_conversation_roundtrip() {
     assert_eq!(conversation, back);
 }
 
+#[test]
+fn legacy_responses_tool_identity_migration_updates_call_and_result() {
+    let mut messages = vec![
+        AgentMessage::Llm(Message::Assistant {
+            content: vec![Content::ToolCall {
+                id: "call-1|fc-1".into(),
+                name: "read".into(),
+                arguments: serde_json::json!({"path": "a"}),
+                metadata: None,
+            }],
+            stop_reason: StopReason::ToolUse,
+            model: "gpt-5.5".into(),
+            provider: "openai".into(),
+            usage: Usage::default(),
+            timestamp: 1,
+            error_message: None,
+            response_id: None,
+        }),
+        AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: "call-1|fc-1".into(),
+            tool_name: "read".into(),
+            content: vec![Content::Text { text: "ok".into() }],
+            is_error: false,
+            timestamp: 2,
+            retention: Retention::Normal,
+        }),
+    ];
+
+    migrate_legacy_responses_tool_ids(&mut messages);
+
+    assert!(matches!(
+        &messages[..],
+        [
+            AgentMessage::Llm(Message::Assistant { content, .. }),
+            AgentMessage::Llm(Message::ToolResult { tool_call_id, .. }),
+        ] if matches!(&content[..], [Content::ToolCall {
+            id,
+            metadata: Some(ToolCallMetadata::OpenAiResponses { item_id }),
+            ..
+        }] if id == "call-1" && item_id == "fc-1") && tool_call_id == "call-1"
+    ));
+}
+
 // ---------------------------------------------------------------------------
 // Config types
 // ---------------------------------------------------------------------------
+
+#[test]
+fn legacy_responses_tool_identity_migration_preserves_unrelated_pipe_ids() {
+    let mut messages = vec![
+        AgentMessage::Llm(Message::Assistant {
+            content: vec![Content::ToolCall {
+                id: "vendor|token".into(),
+                name: "read".into(),
+                arguments: serde_json::json!({"path": "a"}),
+                metadata: None,
+            }],
+            stop_reason: StopReason::ToolUse,
+            model: "custom".into(),
+            provider: "custom".into(),
+            usage: Usage::default(),
+            timestamp: 1,
+            error_message: None,
+            response_id: None,
+        }),
+        AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: "vendor|token".into(),
+            tool_name: "read".into(),
+            content: vec![Content::Text { text: "ok".into() }],
+            is_error: false,
+            timestamp: 2,
+            retention: Retention::Normal,
+        }),
+        AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: "orphan|fc_1".into(),
+            tool_name: "read".into(),
+            content: vec![Content::Text {
+                text: "orphan".into(),
+            }],
+            is_error: false,
+            timestamp: 3,
+            retention: Retention::Normal,
+        }),
+    ];
+
+    migrate_legacy_responses_tool_ids(&mut messages);
+
+    assert!(matches!(
+        &messages[..],
+        [
+            AgentMessage::Llm(Message::Assistant { content, .. }),
+            AgentMessage::Llm(Message::ToolResult { tool_call_id, .. }),
+            AgentMessage::Llm(Message::ToolResult {
+                tool_call_id: orphan_id,
+                ..
+            }),
+        ] if matches!(&content[..], [Content::ToolCall {
+            id,
+            metadata: None,
+            ..
+        }] if id == "vendor|token")
+            && tool_call_id == "vendor|token"
+            && orphan_id == "orphan|fc_1"
+    ));
+}
 
 #[test]
 fn test_execution_limits_roundtrip() {

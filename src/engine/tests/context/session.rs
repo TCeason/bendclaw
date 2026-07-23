@@ -38,6 +38,7 @@ fn tool_call(name: &str, path: &str) -> AgentMessage {
             id: "tc".into(),
             name: name.into(),
             arguments: serde_json::json!({ "path": path }),
+            metadata: None,
         }],
         stop_reason: StopReason::ToolUse,
         model: "test".into(),

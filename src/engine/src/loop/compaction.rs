@@ -265,10 +265,7 @@ fn emit_compaction_events(
 }
 
 fn target_provider(config: &AgentLoopConfig) -> Option<&str> {
-    config
-        .model_config
-        .as_ref()
-        .map(|model| model.provider.as_str())
+    config.model_config.as_ref().map(|model| model.provider())
 }
 
 /// Whether the response is a provider error that is *not* a context overflow.

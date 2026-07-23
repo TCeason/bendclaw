@@ -1,7 +1,12 @@
 //! Builder for `StreamConfig` and stream event collection utilities.
 
-use evotengine::provider::model::ModelConfig;
 use evotengine::provider::traits::*;
+use evotengine::provider::ApiProtocol;
+use evotengine::provider::ModelConfig;
+use evotengine::provider::ModelOverrides;
+use evotengine::provider::OpenAiCompat;
+use evotengine::provider::ResolveModelRequest;
+use evotengine::provider::RouteCapabilities;
 use evotengine::types::*;
 
 /// Builder for `StreamConfig` with sensible defaults.
@@ -126,6 +131,27 @@ impl StreamConfigBuilder {
             prompt_cache_key: self.prompt_cache_key,
         }
     }
+}
+
+pub fn resolved_model_config(
+    protocol: ApiProtocol,
+    provider: &str,
+    model_id: &str,
+    base_url: &str,
+    compat: Option<OpenAiCompat>,
+    route_capabilities: RouteCapabilities,
+    overrides: ModelOverrides,
+) -> ModelConfig {
+    ModelConfig::resolve(ResolveModelRequest {
+        protocol,
+        provider: provider.into(),
+        model_id: model_id.into(),
+        base_url: base_url.into(),
+        headers: Default::default(),
+        compat,
+        route_capabilities,
+        overrides,
+    })
 }
 
 /// Collect all `StreamEvent`s from an unbounded receiver.

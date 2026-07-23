@@ -1,5 +1,5 @@
-use evotengine::provider::model::ApiProtocol;
 use evotengine::provider::registry::ProviderRegistry;
+use evotengine::provider::ApiProtocol;
 
 #[test]
 fn default_registry_has_all_providers() {

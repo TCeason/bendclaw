@@ -220,7 +220,7 @@ impl Agent {
                 Some(self.context_config.clone().unwrap_or_else(|| {
                     self.model_config
                         .as_ref()
-                        .map(|m| ContextConfig::from_context_window(m.context_window))
+                        .map(|m| ContextConfig::from_context_window(m.context_window()))
                         .unwrap_or_default()
                 }))
             },

@@ -179,7 +179,7 @@ fn parse_success_response(
     let provider = config
         .model_config
         .as_ref()
-        .map(|model| model.provider.as_str())
+        .map(|model| model.provider())
         .unwrap_or("anthropic");
     Ok(emitter.finalize(&config.model, provider))
 }

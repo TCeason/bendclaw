@@ -908,6 +908,7 @@ fn map_agent_event(
                         id,
                         name,
                         arguments,
+                        ..
                     } => Some(LlmToolCallSummary {
                         id: id.clone(),
                         name: name.clone(),
@@ -1019,6 +1020,7 @@ fn map_agent_event(
                         }
                     }),
                     remote_blob_bytes: stats.remote_blob_bytes,
+                    fallback_reason: stats.fallback_reason.clone(),
                 }
             } else {
                 crate::types::CompactionResult::NoOp
@@ -1085,6 +1087,12 @@ fn automatic_compact_item(
             crate::types::CompactionResult::Compacted {
                 remote_blob_bytes, ..
             } => *remote_blob_bytes,
+            crate::types::CompactionResult::NoOp => None,
+        },
+        fallback_reason: match result {
+            crate::types::CompactionResult::Compacted {
+                fallback_reason, ..
+            } => fallback_reason.clone(),
             crate::types::CompactionResult::NoOp => None,
         },
     };
@@ -1171,19 +1179,17 @@ pub fn build_model_config(
     supports_image: Option<bool>,
 ) -> evot_engine::provider::ModelConfig {
     use evot_engine::provider::ApiProtocol;
-    use evot_engine::provider::ModelConfig;
+    use evot_engine::provider::ModelOverrides;
     use evot_engine::provider::OpenAiCompat;
+    use evot_engine::provider::ResolveModelRequest;
+    use evot_engine::provider::RouteCapabilities;
 
     // Layers:
     // 1. model catalog (by model id)
     // 2. provider transport profile
     // 3. explicit env overrides
-    let (api, default_base, compat) = match protocol {
-        Protocol::Anthropic => (
-            ApiProtocol::AnthropicMessages,
-            "https://api.anthropic.com",
-            None,
-        ),
+    let (api, default_base) = match protocol {
+        Protocol::Anthropic => (ApiProtocol::AnthropicMessages, "https://api.anthropic.com"),
         Protocol::OpenAiResponses => (
             ApiProtocol::OpenAiResponses,
             if provider == "openai" {
@@ -1191,7 +1197,6 @@ pub fn build_model_config(
             } else {
                 ""
             },
-            Some(OpenAiCompat::for_provider(provider)),
         ),
         Protocol::OpenAi => (
             ApiProtocol::OpenAiCompletions,
@@ -1200,47 +1205,41 @@ pub fn build_model_config(
             } else {
                 ""
             },
-            Some(OpenAiCompat::for_provider(provider)),
         ),
     };
 
-    let mut model_config = ModelConfig::resolve(
-        api,
-        provider,
-        model,
-        model,
-        base_url.unwrap_or(default_base),
-        compat,
-    );
-
-    // Explicit env/config overrides. `context_window`/`max_tokens` size the
-    // context budget; `supports_image` declares whether the model accepts image
-    // input so text-only endpoints never receive `image_url` blocks they would
-    // reject. All are provider-agnostic, set via `EVOT_LLM_<PROVIDER>_*`.
-    if let Some(context_window) = context_window {
-        model_config.context_window = context_window;
-    }
-    if let Some(max_tokens) = max_tokens {
-        model_config.max_tokens = max_tokens;
-    }
-    if let Some(supports_image) = supports_image {
-        model_config.input = if supports_image {
-            vec![
-                evot_engine::provider::InputModality::Text,
-                evot_engine::provider::InputModality::Image,
-            ]
-        } else {
-            vec![evot_engine::provider::InputModality::Text]
-        };
-    }
-
-    if matches!(protocol, Protocol::OpenAi | Protocol::OpenAiResponses) {
-        if let Some(compat) = &mut model_config.compat {
-            compat.caps |= compat_caps;
+    let resolved_base = base_url
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(default_base)
+        .to_string();
+    let mut compat = match protocol {
+        Protocol::Anthropic => None,
+        Protocol::OpenAi | Protocol::OpenAiResponses => {
+            Some(OpenAiCompat::for_route(provider, &resolved_base))
         }
+    };
+    if let Some(compat) = &mut compat {
+        compat.caps |= compat_caps;
     }
 
-    model_config
+    let route_capabilities =
+        RouteCapabilities::for_route(api, provider, &resolved_base, compat_caps);
+
+    evot_engine::provider::ModelConfig::resolve(ResolveModelRequest {
+        protocol: api,
+        provider: provider.to_string(),
+        model_id: model.to_string(),
+        base_url: resolved_base,
+        headers: Default::default(),
+        compat,
+        route_capabilities,
+        overrides: ModelOverrides {
+            context_window,
+            max_output_tokens: max_tokens,
+            supports_image,
+            reasoning: None,
+        },
+    })
 }
 
 pub(crate) fn build_agent(
@@ -1263,7 +1262,7 @@ pub(crate) fn build_agent(
     );
 
     let mut context_config =
-        evot_engine::context::ContextConfig::from_context_window(model_config.context_window);
+        evot_engine::context::ContextConfig::from_context_window(model_config.context_window());
     // Persisted compaction checkpoints are represented as summary + retained
     // tail. Do not pin an unsummarized head that the checkpoint schema cannot
     // reconstruct on the next turn.

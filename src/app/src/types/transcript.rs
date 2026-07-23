@@ -30,6 +30,8 @@ pub enum AssistantBlock {
         id: String,
         name: String,
         input: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        metadata: Option<evot_engine::ToolCallMetadata>,
     },
     Thinking {
         text: String,
@@ -49,17 +51,6 @@ impl AssistantBlock {
 
 pub fn assistant_text(content: &[AssistantBlock]) -> String {
     content.iter().filter_map(AssistantBlock::text).collect()
-}
-
-// ---------------------------------------------------------------------------
-// ToolCallRecord — tool call in a transcript
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCallRecord {
-    pub id: String,
-    pub name: String,
-    pub input: serde_json::Value,
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +99,8 @@ pub struct CompactDetails {
     pub method: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_blob_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

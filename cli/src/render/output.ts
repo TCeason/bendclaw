@@ -809,6 +809,7 @@ function buildCompactionLines(compaction: UICompaction, expanded: boolean): Outp
       current_run_reclaimed: 0,
       method: compaction.method,
       remote_blob_bytes: compaction.remoteBlobBytes,
+      fallback_reason: compaction.fallbackReason,
     },
   })
   const lines = buildEventCard(details)

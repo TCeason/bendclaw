@@ -1,10 +1,10 @@
 //! Integration tests: OpenAI-compat provider → wiremock SSE server → Message.
 
-use evotengine::provider::model::OpenAiCompat;
-use evotengine::provider::model::ThinkingFormat;
 use evotengine::provider::traits::StreamConfig;
+use evotengine::provider::OpenAiCompat;
 use evotengine::provider::OpenAiCompatProvider;
 use evotengine::provider::StreamEvent;
+use evotengine::provider::ThinkingFormat;
 use evotengine::types::*;
 
 use super::super::fixtures::mock_server::*;
@@ -207,11 +207,18 @@ async fn xai_sse_prefers_reasoning_alias_when_multiple_are_present() {
         openai_sse::finish_with_usage("stop", 50, 10),
         openai_sse::done(),
     ]);
-    let mut model_config = evotengine::provider::model::ModelConfig::openai("grok", "Grok");
-    model_config.compat = Some(OpenAiCompat {
-        thinking_format: ThinkingFormat::Xai,
-        ..OpenAiCompat::default()
-    });
+    let model_config = resolved_model_config(
+        evotengine::provider::ApiProtocol::OpenAiCompletions,
+        "xai",
+        "grok",
+        "https://api.x.ai/v1",
+        Some(OpenAiCompat {
+            thinking_format: ThinkingFormat::Xai,
+            ..OpenAiCompat::default()
+        }),
+        Default::default(),
+        Default::default(),
+    );
     let config = StreamConfigBuilder::openai()
         .model_config(model_config)
         .build();
@@ -281,7 +288,7 @@ async fn openai_sse_tool_call() {
         } => {
             assert_eq!(content.len(), 1);
             assert!(
-                matches!(&content[0], Content::ToolCall { id, name, arguments }
+                matches!(&content[0], Content::ToolCall { id, name, arguments, .. }
                     if id == "call_abc" && name == "bash" && arguments["command"] == "ls")
             );
             assert_eq!(*stop_reason, StopReason::ToolUse);
@@ -318,12 +325,12 @@ async fn openai_sse_interleaved_parallel_tool_calls_keep_separate_state() {
     };
     assert!(matches!(
         &calls[0],
-        Content::ToolCall { id, name, arguments }
+        Content::ToolCall { id, name, arguments, .. }
             if id == "call-read" && name == "read" && arguments["path"] == "src/a"
     ));
     assert!(matches!(
         &calls[1],
-        Content::ToolCall { id, name, arguments }
+        Content::ToolCall { id, name, arguments, .. }
             if id == "call-edit" && name == "edit" && arguments["path"] == "src/b"
     ));
 

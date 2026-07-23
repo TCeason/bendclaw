@@ -83,7 +83,7 @@ pub(super) async fn stream_assistant_response(
     let mut attempt = 0;
     let shared_metrics = std::sync::Arc::new(std::sync::Mutex::new(LlmCallMetrics::default()));
     let result = loop {
-        let thinking_level = crate::provider::thinking::effective_thinking_level(
+        let thinking_level = crate::provider::effective_thinking_level(
             config.thinking_level,
             config.model_config.as_ref(),
         );
@@ -460,7 +460,11 @@ pub(super) async fn stream_assistant_response(
 
 fn target_model(config: &AgentLoopConfig) -> (String, String, ApiProtocol) {
     match &config.model_config {
-        Some(model) => (model.provider.clone(), model.id.clone(), model.api),
+        Some(model) => (
+            model.provider().to_string(),
+            model.id().to_string(),
+            model.protocol(),
+        ),
         None => (
             "openai".into(),
             config.model.clone(),

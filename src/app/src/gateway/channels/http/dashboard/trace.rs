@@ -329,7 +329,9 @@ fn build_input_blocks(entries: &[TranscriptEntry], seq: u64) -> Vec<InputBlock> 
                         AssistantBlock::Thinking { text, .. } if !text.trim().is_empty() => {
                             Some(SpanBlock::Thinking { text: text.clone() })
                         }
-                        AssistantBlock::ToolCall { id, name, input } => Some(SpanBlock::ToolUse {
+                        AssistantBlock::ToolCall {
+                            id, name, input, ..
+                        } => Some(SpanBlock::ToolUse {
                             id: id.clone(),
                             name: name.clone(),
                             input: input.clone(),
@@ -394,7 +396,9 @@ pub fn project_span_detail(entries: &[TranscriptEntry], seq: u64) -> Option<Span
             AssistantBlock::Thinking { text, .. } if !text.trim().is_empty() => {
                 Some(SpanBlock::Thinking { text: text.clone() })
             }
-            AssistantBlock::ToolCall { id, name, input } => Some(SpanBlock::ToolUse {
+            AssistantBlock::ToolCall {
+                id, name, input, ..
+            } => Some(SpanBlock::ToolUse {
                 id: id.clone(),
                 name: name.clone(),
                 input: input.clone(),
@@ -648,7 +652,9 @@ pub fn project_activity(
             } => {
                 let text = crate::types::assistant_text(content);
                 for (id, name, input) in content.iter().filter_map(|block| match block {
-                    AssistantBlock::ToolCall { id, name, input } => Some((id, name, input)),
+                    AssistantBlock::ToolCall {
+                        id, name, input, ..
+                    } => Some((id, name, input)),
                     _ => None,
                 }) {
                     rows.push(ActivityRow {

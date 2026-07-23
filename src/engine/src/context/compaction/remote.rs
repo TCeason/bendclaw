@@ -13,7 +13,6 @@ use tokio_util::sync::CancellationToken;
 use super::summarizer::mode::SummarizerContext;
 use crate::context::sanitize::sanitize_tool_pairs;
 use crate::provider::stream_http;
-use crate::provider::ApiProtocol;
 use crate::provider::StreamConfig;
 use crate::types::AgentMessage;
 use crate::types::Content;
@@ -64,7 +63,7 @@ pub fn replacement_message(
     let provider = ctx
         .model_config
         .as_ref()
-        .map(|model| model.provider.clone())
+        .map(|model| model.provider().to_string())
         .unwrap_or_default();
     AgentMessage::Llm(Message::Assistant {
         content: vec![Content::Thinking {
@@ -162,10 +161,21 @@ pub enum RemoteError {
 /// and requires the Responses transport: only that protocol can replay the
 /// opaque `compaction` item in later requests.
 pub fn supports(ctx: &SummarizerContext) -> bool {
+    unavailable_reason(ctx).is_none()
+}
+
+pub fn unavailable_reason(ctx: &SummarizerContext) -> Option<String> {
     let Some(model_config) = &ctx.model_config else {
-        return false;
+        return Some("model configuration is unavailable".into());
     };
-    model_config.api == ApiProtocol::OpenAiResponses && model_config.supports_remote_compaction
+    model_config
+        .remote_compaction_unavailable_reason()
+        .map(str::to_string)
+}
+
+pub fn bounded_fallback_reason(reason: &str) -> String {
+    let normalized = reason.split_whitespace().collect::<Vec<_>>().join(" ");
+    normalized.chars().take(500).collect()
 }
 
 /// Request server-side compaction of the messages being evicted.
@@ -221,7 +231,10 @@ pub async fn compact(
     // even when the reasoning config would otherwise omit it.
     body["include"] = serde_json::json!(["reasoning.encrypted_content"]);
 
-    let url = format!("{}/responses", model_config.base_url.trim_end_matches('/'));
+    let url = format!(
+        "{}/responses",
+        model_config.base_url().trim_end_matches('/')
+    );
     let client =
         crate::provider::error::new_client().map_err(|e| RemoteError::Failed(e.to_string()))?;
     let mut builder = client
@@ -229,7 +242,7 @@ pub async fn compact(
         .header("content-type", "application/json")
         .header("accept", "text/event-stream")
         .header("authorization", format!("Bearer {}", config.api_key));
-    for (key, value) in &model_config.headers {
+    for (key, value) in model_config.headers() {
         builder = builder.header(key, value);
     }
 

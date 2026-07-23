@@ -242,8 +242,9 @@ impl Agent {
     }
 
     pub fn restore_messages(&mut self, json: &str) -> Result<(), serde_json::Error> {
-        let msgs: Vec<AgentMessage> = serde_json::from_str(json)?;
-        self.messages = msgs;
+        let mut messages: Vec<AgentMessage> = serde_json::from_str(json)?;
+        crate::types::migrate_legacy_responses_tool_ids(&mut messages);
+        self.messages = messages;
         Ok(())
     }
 

@@ -315,6 +315,7 @@ async fn manual_compaction_uses_shared_pi_style_serialization() -> TestResult {
                         id: "call-1".into(),
                         name: "read".into(),
                         input: serde_json::json!({"path": "src/gateway/retry.rs"}),
+                        metadata: None,
                     },
                 ],
                 stop_reason: "tool_use".into(),

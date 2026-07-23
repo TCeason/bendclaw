@@ -195,6 +195,9 @@ pub struct CompactionStats {
     /// How the summary was produced (None for legacy/no-op stats).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub method: Option<CompactionMethod>,
+    /// Why provider-native compaction was unavailable or failed before local fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<String>,
     /// Size of the provider-native compaction payload, when remote ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_blob_bytes: Option<usize>,

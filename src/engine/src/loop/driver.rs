@@ -267,10 +267,7 @@ async fn run_loop(
             let budget_snapshot = context_tracker.budget_snapshot(
                 &context.messages,
                 config.context_config.as_ref(),
-                config
-                    .model_config
-                    .as_ref()
-                    .map(|model| model.provider.as_str()),
+                config.model_config.as_ref().map(|model| model.provider()),
                 Some(&config.model),
             );
 
@@ -315,6 +312,7 @@ async fn run_loop(
                             id,
                             name,
                             arguments,
+                            ..
                         } => Some((id.clone(), name.clone(), arguments.clone())),
                         _ => None,
                     })

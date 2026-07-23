@@ -1,10 +1,74 @@
-use evotengine::provider::model::ModelConfig;
-use evotengine::provider::model::OpenAiCompat;
 use evotengine::provider::openai_compat::request::*;
 use evotengine::provider::openai_compat::types::OpenAiChunk;
+use evotengine::provider::ApiProtocol;
+use evotengine::provider::ModelConfig;
+use evotengine::provider::OpenAiCompat;
 use evotengine::types::*;
 
 use super::super::fixtures::stream_config::*;
+
+#[test]
+fn test_current_profiled_models_send_codex_default_verbosity() {
+    for id in ["gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"] {
+        let model_config = ModelConfig::openai(id, id);
+        let config = StreamConfigBuilder::openai()
+            .model(id)
+            .model_config(model_config)
+            .build();
+
+        let body = build_request_body(&config, &OpenAiCompat::openai());
+        assert_eq!(body["verbosity"], "low", "{id}");
+    }
+}
+
+#[test]
+fn test_old_or_unprofiled_models_omit_verbosity() {
+    for id in ["gpt-5.4", "gpt-5.4-pro", "gpt-5.5-pro", "gpt-5.7-nova"] {
+        let model_config = ModelConfig::openai(id, id);
+        let config = StreamConfigBuilder::openai()
+            .model(id)
+            .model_config(model_config)
+            .build();
+
+        let body = build_request_body(&config, &OpenAiCompat::openai());
+        assert!(body.get("verbosity").is_none(), "{id}");
+    }
+}
+
+#[test]
+fn test_third_party_compatible_endpoint_omits_verbosity() {
+    let model_config = resolved_model_config(
+        ApiProtocol::OpenAiCompletions,
+        "openrouter",
+        "openai/gpt-5.5",
+        "https://openrouter.ai/api/v1",
+        Some(OpenAiCompat::openrouter()),
+        Default::default(),
+        Default::default(),
+    );
+    let config = StreamConfigBuilder::openai()
+        .model("openai/gpt-5.5")
+        .model_config(model_config)
+        .build();
+
+    let body = build_request_body(&config, &OpenAiCompat::openrouter());
+    assert!(body.get("verbosity").is_none());
+}
+
+#[test]
+fn test_uncatalogued_gpt_and_codex_keep_medium_adaptive_default() {
+    for id in ["codex-mini", "gpt-5.7-nova"] {
+        let config = StreamConfigBuilder::openai()
+            .model(id)
+            .model_config(ModelConfig::openai(id, id))
+            .thinking(ThinkingLevel::Adaptive)
+            .build();
+
+        let body = build_request_body(&config, &OpenAiCompat::openai());
+        assert_eq!(body["reasoning_effort"], "medium", "{id}");
+        assert!(body.get("verbosity").is_none(), "{id}");
+    }
+}
 
 #[test]
 fn test_gpt_5_5_adaptive_thinking_maps_to_model_default_reasoning_effort() {
@@ -132,8 +196,15 @@ fn test_compat_without_reasoning_support_omits_reasoning_effort() {
 
 #[test]
 fn test_non_reasoning_model_omits_reasoning_effort_even_when_endpoint_supports_it() {
-    let mut model_config = ModelConfig::local("", "grok-composer-2.5-fast");
-    model_config.compat = Some(OpenAiCompat::grok_cli());
+    let model_config = resolved_model_config(
+        ApiProtocol::OpenAiCompletions,
+        "grok",
+        "grok-composer-2.5-fast",
+        "",
+        Some(OpenAiCompat::grok_cli()),
+        Default::default(),
+        Default::default(),
+    );
     let config = StreamConfigBuilder::openai()
         .model("grok-composer-2.5-fast")
         .model_config(model_config)
@@ -146,8 +217,15 @@ fn test_non_reasoning_model_omits_reasoning_effort_even_when_endpoint_supports_i
 
 #[test]
 fn test_xai_transport_omits_chat_completions_reasoning_effort() {
-    let mut model_config = ModelConfig::local("", "grok-4.5");
-    model_config.compat = Some(OpenAiCompat::xai());
+    let model_config = resolved_model_config(
+        ApiProtocol::OpenAiCompletions,
+        "xai",
+        "grok-4.5",
+        "",
+        Some(OpenAiCompat::xai()),
+        Default::default(),
+        Default::default(),
+    );
     let config = StreamConfigBuilder::openai()
         .model("grok-4.5")
         .model_config(model_config)
@@ -161,13 +239,14 @@ fn test_xai_transport_omits_chat_completions_reasoning_effort() {
 
 #[test]
 fn test_openrouter_uses_nested_reasoning_effort() {
-    let model_config = ModelConfig::resolve(
-        evotengine::provider::ApiProtocol::OpenAiCompletions,
+    let model_config = resolved_model_config(
+        ApiProtocol::OpenAiCompletions,
         "openrouter",
         "openai/gpt-5.6-sol",
-        "GPT-5.6 Sol",
         "https://openrouter.ai/api/v1",
         Some(OpenAiCompat::openrouter()),
+        Default::default(),
+        Default::default(),
     );
     let config = StreamConfigBuilder::openai()
         .model("openai/gpt-5.6-sol")
@@ -182,13 +261,14 @@ fn test_openrouter_uses_nested_reasoning_effort() {
 
 #[test]
 fn test_kimi_k3_uses_transport_specific_reasoning_format() {
-    let moonshot_model = ModelConfig::resolve(
-        evotengine::provider::ApiProtocol::OpenAiCompletions,
+    let moonshot_model = resolved_model_config(
+        ApiProtocol::OpenAiCompletions,
         "moonshotai",
         "kimi-k3",
-        "Kimi K3",
         "https://api.moonshot.ai/v1",
         Some(OpenAiCompat::moonshot()),
+        Default::default(),
+        Default::default(),
     );
     let moonshot_config = StreamConfigBuilder::openai()
         .model("kimi-k3")
@@ -200,13 +280,14 @@ fn test_kimi_k3_uses_transport_specific_reasoning_format() {
     assert!(moonshot_body.get("reasoning_effort").is_none());
     assert!(moonshot_body.get("reasoning").is_none());
 
-    let openrouter_model = ModelConfig::resolve(
-        evotengine::provider::ApiProtocol::OpenAiCompletions,
+    let openrouter_model = resolved_model_config(
+        ApiProtocol::OpenAiCompletions,
         "openrouter",
         "moonshotai/kimi-k3",
-        "Kimi K3",
         "https://openrouter.ai/api/v1",
         Some(OpenAiCompat::openrouter()),
+        Default::default(),
+        Default::default(),
     );
     let openrouter_config = StreamConfigBuilder::openai()
         .model("moonshotai/kimi-k3")
@@ -350,6 +431,7 @@ fn test_tool_result_with_image() {
                     id: "call-1".into(),
                     name: "read".into(),
                     arguments: serde_json::json!({"path": "img.png"}),
+                    metadata: None,
                 }],
                 stop_reason: StopReason::ToolUse,
                 model: "test".into(),
@@ -406,6 +488,7 @@ fn test_tool_result_text_only_uses_string() {
                     id: "call-1".into(),
                     name: "bash".into(),
                     arguments: serde_json::json!({"command": "echo hi"}),
+                    metadata: None,
                 }],
                 stop_reason: StopReason::ToolUse,
                 model: "test".into(),
@@ -607,6 +690,7 @@ fn test_tool_call_assistant_includes_empty_reasoning_content() {
                 id: "call_1".into(),
                 name: "read".into(),
                 arguments: serde_json::json!({"path": "/tmp/a"}),
+                metadata: None,
             }],
             stop_reason: StopReason::ToolUse,
             model: "claude-opus-4-6".into(),
@@ -634,6 +718,7 @@ fn test_tool_call_assistant_omits_empty_reasoning_content_without_cap() {
                 id: "call_1".into(),
                 name: "read".into(),
                 arguments: serde_json::json!({"path": "/tmp/a"}),
+                metadata: None,
             }],
             stop_reason: StopReason::ToolUse,
             model: "claude-opus-4-6".into(),

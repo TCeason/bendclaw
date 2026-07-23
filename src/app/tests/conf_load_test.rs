@@ -287,6 +287,39 @@ EVOT_ANTHROPIC_MODEL=claude-sonnet-4-20250514
 }
 
 #[test]
+fn load_config_accepts_route_compat_caps() -> TestResult {
+    let _guard = env_lock()
+        .lock()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    let temp = tempfile::tempdir()?;
+    let env_home = temp.path().join("home");
+    std::fs::create_dir_all(env_home.join(".evotai"))?;
+    std::fs::write(
+        env_home.join(".evotai").join("evot.env"),
+        "\
+EVOT_LLM_PROVIDER=custom
+EVOT_LLM_CUSTOM_API_KEY=key
+EVOT_LLM_CUSTOM_BASE_URL=https://example.com
+EVOT_LLM_CUSTOM_MODEL=gpt-5.6-sol
+EVOT_LLM_CUSTOM_PROTOCOL=openai_responses
+EVOT_LLM_CUSTOM_COMPAT_CAPS=verbosity,remote_compaction
+",
+    )?;
+
+    let original_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &env_home);
+    let result = Config::load();
+    restore_env_var("HOME", original_home);
+
+    let config = result?;
+    let provider = config.providers.get("custom").ok_or("missing provider")?;
+    assert!(provider.compat_caps.contains(CompatCaps::VERBOSITY));
+    assert!(provider.compat_caps.contains(CompatCaps::REMOTE_COMPACTION));
+    Ok(())
+}
+
+#[test]
 fn load_config_accepts_prompt_cache_key_compat_cap() -> TestResult {
     let _guard = env_lock()
         .lock()

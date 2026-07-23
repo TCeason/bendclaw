@@ -102,7 +102,10 @@ describe('transcript conversion', () => {
       tokens_after: 4567,
       messages_before: 20,
       messages_after: 4,
-      details: { method: 'remote', remote_blob_bytes: 2048 },
+      details: {
+        method: 'remote_failed_local',
+        fallback_reason: 'Upstream error 400: Store must be set to false',
+      },
     } as any])
 
     expect(messages).toHaveLength(1)
@@ -113,12 +116,14 @@ describe('transcript conversion', () => {
       tokensAfter: 4567,
       messagesBefore: 20,
       messagesAfter: 4,
-      method: 'remote',
-      remoteBlobBytes: 2048,
+      method: 'remote_failed_local',
+      remoteBlobBytes: undefined,
+      fallbackReason: 'Upstream error 400: Store must be set to false',
     })
 
     const collapsed = messagesToOutputLines(messages).map(line => line.text).join('\n')
     expect(collapsed).toContain('✦ compact')
+    expect(collapsed).toContain('fallback  Upstream error 400: Store must be set to false')
     expect(collapsed).toContain('summary hidden (ctrl+o to expand)')
     expect(collapsed).not.toContain('summary text')
 

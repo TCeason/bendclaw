@@ -1,7 +1,8 @@
 use evot::agent::*;
 
 #[test]
-fn transcript_round_trip_preserves_ordered_assistant_blocks_and_signature() {
+fn transcript_round_trip_preserves_ordered_assistant_blocks_and_provider_metadata(
+) -> Result<(), Box<dyn std::error::Error>> {
     let message = evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant {
         content: vec![
             evot_engine::Content::Thinking {
@@ -14,6 +15,9 @@ fn transcript_round_trip_preserves_ordered_assistant_blocks_and_signature() {
                 id: "call-1".into(),
                 name: "read".into(),
                 arguments: serde_json::json!({"path": "a"}),
+                metadata: Some(evot_engine::ToolCallMetadata::OpenAiResponses {
+                    item_id: "fc-1".into(),
+                }),
             },
             evot_engine::Content::Text {
                 text: "done".into(),
@@ -29,6 +33,8 @@ fn transcript_round_trip_preserves_ordered_assistant_blocks_and_signature() {
     });
 
     let transcript = evot::agent::run::convert::transcript_from_agent_message(&message);
+    let serialized = serde_json::to_string(&transcript)?;
+    let transcript: TranscriptItem = serde_json::from_str(&serialized)?;
     let restored = evot::agent::run::convert::agent_message_from_transcript(&transcript);
 
     assert!(matches!(
@@ -36,14 +42,60 @@ fn transcript_round_trip_preserves_ordered_assistant_blocks_and_signature() {
         evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant { content, .. })
             if matches!(&content[..], [
                 evot_engine::Content::Thinking { thinking, metadata },
-                evot_engine::Content::ToolCall { id, .. },
+                evot_engine::Content::ToolCall {
+                    id,
+                    metadata: Some(evot_engine::ToolCallMetadata::OpenAiResponses { item_id }),
+                    ..
+                },
                 evot_engine::Content::Text { text },
             ] if thinking == "plan"
                 && matches!(metadata, Some(evot_engine::ThinkingMetadata::OpenAiCompletions {
                     field: evot_engine::ReasoningField::Reasoning,
                 }))
                 && id == "call-1"
+                && item_id == "fc-1"
                 && text == "done")
+    ));
+    Ok(())
+}
+
+#[test]
+fn legacy_responses_tool_ids_migrate_at_transcript_load_boundary() {
+    let items = vec![
+        TranscriptItem::Assistant {
+            content: vec![AssistantBlock::ToolCall {
+                id: "call-1|fc-1".into(),
+                name: "read".into(),
+                input: serde_json::json!({"path": "a"}),
+                metadata: None,
+            }],
+            stop_reason: "tool_use".into(),
+            usage: UsageSummary::default(),
+            model: "gpt-5.5".into(),
+            provider: "openai".into(),
+            timestamp: 1,
+            error_message: None,
+        },
+        TranscriptItem::ToolResult {
+            tool_call_id: "call-1|fc-1".into(),
+            tool_name: "read".into(),
+            content: "ok".into(),
+            is_error: false,
+            details: serde_json::Value::Null,
+        },
+    ];
+
+    let restored = evot::agent::run::convert::into_agent_messages(&items);
+    assert!(matches!(
+        &restored[..],
+        [
+            evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant { content, .. }),
+            evot_engine::AgentMessage::Llm(evot_engine::Message::ToolResult { tool_call_id, .. }),
+        ] if matches!(&content[..], [evot_engine::Content::ToolCall {
+            id,
+            metadata: Some(evot_engine::ToolCallMetadata::OpenAiResponses { item_id }),
+            ..
+        }] if id == "call-1" && item_id == "fc-1") && tool_call_id == "call-1"
     ));
 }
 
@@ -184,6 +236,7 @@ fn run_event_round_trip_assistant_completed() {
                     id: "tc-1".into(),
                     name: "read".into(),
                     input: serde_json::json!({"path": "/tmp"}),
+                    metadata: None,
                 },
             ],
             usage: Some(UsageSummary {
@@ -424,6 +477,7 @@ fn sse_map_tool_call_from_assistant_completed() {
                     id: "tc-1".into(),
                     name: "read".into(),
                     input: serde_json::json!({"path": "/tmp"}),
+                    metadata: None,
                 },
             ],
             usage: None,

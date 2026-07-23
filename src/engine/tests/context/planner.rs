@@ -35,6 +35,7 @@ fn tool_call_msg(id: &str, name: &str) -> AgentMessage {
             id: id.to_string(),
             name: name.to_string(),
             arguments: serde_json::json!({"path": "test.rs"}),
+            metadata: None,
         }],
         stop_reason: StopReason::Stop,
         model: "test".into(),

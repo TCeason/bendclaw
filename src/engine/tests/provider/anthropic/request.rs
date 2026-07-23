@@ -1,6 +1,6 @@
 use evotengine::provider::anthropic::request::*;
-use evotengine::provider::model::ModelConfig;
 use evotengine::provider::traits::*;
+use evotengine::provider::ModelConfig;
 use evotengine::types::*;
 
 use super::super::fixtures::stream_config::*;
@@ -147,8 +147,18 @@ fn test_budget_thinking_is_omitted_when_output_cap_cannot_fit_minimum() {
 
 #[test]
 fn test_budget_thinking_never_reexpands_past_remaining_context() {
-    let mut model_config = ModelConfig::anthropic("claude-sonnet-4-5", "Sonnet 4.5");
-    model_config.context_window = 10_000;
+    let model_config = resolved_model_config(
+        evotengine::provider::ApiProtocol::AnthropicMessages,
+        "anthropic",
+        "claude-sonnet-4-5",
+        "https://api.anthropic.com",
+        None,
+        Default::default(),
+        evotengine::provider::ModelOverrides {
+            context_window: Some(10_000),
+            ..Default::default()
+        },
+    );
     let config = StreamConfigBuilder::anthropic()
         .model("claude-sonnet-4-5")
         .model_config(model_config)
@@ -290,8 +300,18 @@ fn test_anthropic_max_tokens_clamped_to_remaining_context() {
     // A near-full context window must shrink the output budget so the request
     // never overflows the window (which providers reject). Mirrors pi's
     // clampMaxTokensToContext.
-    let mut model_config = ModelConfig::anthropic("claude-sonnet-4-20250514", "Claude Sonnet 4");
-    model_config.context_window = 10_000;
+    let model_config = resolved_model_config(
+        evotengine::provider::ApiProtocol::AnthropicMessages,
+        "anthropic",
+        "claude-sonnet-4-20250514",
+        "https://api.anthropic.com",
+        None,
+        Default::default(),
+        evotengine::provider::ModelOverrides {
+            context_window: Some(10_000),
+            ..Default::default()
+        },
+    );
     // ~8000 tokens of input (byte-length / 4) leaves < 64k of headroom.
     let big_message = "x".repeat(32_000);
     let config = StreamConfigBuilder::anthropic()
@@ -505,6 +525,7 @@ fn test_tool_result_with_image() {
                     id: "tc-1".into(),
                     name: "read".into(),
                     arguments: serde_json::json!({"path": "test.png"}),
+                    metadata: None,
                 }],
                 stop_reason: StopReason::ToolUse,
                 model: "test".into(),
@@ -547,15 +568,18 @@ fn test_tool_result_with_image() {
 }
 
 #[test]
-fn test_tool_result_text_only_uses_string() {
+fn responses_tool_metadata_does_not_leak_into_anthropic_tool_ids() {
     let config = StreamConfigBuilder::anthropic()
         .cache_disabled()
         .messages(vec![
             Message::Assistant {
                 content: vec![Content::ToolCall {
-                    id: "tc-1".into(),
+                    id: "call_1".into(),
                     name: "bash".into(),
                     arguments: serde_json::json!({"command": "echo hi"}),
+                    metadata: Some(ToolCallMetadata::OpenAiResponses {
+                        item_id: "fc_1".into(),
+                    }),
                 }],
                 stop_reason: StopReason::ToolUse,
                 model: "test".into(),
@@ -566,7 +590,7 @@ fn test_tool_result_text_only_uses_string() {
                 response_id: None,
             },
             Message::ToolResult {
-                tool_call_id: "tc-1".into(),
+                tool_call_id: "call_1".into(),
                 tool_name: "bash".into(),
                 content: vec![Content::Text {
                     text: "hello".into(),
@@ -580,7 +604,9 @@ fn test_tool_result_text_only_uses_string() {
 
     let body = build_request_body(&config, false);
     let msgs = body["messages"].as_array().unwrap();
+    assert_eq!(msgs[0]["content"][0]["id"], "call_1");
     let tool_result = &msgs[1]["content"][0];
+    assert_eq!(tool_result["tool_use_id"], "call_1");
     assert_eq!(tool_result["content"], "hello");
 }
 

@@ -1,8 +1,10 @@
 //! Wiremock-based mock server runners for provider integration tests.
 
 use evotengine::provider::error::ProviderError;
-use evotengine::provider::model::ModelConfig;
 use evotengine::provider::traits::*;
+use evotengine::provider::ModelConfig;
+use evotengine::provider::ModelOverrides;
+use evotengine::provider::ResolveModelRequest;
 use evotengine::provider::StreamOutcome;
 use evotengine::provider::StreamProvider;
 use evotengine::types::*;
@@ -101,9 +103,33 @@ pub async fn run_provider_json(
 /// Override the base_url in a StreamConfig's model_config to point at the mock server.
 /// For Anthropic (no model_config), creates one with the given base_url.
 fn override_base_url(mut config: StreamConfig, base_url: &str) -> StreamConfig {
-    let mc = config
-        .model_config
-        .get_or_insert_with(|| ModelConfig::anthropic("test-model", "Test Model"));
-    mc.base_url = base_url.to_string();
+    let model_config = match config.model_config.take() {
+        Some(existing) => ModelConfig::resolve(ResolveModelRequest {
+            protocol: existing.protocol(),
+            provider: existing.provider().to_string(),
+            model_id: existing.id().to_string(),
+            base_url: base_url.to_string(),
+            headers: existing.headers().clone(),
+            compat: existing.compat().cloned(),
+            route_capabilities: existing.route_capabilities(),
+            overrides: ModelOverrides {
+                context_window: Some(existing.context_window()),
+                max_output_tokens: Some(existing.max_tokens()),
+                supports_image: Some(existing.supports_image()),
+                reasoning: Some(existing.reasoning()),
+            },
+        }),
+        None => ModelConfig::resolve(ResolveModelRequest {
+            protocol: evotengine::provider::ApiProtocol::AnthropicMessages,
+            provider: "anthropic".into(),
+            model_id: "test-model".into(),
+            base_url: base_url.to_string(),
+            headers: Default::default(),
+            compat: None,
+            route_capabilities: Default::default(),
+            overrides: ModelOverrides::default(),
+        }),
+    };
+    config.model_config = Some(model_config);
     config
 }

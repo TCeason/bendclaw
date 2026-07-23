@@ -12,7 +12,7 @@ pub fn build_request_body(config: &StreamConfig) -> serde_json::Value {
     let reasoning = config
         .model_config
         .as_ref()
-        .map(|model| model.reasoning)
+        .map(|model| model.reasoning())
         .unwrap_or(true);
     let mut input = Vec::new();
 
@@ -21,8 +21,8 @@ pub fn build_request_body(config: &StreamConfig) -> serde_json::Value {
             && config
                 .model_config
                 .as_ref()
-                .and_then(|model| model.compat.as_ref())
-                .is_none_or(|compat| compat.has_cap(crate::provider::CompatCaps::DEVELOPER_ROLE))
+                .and_then(|model| model.compat())
+                .is_some_and(|compat| compat.has_cap(crate::provider::CompatCaps::DEVELOPER_ROLE))
         {
             "developer"
         } else {
@@ -56,15 +56,19 @@ pub fn build_request_body(config: &StreamConfig) -> serde_json::Value {
                             metadata: Some(ThinkingMetadata::OpenAiResponses { item }),
                             ..
                         } => input.push(item.clone()),
-                        Content::ToolCall { id, name, arguments } => {
-                            let (call_id, item_id) = split_tool_call_id(id);
+                        Content::ToolCall {
+                            id,
+                            name,
+                            arguments,
+                            metadata,
+                        } => {
                             let mut item = serde_json::json!({
                                 "type": "function_call",
-                                "call_id": call_id,
+                                "call_id": id,
                                 "name": name,
                                 "arguments": arguments.to_string(),
                             });
-                            if let Some(item_id) = item_id {
+                            if let Some(ToolCallMetadata::OpenAiResponses { item_id }) = metadata {
                                 item["id"] = serde_json::json!(item_id);
                             }
                             input.push(item);
@@ -80,10 +84,9 @@ pub fn build_request_body(config: &StreamConfig) -> serde_json::Value {
                 content,
                 ..
             } => {
-                let (call_id, _) = split_tool_call_id(tool_call_id);
                 input.push(serde_json::json!({
                     "type": "function_call_output",
-                    "call_id": call_id,
+                    "call_id": tool_call_id,
                     "output": tool_output(content, supports_image),
                 }));
             }
@@ -94,8 +97,15 @@ pub fn build_request_body(config: &StreamConfig) -> serde_json::Value {
         "model": config.model,
         "input": input,
         "stream": true,
-        "store": false,
     });
+    if config
+        .model_config
+        .as_ref()
+        .and_then(|model| model.compat())
+        .is_some_and(|compat| compat.has_cap(crate::provider::CompatCaps::STORE))
+    {
+        body["store"] = serde_json::json!(false);
+    }
     // Codex-style GPT Responses upstreams reject the text-generation budget;
     // they determine the output cap server-side. Other Responses-compatible
     // models retain evot's explicit budget.
@@ -122,8 +132,23 @@ pub fn build_request_body(config: &StreamConfig) -> serde_json::Value {
         );
     }
 
-    if let Some(key) = &config.prompt_cache_key {
-        body["prompt_cache_key"] = serde_json::json!(key);
+    if let Some(verbosity) = config
+        .model_config
+        .as_ref()
+        .and_then(|model| model.effective_verbosity())
+    {
+        body["text"] = serde_json::json!({"verbosity": verbosity});
+    }
+
+    if config
+        .model_config
+        .as_ref()
+        .and_then(|model| model.compat())
+        .is_some_and(|compat| compat.has_cap(crate::provider::CompatCaps::PROMPT_CACHE_KEY))
+    {
+        if let Some(key) = &config.prompt_cache_key {
+            body["prompt_cache_key"] = serde_json::json!(key);
+        }
     }
     apply_reasoning(&mut body, config, reasoning);
     body
@@ -139,20 +164,22 @@ fn apply_reasoning(body: &mut serde_json::Value, config: &StreamConfig, enabled:
     }
     let model = config.model_config.as_ref();
     let level = crate::provider::thinking::effective_thinking_level(config.thinking_level, model);
-    let override_effort = model.and_then(|m| m.thinking_effort_override(level));
-    let effort = override_effort.map(str::to_string).or(match level {
-        // `Off` is only expressible when the model map supplies a wire value
-        // (first-party gpt-5.x map `off` to "none" in the catalog). Endpoints
-        // without a mapping (github-copilot, third-party Responses proxies)
-        // omit the field instead of receiving an unsupported "none".
-        ThinkingLevel::Off => None,
-        ThinkingLevel::Minimal => Some("minimal".into()),
-        ThinkingLevel::Low => Some("low".into()),
-        ThinkingLevel::Medium => Some("medium".into()),
-        ThinkingLevel::High | ThinkingLevel::Adaptive => Some("high".into()),
-        ThinkingLevel::Xhigh => Some("xhigh".into()),
-        ThinkingLevel::Max => Some("max".into()),
-    });
+    let policy = model
+        .map(|model| model.thinking_level_policy(level))
+        .unwrap_or(crate::provider::model::ThinkingLevelPolicy::ProtocolDefault);
+    let effort = match policy {
+        crate::provider::model::ThinkingLevelPolicy::WireValue(effort) => Some(effort.to_string()),
+        crate::provider::model::ThinkingLevelPolicy::Unsupported => None,
+        crate::provider::model::ThinkingLevelPolicy::ProtocolDefault => match level {
+            ThinkingLevel::Off => None,
+            ThinkingLevel::Minimal => Some("minimal".into()),
+            ThinkingLevel::Low => Some("low".into()),
+            ThinkingLevel::Medium => Some("medium".into()),
+            ThinkingLevel::High | ThinkingLevel::Adaptive => Some("high".into()),
+            ThinkingLevel::Xhigh => Some("xhigh".into()),
+            ThinkingLevel::Max => Some("max".into()),
+        },
+    };
     if let Some(effort) = effort {
         if effort == "none" {
             body["reasoning"] = serde_json::json!({"effort": effort});
@@ -160,13 +187,6 @@ fn apply_reasoning(body: &mut serde_json::Value, config: &StreamConfig, enabled:
             body["reasoning"] = serde_json::json!({"effort": effort, "summary": "auto"});
             body["include"] = serde_json::json!(["reasoning.encrypted_content"]);
         }
-    }
-}
-
-fn split_tool_call_id(id: &str) -> (&str, Option<&str>) {
-    match id.split_once('|') {
-        Some((call_id, item_id)) => (call_id, Some(item_id)),
-        None => (id, None),
     }
 }
 

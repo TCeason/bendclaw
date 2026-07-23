@@ -137,7 +137,7 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
     let model_max = config
         .model_config
         .as_ref()
-        .map(|m| m.max_tokens)
+        .map(|m| m.max_tokens())
         .unwrap_or_else(|| config.requested_max_tokens());
 
     // Budget thinking expands an explicit visible-output cap first; the final
@@ -301,6 +301,7 @@ pub fn content_to_anthropic(content: &[Content]) -> Vec<serde_json::Value> {
                 id,
                 name,
                 arguments,
+                ..
             } => {
                 // Sanitise malformed tool_use input that can crash Bedrock's
                 // Anthropic-to-Converse translator. When the model produces

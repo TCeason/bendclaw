@@ -8,8 +8,8 @@ use tokio::sync::mpsc;
 use tracing::debug;
 
 use super::types::*;
+use crate::provider::compat::OpenAiCompat;
 use crate::provider::error::ProviderError;
-use crate::provider::model::OpenAiCompat;
 use crate::provider::stream_fallback::FallbackEmitter;
 use crate::provider::stream_http;
 use crate::provider::traits::StreamConfig;
@@ -134,7 +134,7 @@ fn parse_success_response(
     let provider = config
         .model_config
         .as_ref()
-        .map(|mc| mc.provider.clone())
+        .map(|mc| mc.provider().to_string())
         .unwrap_or_else(|| "openai".into());
 
     Ok(emitter.finalize(&config.model, &provider))

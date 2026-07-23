@@ -68,6 +68,7 @@ impl FallbackEmitter {
             id: id.to_string(),
             name: name.to_string(),
             arguments: arguments.clone(),
+            metadata: None,
         });
         let _ = self.tx.send(StreamEvent::ToolCallStart {
             content_index: idx,

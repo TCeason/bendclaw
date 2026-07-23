@@ -28,7 +28,9 @@ pub fn from_agent_messages(messages: &[evot_engine::AgentMessage]) -> Vec<Transc
 
 /// Convert TranscriptItems to engine AgentMessages.
 pub fn into_agent_messages(items: &[TranscriptItem]) -> Vec<evot_engine::AgentMessage> {
-    items.iter().map(agent_message_from_transcript).collect()
+    let mut messages: Vec<_> = items.iter().map(agent_message_from_transcript).collect();
+    evot_engine::migrate_legacy_responses_tool_ids(&mut messages);
+    messages
 }
 
 /// Convert a single engine AgentMessage to a TranscriptItem.
@@ -198,10 +200,12 @@ pub fn assistant_blocks_from_content(content: &[evot_engine::Content]) -> Vec<As
                 id,
                 name,
                 arguments,
+                metadata,
             } => Some(AssistantBlock::ToolCall {
                 id: id.clone(),
                 name: name.clone(),
                 input: scrub_tool_args(name, arguments),
+                metadata: metadata.clone(),
             }),
             _ => None,
         })
@@ -217,10 +221,16 @@ fn engine_content_from_assistant_blocks(blocks: &[AssistantBlock]) -> Vec<evot_e
                 thinking: text.clone(),
                 metadata: metadata.clone(),
             },
-            AssistantBlock::ToolCall { id, name, input } => evot_engine::Content::ToolCall {
+            AssistantBlock::ToolCall {
+                id,
+                name,
+                input,
+                metadata,
+            } => evot_engine::Content::ToolCall {
                 id: id.clone(),
                 name: name.clone(),
                 arguments: input.clone(),
+                metadata: metadata.clone(),
             },
         })
         .collect()

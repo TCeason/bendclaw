@@ -102,7 +102,7 @@ pub(crate) async fn decode_sse_stream(
         provider: config
             .model_config
             .as_ref()
-            .map(|model| model.provider.clone())
+            .map(|model| model.provider().to_string())
             .unwrap_or_else(|| "openai".into()),
         usage,
         timestamp: now_ms(),
@@ -205,7 +205,7 @@ fn process_event(
             let delta = string_field(&value, "delta");
             if let Some(OutputSlot::Tool {
                 content_index,
-                item_id,
+                item_id: _,
                 call_id,
                 name,
                 arguments,
@@ -217,14 +217,14 @@ fn process_event(
                     *started = true;
                     let _ = tx.send(StreamEvent::ToolCallStart {
                         content_index: *content_index,
-                        id: combined_tool_id(call_id, item_id),
+                        id: call_id.clone(),
                         name: name.clone(),
                     });
                 }
                 if *started && !delta.is_empty() {
                     let _ = tx.send(StreamEvent::ToolCallDelta {
                         content_index: *content_index,
-                        id: combined_tool_id(call_id, item_id),
+                        id: call_id.clone(),
                         name: name.clone(),
                         delta: delta.to_string(),
                     });
@@ -301,17 +301,17 @@ fn create_slot(
             let call_id = string_field(item, "call_id").to_string();
             let name = string_field(item, "name").to_string();
             let arguments = string_field(item, "arguments").to_string();
-            let id = combined_tool_id(&call_id, &item_id);
             content.push(Content::ToolCall {
-                id: id.clone(),
+                id: call_id.clone(),
                 name: name.clone(),
                 arguments: serde_json::Value::Object(Default::default()),
+                metadata: openai_tool_metadata(&item_id),
             });
             let started = !call_id.is_empty() || !name.is_empty();
             if started {
                 let _ = tx.send(StreamEvent::ToolCallStart {
                     content_index,
-                    id,
+                    id: call_id.clone(),
                     name: name.clone(),
                 });
             }
@@ -426,7 +426,7 @@ fn finish_slot(
                 arguments.clear();
                 arguments.push_str(final_arguments);
             }
-            let id = combined_tool_id(call_id, item_id);
+            let id = call_id.clone();
             if !*started {
                 let _ = tx.send(StreamEvent::ToolCallStart {
                     content_index: *content_index,
@@ -440,11 +440,13 @@ fn finish_slot(
                 id: current_id,
                 name: current_name,
                 arguments: current_arguments,
+                metadata,
             }) = content.get_mut(*content_index)
             {
                 current_id.clone_from(&id);
                 current_name.clone_from(name);
                 current_arguments.clone_from(&parsed);
+                *metadata = openai_tool_metadata(item_id);
             }
             let _ = tx.send(StreamEvent::ToolCallEnd {
                 content_index: *content_index,
@@ -538,11 +540,13 @@ fn capture_response_metadata(
     }
 }
 
-fn combined_tool_id(call_id: &str, item_id: &str) -> String {
+fn openai_tool_metadata(item_id: &str) -> Option<ToolCallMetadata> {
     if item_id.is_empty() {
-        call_id.to_string()
+        None
     } else {
-        format!("{call_id}|{item_id}")
+        Some(ToolCallMetadata::OpenAiResponses {
+            item_id: item_id.to_string(),
+        })
     }
 }
 

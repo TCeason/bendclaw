@@ -58,17 +58,13 @@ fn transform_message(
                 id,
                 name,
                 arguments,
-            } if target_api == ApiProtocol::OpenAiResponses && !same_model => {
-                Some(Content::ToolCall {
-                    id: id
-                        .split_once('|')
-                        .map(|(call_id, _)| call_id)
-                        .unwrap_or(&id)
-                        .to_string(),
-                    name,
-                    arguments,
-                })
-            }
+                metadata,
+            } => Some(Content::ToolCall {
+                id,
+                name,
+                arguments,
+                metadata: metadata.filter(|value| same_model && value.supports_api(target_api)),
+            }),
             other => Some(other),
         })
         .collect();

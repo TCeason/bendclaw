@@ -58,7 +58,7 @@ fn output_budget(ctx: &SummarizerContext, requested: u32) -> u32 {
     let model_max = ctx
         .model_config
         .as_ref()
-        .map(|model| model.max_tokens)
+        .map(|model| model.max_tokens())
         .unwrap_or(u32::MAX);
     requested.min(model_max).max(1)
 }

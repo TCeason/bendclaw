@@ -67,13 +67,14 @@ async fn anthropic_sse_preserves_configured_provider_identity() {
         anthropic_sse::message_delta("end_turn", 1),
         anthropic_sse::message_stop(),
     ]);
-    let model_config = evotengine::provider::ModelConfig::resolve(
+    let model_config = resolved_model_config(
         evotengine::provider::ApiProtocol::AnthropicMessages,
         "kimi-coding",
         "kimi-for-coding",
-        "Kimi For Coding",
         "https://api.kimi.com/coding",
         None,
+        Default::default(),
+        Default::default(),
     );
     let config = StreamConfigBuilder::anthropic()
         .model("kimi-for-coding")
@@ -309,7 +310,7 @@ async fn anthropic_sse_tool_call() {
         } => {
             assert_eq!(content.len(), 1);
             assert!(
-                matches!(&content[0], Content::ToolCall { id, name, arguments }
+                matches!(&content[0], Content::ToolCall { id, name, arguments, .. }
                     if id == "toolu_123" && name == "bash" && arguments["command"] == "ls -la")
             );
             assert_eq!(*stop_reason, StopReason::ToolUse);
@@ -360,7 +361,7 @@ async fn anthropic_sse_tool_call_accumulates_split_input_json() {
         Message::Assistant { content, .. } => {
             assert_eq!(content.len(), 1);
             assert!(
-                matches!(&content[0], Content::ToolCall { id, name, arguments }
+                matches!(&content[0], Content::ToolCall { id, name, arguments, .. }
                     if id == "toolu_123"
                         && name == "write"
                         && arguments["path"] == "demo.html"
@@ -701,13 +702,14 @@ async fn anthropic_json_fallback_success() {
     });
 
     let config = StreamConfigBuilder::anthropic()
-        .model_config(evotengine::provider::ModelConfig::resolve(
+        .model_config(resolved_model_config(
             evotengine::provider::ApiProtocol::AnthropicMessages,
             "kimi-coding",
             "kimi-for-coding",
-            "Kimi For Coding",
             "https://api.kimi.com/coding",
             None,
+            Default::default(),
+            Default::default(),
         ))
         .cache_disabled()
         .build();

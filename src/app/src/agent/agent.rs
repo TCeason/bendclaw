@@ -365,7 +365,7 @@ impl Agent {
             llm.max_tokens,
             llm.supports_image,
         );
-        if model.reasoning {
+        if model.reasoning() {
             model.supported_thinking_levels()
         } else {
             Vec::new()
@@ -429,7 +429,7 @@ impl Agent {
             llm.max_tokens,
             llm.supports_image,
         )
-        .context_window
+        .context_window()
     }
 
     /// Advance the thinking level to the next supported tier, wrapping around.
@@ -759,6 +759,7 @@ impl Agent {
                     used_fallback: result.used_fallback,
                     method: details.method,
                     remote_blob_bytes: details.remote_blob_bytes,
+                    fallback_reason: details.fallback_reason,
                 },
             ),
             _ => Ok(crate::compact::orchestrator::ManualCompactionOutcome::NothingToCompact),
@@ -1319,6 +1320,7 @@ fn format_manual_compaction_outcome(
             used_fallback,
             method,
             remote_blob_bytes,
+            fallback_reason,
             ..
         } => {
             let mut line = format!(
@@ -1336,9 +1338,21 @@ fn format_manual_compaction_outcome(
                         line.push_str(&format!(" Native blob: {bytes} bytes."));
                     }
                 }
-                Some("remote_failed_local") => line.push_str(
-                    "\nProvider-native remote compaction failed; local summarization was used.",
-                ),
+                Some("remote_failed_local") => {
+                    line.push_str(
+                        "\nProvider-native remote compaction failed; local summarization was used.",
+                    );
+                    if let Some(reason) = fallback_reason {
+                        line.push_str(&format!(" Reason: {reason}"));
+                    }
+                }
+                Some("local") if fallback_reason.is_some() => {
+                    if let Some(reason) = fallback_reason {
+                        line.push_str(&format!(
+                            "\nProvider-native remote compaction was unavailable; local summarization was used. Reason: {reason}"
+                        ));
+                    }
+                }
                 _ => {}
             }
             if *context_window > 0 && tokens_after >= context_window {

@@ -43,8 +43,18 @@ async fn rejected_compaction_replay_retries_once_with_fallback_text(
         .mount(&server)
         .await;
 
-    let mut model = evotengine::provider::ModelConfig::openai_responses("gpt-5.5", "GPT-5.5");
-    model.base_url = server.uri();
+    let model = resolved_model_config(
+        evotengine::provider::ApiProtocol::OpenAiResponses,
+        "openai",
+        "gpt-5.5",
+        &server.uri(),
+        Some(evotengine::provider::OpenAiCompat::openai()),
+        evotengine::provider::RouteCapabilities {
+            verbosity: true,
+            remote_compaction: true,
+        },
+        Default::default(),
+    );
     let config = StreamConfigBuilder::openai()
         .model("gpt-5.5")
         .model_config(model)
@@ -111,8 +121,18 @@ async fn native_openai_posts_responses_payload_to_responses_endpoint(
         .mount(&server)
         .await;
 
-    let mut model = evotengine::provider::ModelConfig::openai_responses("gpt-5.5", "GPT-5.5");
-    model.base_url = server.uri();
+    let model = resolved_model_config(
+        evotengine::provider::ApiProtocol::OpenAiResponses,
+        "openai",
+        "gpt-5.5",
+        &server.uri(),
+        Some(evotengine::provider::OpenAiCompat::openai()),
+        evotengine::provider::RouteCapabilities {
+            verbosity: true,
+            remote_compaction: true,
+        },
+        Default::default(),
+    );
     let config = StreamConfigBuilder::openai()
         .model("gpt-5.5")
         .model_config(model)
@@ -182,8 +202,16 @@ async fn responses_streams_reasoning_text_tools_and_usage() -> Result<(), Box<dy
     assert!(matches!(&content[1], Content::Text { text } if text == "Hello"));
     assert!(matches!(
         &content[2],
-        Content::ToolCall { id, name, arguments }
-            if id == "call_1|fc_1" && name == "bash" && arguments["command"] == "pwd"
+        Content::ToolCall {
+            id,
+            name,
+            arguments,
+            metadata: Some(ToolCallMetadata::OpenAiResponses { item_id }),
+        }
+            if id == "call_1"
+                && item_id == "fc_1"
+                && name == "bash"
+                && arguments["command"] == "pwd"
     ));
     assert!(events.iter().any(
         |event| matches!(event, StreamEvent::ThinkingDelta { delta, .. } if delta == "Think")
@@ -193,7 +221,7 @@ async fn responses_streams_reasoning_text_tools_and_usage() -> Result<(), Box<dy
         .any(|event| matches!(event, StreamEvent::TextDelta { delta, .. } if delta == "Hello")));
     assert!(events
         .iter()
-        .any(|event| matches!(event, StreamEvent::ToolCallEnd { id, .. } if id == "call_1|fc_1")));
+        .any(|event| matches!(event, StreamEvent::ToolCallEnd { id, .. } if id == "call_1")));
     Ok(())
 }
 
@@ -227,8 +255,16 @@ async fn responses_accepts_done_only_items_and_backfills_reasoning_metadata(
     assert!(matches!(&content[1], Content::Text { text } if text == "Cannot comply"));
     assert!(matches!(
         &content[2],
-        Content::ToolCall { id, name, arguments }
-            if id == "call_1|fc_1" && name == "bash" && arguments["command"] == "pwd"
+        Content::ToolCall {
+            id,
+            name,
+            arguments,
+            metadata: Some(ToolCallMetadata::OpenAiResponses { item_id }),
+        }
+            if id == "call_1"
+                && item_id == "fc_1"
+                && name == "bash"
+                && arguments["command"] == "pwd"
     ));
     Ok(())
 }

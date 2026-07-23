@@ -126,6 +126,7 @@ impl StreamProvider for MockProvider {
                             id,
                             name: call.name.clone(),
                             arguments: call.arguments.clone(),
+                            metadata: None,
                         }
                     })
                     .collect();

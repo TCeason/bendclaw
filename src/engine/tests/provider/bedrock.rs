@@ -42,6 +42,7 @@ fn test_content_to_bedrock() {
             id: "tc-1".into(),
             name: "bash".into(),
             arguments: serde_json::json!({"command": "ls"}),
+            metadata: None,
         },
     ];
     let blocks = content_to_bedrock(&content);

@@ -713,6 +713,7 @@ describe('buildVerboseEvent', () => {
       result: {
         type: 'compacted',
         method: 'remote_failed_local',
+        fallback_reason: 'Upstream error 400: Store must be set to false',
         before_message_count: 20,
         after_message_count: 8,
         before_tokens: 50000,
@@ -721,6 +722,7 @@ describe('buildVerboseEvent', () => {
       },
     })
     expect(fallback).toContain('remote failed → local')
+    expect(fallback).toContain('fallback  Upstream error 400: Store must be set to false')
     expect(isVisibleEvent(fallback)).toBe(true)
     expect(isVisibleEvent('[COMPACT] ✓ · skipped · within budget')).toBe(false)
   })

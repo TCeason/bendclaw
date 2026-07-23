@@ -90,6 +90,7 @@ pub async fn execute_with_options(
     // Step 3: Try provider-native remote compaction first (GPT models on the
     // Responses protocol). Any failure falls back to local text summarization.
     let mut remote_failed = false;
+    let mut fallback_reason = summarizer_ctx.and_then(remote::unavailable_reason);
     let remote_outcome = match summarizer_ctx {
         Some(ctx) if remote::supports(ctx) => {
             notify_compaction_phase(&observer, CompactionPhase::Remote);
@@ -113,6 +114,7 @@ pub async fn execute_with_options(
                 Err(remote::RemoteError::Failed(reason)) => {
                     tracing::warn!("remote compaction failed, falling back to local: {reason}");
                     remote_failed = true;
+                    fallback_reason = Some(remote::bounded_fallback_reason(&reason));
                     notify_compaction_phase(&observer, CompactionPhase::LocalFallback);
                     None
                 }
@@ -210,6 +212,7 @@ pub async fn execute_with_options(
             CompactionMethod::Local
         }),
         remote_blob_bytes: None,
+        fallback_reason,
     };
 
     CompactionOutcome {
@@ -290,6 +293,7 @@ fn assemble_remote(
         current_run_reclaimed,
         method: Some(CompactionMethod::Remote),
         remote_blob_bytes: Some(encrypted_bytes),
+        fallback_reason: None,
     };
 
     CompactionOutcome {

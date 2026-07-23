@@ -1,8 +1,8 @@
 //! OpenAI-compatible request body building and content conversion.
 
-use crate::provider::model::CompatCaps;
-use crate::provider::model::MaxTokensField;
-use crate::provider::model::OpenAiCompat;
+use crate::provider::compat::CompatCaps;
+use crate::provider::compat::MaxTokensField;
+use crate::provider::compat::OpenAiCompat;
 use crate::provider::traits::StreamConfig;
 use crate::types::*;
 
@@ -61,6 +61,7 @@ pub fn build_request_body(config: &StreamConfig, compat: &OpenAiCompat) -> serde
                             id,
                             name,
                             arguments,
+                            ..
                         } => {
                             tool_calls.push(serde_json::json!({
                                 "id": id,
@@ -201,6 +202,14 @@ pub fn build_request_body(config: &StreamConfig, compat: &OpenAiCompat) -> serde
         body["tools"] = serde_json::json!(tools);
     }
 
+    if let Some(verbosity) = config
+        .model_config
+        .as_ref()
+        .and_then(|model| model.effective_verbosity())
+    {
+        body["verbosity"] = serde_json::json!(verbosity);
+    }
+
     apply_reasoning_effort(&mut body, config, compat);
 
     body
@@ -240,15 +249,18 @@ fn apply_reasoning_effort(
     compat: &OpenAiCompat,
 ) {
     let model = config.model_config.as_ref();
-    if !model.map(|m| m.reasoning).unwrap_or(true) {
+    if !model.map(|m| m.reasoning()).unwrap_or(true) {
         return;
     }
 
     let level = crate::provider::thinking::effective_thinking_level(config.thinking_level, model);
-    let mapped = model.and_then(|mc| mc.thinking_effort_override(level));
-    let effort = match mapped {
-        Some(effort) => Some(effort.to_string()),
-        None => match level {
+    let policy = model
+        .map(|model| model.thinking_level_policy(level))
+        .unwrap_or(crate::provider::model::ThinkingLevelPolicy::ProtocolDefault);
+    let effort = match policy {
+        crate::provider::model::ThinkingLevelPolicy::WireValue(effort) => Some(effort.to_string()),
+        crate::provider::model::ThinkingLevelPolicy::Unsupported => None,
+        crate::provider::model::ThinkingLevelPolicy::ProtocolDefault => match level {
             ThinkingLevel::Minimal => Some("minimal".into()),
             ThinkingLevel::Low => Some("low".into()),
             ThinkingLevel::Medium => Some("medium".into()),
@@ -256,18 +268,18 @@ fn apply_reasoning_effort(
             ThinkingLevel::Xhigh => Some("xhigh".into()),
             ThinkingLevel::Max => Some("max".into()),
             ThinkingLevel::Off => model
-                .filter(|m| m.can_disable_thinking())
+                .filter(|model| model.can_disable_thinking())
                 .map(|_| "none".into()),
         },
     };
 
     match compat.thinking_format {
-        crate::provider::model::ThinkingFormat::OpenRouter => {
+        crate::provider::compat::ThinkingFormat::OpenRouter => {
             if let Some(effort) = effort {
                 body["reasoning"] = serde_json::json!({ "effort": effort });
             }
         }
-        crate::provider::model::ThinkingFormat::DeepSeek => {
+        crate::provider::compat::ThinkingFormat::DeepSeek => {
             body["thinking"] = if level == ThinkingLevel::Off {
                 serde_json::json!({ "type": "disabled" })
             } else {
@@ -279,12 +291,17 @@ fn apply_reasoning_effort(
                 }
             }
         }
-        crate::provider::model::ThinkingFormat::OpenAi
+        crate::provider::compat::ThinkingFormat::OpenAi
             if compat.has_cap(CompatCaps::REASONING_EFFORT) =>
         {
             // OpenAI-style transports only send an off value when the model map
             // explicitly supplies one. An absent mapping means omit the field.
-            if level != ThinkingLevel::Off || mapped.is_some() {
+            if level != ThinkingLevel::Off
+                || matches!(
+                    policy,
+                    crate::provider::model::ThinkingLevelPolicy::WireValue(_)
+                )
+            {
                 if let Some(effort) = effort {
                     body["reasoning_effort"] = serde_json::json!(effort);
                 }

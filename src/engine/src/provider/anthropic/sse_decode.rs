@@ -114,7 +114,7 @@ pub(crate) async fn decode_sse_stream(
         provider: config
             .model_config
             .as_ref()
-            .map(|model| model.provider.clone())
+            .map(|model| model.provider().to_string())
             .unwrap_or_else(|| "anthropic".into()),
         usage: state.usage,
         timestamp: now_ms(),
@@ -251,6 +251,7 @@ fn process_sse_event(
                         id: id.clone(),
                         name: name.clone(),
                         arguments: serde_json::Value::Object(Default::default()),
+                        metadata: None,
                     });
                     let _ = tx.send(StreamEvent::ToolCallStart {
                         content_index: idx,
@@ -340,6 +341,7 @@ fn process_sse_event(
                 id,
                 name,
                 arguments,
+                ..
             }) = state.content.get_mut(idx)
             {
                 if !input.is_empty() {

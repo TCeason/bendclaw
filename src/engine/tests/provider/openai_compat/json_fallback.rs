@@ -109,7 +109,7 @@ fn openai_success_tool_calls_response() {
         } => {
             assert_eq!(content.len(), 1);
             assert!(
-                matches!(&content[0], Content::ToolCall { id, name, arguments } if id == "call_abc123" && name == "bash" && arguments["command"] == "ls -la")
+                matches!(&content[0], Content::ToolCall { id, name, arguments, .. } if id == "call_abc123" && name == "bash" && arguments["command"] == "ls -la")
             );
             assert_eq!(*stop_reason, StopReason::ToolUse);
         }

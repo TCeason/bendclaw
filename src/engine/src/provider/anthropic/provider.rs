@@ -29,7 +29,7 @@ impl StreamProvider for AnthropicProvider {
         let base_url = config
             .model_config
             .as_ref()
-            .map(|mc| mc.base_url.trim_end_matches('/').to_string())
+            .map(|mc| mc.base_url().trim_end_matches('/').to_string())
             .filter(|url: &String| !url.is_empty())
             .unwrap_or_else(|| "https://api.anthropic.com".into());
 
@@ -65,7 +65,7 @@ impl StreamProvider for AnthropicProvider {
 
         // Extra headers from model config (e.g. custom auth overrides)
         if let Some(mc) = &config.model_config {
-            for (k, v) in &mc.headers {
+            for (k, v) in mc.headers() {
                 builder = builder.header(k, v);
             }
         }

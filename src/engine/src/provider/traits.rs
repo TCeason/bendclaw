@@ -70,7 +70,7 @@ impl StreamConfig {
     /// Caller output cap before context-window clamping.
     pub fn requested_max_tokens(&self) -> u32 {
         self.max_tokens
-            .or(self.model_config.as_ref().map(|m| m.max_tokens))
+            .or(self.model_config.as_ref().map(|m| m.max_tokens()))
             .unwrap_or(8192)
             .max(1)
     }
@@ -84,7 +84,7 @@ impl StreamConfig {
         let context_window = self
             .model_config
             .as_ref()
-            .map(|m| m.context_window)
+            .map(|m| m.context_window())
             .unwrap_or(0);
         if context_window == 0 {
             return requested.max(1);

@@ -91,6 +91,7 @@ export function transcriptToMessages(items: RawItem[]): UIMessage[] {
           messagesAfter: item.messages_after ?? 0,
           method: typeof details?.method === 'string' ? details.method : undefined,
           remoteBlobBytes: typeof details?.remote_blob_bytes === 'number' ? details.remote_blob_bytes : undefined,
+          fallbackReason: typeof details?.fallback_reason === 'string' ? details.fallback_reason : undefined,
         },
       })
     }

@@ -42,6 +42,12 @@ pub enum ThinkingMetadata {
     OpenAiCompletions { field: ReasoningField },
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolCallMetadata {
+    OpenAiResponses { item_id: String },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningField {
@@ -63,6 +69,18 @@ impl ThinkingMetadata {
             ) | (
                 Self::OpenAiCompletions { .. },
                 crate::provider::ApiProtocol::OpenAiCompletions
+            )
+        )
+    }
+}
+
+impl ToolCallMetadata {
+    pub fn supports_api(&self, api: crate::provider::ApiProtocol) -> bool {
+        matches!(
+            (self, api),
+            (
+                Self::OpenAiResponses { .. },
+                crate::provider::ApiProtocol::OpenAiResponses
             )
         )
     }
@@ -90,6 +108,8 @@ pub enum Content {
         id: String,
         name: String,
         arguments: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        metadata: Option<ToolCallMetadata>,
     },
 }
 
@@ -250,5 +270,53 @@ impl AgentMessage {
 impl From<Message> for AgentMessage {
     fn from(m: Message) -> Self {
         Self::Llm(m)
+    }
+}
+
+/// Upgrade persisted Responses tool identities from the former
+/// `call_id|item_id` encoding to the canonical ID plus provider metadata.
+pub fn migrate_legacy_responses_tool_ids(messages: &mut [AgentMessage]) {
+    let mut migrated_ids = std::collections::HashMap::new();
+
+    for message in messages.iter_mut() {
+        let AgentMessage::Llm(Message::Assistant { content, .. }) = message else {
+            continue;
+        };
+        for block in content {
+            let Content::ToolCall { id, metadata, .. } = block else {
+                continue;
+            };
+            let Some((call_id, item_id)) = id.split_once('|') else {
+                continue;
+            };
+            let identifiable = match metadata.as_ref() {
+                Some(ToolCallMetadata::OpenAiResponses {
+                    item_id: metadata_item_id,
+                }) => metadata_item_id == item_id,
+                None => item_id.starts_with("fc_") || item_id.starts_with("fc-"),
+            };
+            if call_id.is_empty() || !identifiable {
+                continue;
+            }
+
+            let legacy_id = id.clone();
+            let call_id = call_id.to_string();
+            if metadata.is_none() {
+                *metadata = Some(ToolCallMetadata::OpenAiResponses {
+                    item_id: item_id.to_string(),
+                });
+            }
+            id.clone_from(&call_id);
+            migrated_ids.insert(legacy_id, call_id);
+        }
+    }
+
+    for message in messages {
+        let AgentMessage::Llm(Message::ToolResult { tool_call_id, .. }) = message else {
+            continue;
+        };
+        if let Some(call_id) = migrated_ids.get(tool_call_id) {
+            tool_call_id.clone_from(call_id);
+        }
     }
 }

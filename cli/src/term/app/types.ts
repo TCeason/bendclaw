@@ -31,6 +31,7 @@ export interface UICompaction {
   messagesAfter: number
   method?: string
   remoteBlobBytes?: number
+  fallbackReason?: string
 }
 
 export type UIAssistantBlock =
