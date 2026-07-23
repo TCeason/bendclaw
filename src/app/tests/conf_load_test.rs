@@ -303,7 +303,7 @@ EVOT_LLM_CUSTOM_API_KEY=key
 EVOT_LLM_CUSTOM_BASE_URL=https://example.com
 EVOT_LLM_CUSTOM_MODEL=gpt-5.6-sol
 EVOT_LLM_CUSTOM_PROTOCOL=openai_responses
-EVOT_LLM_CUSTOM_COMPAT_CAPS=verbosity,remote_compaction
+EVOT_LLM_CUSTOM_COMPAT_CAPS=store,verbosity,remote_compaction
 ",
     )?;
 
@@ -314,8 +314,9 @@ EVOT_LLM_CUSTOM_COMPAT_CAPS=verbosity,remote_compaction
 
     let config = result?;
     let provider = config.providers.get("custom").ok_or("missing provider")?;
-    assert!(provider.compat_caps.contains(CompatCaps::VERBOSITY));
-    assert!(provider.compat_caps.contains(CompatCaps::REMOTE_COMPACTION));
+    assert!(provider.route_capabilities.verbosity);
+    assert!(provider.route_capabilities.remote_compaction);
+    assert_eq!(provider.compat_caps, CompatCaps::STORE);
     Ok(())
 }
 
@@ -687,6 +688,7 @@ fn resolve_model_spec_by_model_name() -> TestResult {
             base_url: "https://api.anthropic.com".into(),
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
+            route_capabilities: Default::default(),
             thinking_level: None,
             context_window: None,
             max_tokens: None,
@@ -700,6 +702,7 @@ fn resolve_model_spec_by_model_name() -> TestResult {
             base_url: "https://api.deepseek.com".into(),
             models: vec!["deepseek-chat".into()],
             compat_caps: Default::default(),
+            route_capabilities: Default::default(),
             thinking_level: None,
             context_window: None,
             max_tokens: None,
@@ -714,6 +717,7 @@ fn resolve_model_spec_by_model_name() -> TestResult {
             base_url: "https://openrouter.ai/api/v1".into(),
             models: vec!["tencent/hy3:free".into()],
             compat_caps: Default::default(),
+            route_capabilities: Default::default(),
             thinking_level: None,
             context_window: None,
             max_tokens: None,
@@ -755,6 +759,7 @@ fn with_model_sets_override() -> TestResult {
             base_url: "https://api.anthropic.com".into(),
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
+            route_capabilities: Default::default(),
             thinking_level: None,
             context_window: None,
             max_tokens: None,
@@ -786,6 +791,7 @@ fn with_model_none_is_noop() -> TestResult {
             base_url: "https://api.anthropic.com".into(),
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
+            route_capabilities: Default::default(),
             thinking_level: None,
             context_window: None,
             max_tokens: None,
@@ -816,6 +822,7 @@ fn validate_missing_api_key() {
             base_url: "https://api.anthropic.com".into(),
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
+            route_capabilities: Default::default(),
             thinking_level: None,
             context_window: None,
             max_tokens: None,
@@ -837,6 +844,7 @@ fn validate_missing_base_url() {
             base_url: String::new(),
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
+            route_capabilities: Default::default(),
             thinking_level: None,
             context_window: None,
             max_tokens: None,
@@ -858,6 +866,7 @@ fn validate_missing_model() {
             base_url: "https://api.anthropic.com".into(),
             models: Vec::new(),
             compat_caps: Default::default(),
+            route_capabilities: Default::default(),
             thinking_level: None,
             context_window: None,
             max_tokens: None,
@@ -879,6 +888,7 @@ fn validate_model_override_bypasses_empty_profile_model() {
             base_url: "https://api.anthropic.com".into(),
             models: Vec::new(),
             compat_caps: Default::default(),
+            route_capabilities: Default::default(),
             thinking_level: None,
             context_window: None,
             max_tokens: None,
@@ -991,6 +1001,7 @@ fn make_multi_provider_config() -> Config {
             base_url: "https://api.anthropic.com".into(),
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
+            route_capabilities: Default::default(),
             thinking_level: None,
             context_window: None,
             max_tokens: None,
@@ -1004,6 +1015,7 @@ fn make_multi_provider_config() -> Config {
             base_url: "https://api.openai.com/v1".into(),
             models: vec!["gpt-5.4".into()],
             compat_caps: Default::default(),
+            route_capabilities: Default::default(),
             thinking_level: None,
             context_window: None,
             max_tokens: None,
@@ -1017,6 +1029,7 @@ fn make_multi_provider_config() -> Config {
             base_url: "https://api.deepseek.com".into(),
             models: vec!["deepseek-chat".into()],
             compat_caps: Default::default(),
+            route_capabilities: Default::default(),
             thinking_level: None,
             context_window: None,
             max_tokens: None,
@@ -1044,6 +1057,7 @@ fn resolve_llm_config(
         model: model_override.unwrap_or_else(|| profile.model().to_string()),
         thinking_level: config.llm.thinking_level,
         compat_caps: Default::default(),
+        route_capabilities: Default::default(),
         context_window: None,
         max_tokens: None,
         supports_image: None,
@@ -1128,6 +1142,7 @@ fn set_provider_validates_incomplete_provider() {
             base_url: "https://api.anthropic.com".into(),
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
+            route_capabilities: Default::default(),
             thinking_level: None,
             context_window: None,
             max_tokens: None,
@@ -1141,6 +1156,7 @@ fn set_provider_validates_incomplete_provider() {
             base_url: "https://example.com".into(),
             models: vec!["some-model".into()],
             compat_caps: Default::default(),
+            route_capabilities: Default::default(),
             thinking_level: None,
             context_window: None,
             max_tokens: None,

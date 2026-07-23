@@ -29,6 +29,7 @@ pub use summarizer::mode::DEFAULT_SUMMARY_RESERVE_TOKENS;
 pub use summarizer::SummarizerContext;
 pub use summarizer::SummarizerInput;
 pub use summarizer::SummarizerMode;
+pub use types::bounded_fallback_reason;
 pub use types::AfterResponseAction;
 pub use types::CompactionMethod;
 pub use types::CompactionObserver;

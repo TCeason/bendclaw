@@ -11,6 +11,7 @@ use super::summarizer::mode::SummarizerContext;
 use super::summarizer::serialize;
 use super::summarizer::types::SummarizerInput;
 use super::transforms;
+use super::types::bounded_fallback_reason;
 use super::types::notify_compaction_phase;
 use super::types::CompactionMethod;
 use super::types::CompactionObserver;
@@ -114,7 +115,7 @@ pub async fn execute_with_options(
                 Err(remote::RemoteError::Failed(reason)) => {
                     tracing::warn!("remote compaction failed, falling back to local: {reason}");
                     remote_failed = true;
-                    fallback_reason = Some(remote::bounded_fallback_reason(&reason));
+                    fallback_reason = Some(bounded_fallback_reason(&reason));
                     notify_compaction_phase(&observer, CompactionPhase::LocalFallback);
                     None
                 }

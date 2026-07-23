@@ -158,6 +158,7 @@ pub fn apply_settings(config: &mut Config, update: &SettingsUpdate) -> Result<()
             None => existing.map(|e| e.api_key.clone()).unwrap_or_default(),
         };
         let compat_caps = existing.map(|e| e.compat_caps).unwrap_or(CompatCaps::NONE);
+        let route_capabilities = existing.map(|e| e.route_capabilities).unwrap_or_default();
         let context_window = existing.and_then(|e| e.context_window);
         let max_tokens = existing.and_then(|e| e.max_tokens);
         let supports_image = existing.and_then(|e| e.supports_image);
@@ -173,6 +174,7 @@ pub fn apply_settings(config: &mut Config, update: &SettingsUpdate) -> Result<()
             base_url: p.base_url.trim().to_string(),
             models,
             compat_caps,
+            route_capabilities,
             thinking_level,
             context_window,
             max_tokens,

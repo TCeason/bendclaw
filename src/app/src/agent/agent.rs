@@ -361,6 +361,7 @@ impl Agent {
             &llm.model,
             Some(&llm.base_url),
             llm.compat_caps,
+            llm.route_capabilities,
             llm.context_window,
             llm.max_tokens,
             llm.supports_image,
@@ -425,6 +426,7 @@ impl Agent {
             &llm.model,
             Some(&llm.base_url),
             llm.compat_caps,
+            llm.route_capabilities,
             llm.context_window,
             llm.max_tokens,
             llm.supports_image,
@@ -1254,6 +1256,7 @@ impl Agent {
                 tools,
                 thinking_level: llm.thinking_level,
                 compat_caps: llm.compat_caps,
+                route_capabilities: llm.route_capabilities,
                 context_window: llm.context_window,
                 max_tokens: llm.max_tokens,
                 supports_image: llm.supports_image,
@@ -1331,14 +1334,14 @@ fn format_manual_compaction_outcome(
                     "\nNote: the LLM summary was unavailable; a deterministic fallback summary was used.",
                 );
             }
-            match method.as_deref() {
-                Some("remote") => {
+            match method {
+                Some(evot_engine::CompactionMethod::Remote) => {
                     line.push_str("\nProvider-native remote compaction was used.");
                     if let Some(bytes) = remote_blob_bytes {
                         line.push_str(&format!(" Native blob: {bytes} bytes."));
                     }
                 }
-                Some("remote_failed_local") => {
+                Some(evot_engine::CompactionMethod::RemoteFailedLocal) => {
                     line.push_str(
                         "\nProvider-native remote compaction failed; local summarization was used.",
                     );
@@ -1346,7 +1349,7 @@ fn format_manual_compaction_outcome(
                         line.push_str(&format!(" Reason: {reason}"));
                     }
                 }
-                Some("local") if fallback_reason.is_some() => {
+                Some(evot_engine::CompactionMethod::Local) if fallback_reason.is_some() => {
                     if let Some(reason) = fallback_reason {
                         line.push_str(&format!(
                             "\nProvider-native remote compaction was unavailable; local summarization was used. Reason: {reason}"

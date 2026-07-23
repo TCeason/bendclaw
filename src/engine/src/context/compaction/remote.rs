@@ -173,11 +173,6 @@ pub fn unavailable_reason(ctx: &SummarizerContext) -> Option<String> {
         .map(str::to_string)
 }
 
-pub fn bounded_fallback_reason(reason: &str) -> String {
-    let normalized = reason.split_whitespace().collect::<Vec<_>>().join(" ");
-    normalized.chars().take(500).collect()
-}
-
 /// Request server-side compaction of the messages being evicted.
 pub async fn compact(
     ctx: &SummarizerContext,

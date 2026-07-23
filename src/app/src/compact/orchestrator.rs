@@ -9,6 +9,7 @@ use crate::conf::LlmConfig;
 use crate::error::Result;
 use crate::types::CompactDetails;
 use crate::types::CompactReason;
+use crate::types::CompactionMethod;
 use crate::types::TranscriptItem;
 
 #[derive(Debug, Clone)]
@@ -72,7 +73,7 @@ pub enum ManualCompactionOutcome {
         compaction_level: usize,
         used_fallback: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
-        method: Option<String>,
+        method: Option<CompactionMethod>,
         #[serde(skip_serializing_if = "Option::is_none")]
         remote_blob_bytes: Option<usize>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -179,7 +180,7 @@ pub async fn compact_session_with_status(
     let has_summarizer = request.summarizer.is_some();
     let summary_override = request.summary_override.filter(|s| !s.trim().is_empty());
     let mut used_fallback = !has_summarizer && summary_override.is_none();
-    let mut compaction_method: Option<String> = None;
+    let mut compaction_method: Option<CompactionMethod> = None;
     let mut fallback_reason: Option<String> = None;
     let mut remote_result: Option<(
         evot_engine::context::compaction::remote::RemoteCompaction,
@@ -230,7 +231,7 @@ pub async fn compact_session_with_status(
                 };
                 match remote {
                     Ok(Ok(compaction)) => {
-                        compaction_method = Some("remote".into());
+                        compaction_method = Some(CompactionMethod::Remote);
                         remote_result = Some((compaction, ctx));
                     }
                     Ok(Err(evot_engine::context::compaction::remote::RemoteError::Cancelled)) => {
@@ -245,11 +246,9 @@ pub async fn compact_session_with_status(
                     ))) => {
                         tracing::warn!(stage = "compact", status = "remote_failed", %error,
                             "manual remote compaction failed; falling back to local summary");
-                        compaction_method = Some("remote_failed_local".into());
+                        compaction_method = Some(CompactionMethod::RemoteFailedLocal);
                         fallback_reason = Some(
-                            evot_engine::context::compaction::remote::bounded_fallback_reason(
-                                &error,
-                            ),
+                            evot_engine::context::compaction::bounded_fallback_reason(&error),
                         );
                         notify_phase(&observer, ManualCompactionPhase::LocalFallback);
                     }
@@ -260,7 +259,7 @@ pub async fn compact_session_with_status(
                             status = "remote_timeout",
                             "manual remote compaction timed out; falling back to local summary"
                         );
-                        compaction_method = Some("remote_failed_local".into());
+                        compaction_method = Some(CompactionMethod::RemoteFailedLocal);
                         fallback_reason = Some(format!(
                             "remote compaction timed out after {} seconds",
                             summarizer.timeout.as_secs()
@@ -269,7 +268,7 @@ pub async fn compact_session_with_status(
                     }
                 }
             } else {
-                compaction_method = Some("local".into());
+                compaction_method = Some(CompactionMethod::Local);
                 fallback_reason =
                     evot_engine::context::compaction::remote::unavailable_reason(&ctx);
                 notify_phase(&observer, ManualCompactionPhase::Local);
@@ -279,7 +278,7 @@ pub async fn compact_session_with_status(
 
     let summary = if let Some(summary) = summary_override {
         notify_phase(&observer, ManualCompactionPhase::Local);
-        compaction_method = Some("local".into());
+        compaction_method = Some(CompactionMethod::Local);
         summary
     } else if remote_result.is_some() {
         // Remote state is authoritative for compatible future turns. Keep a
@@ -313,14 +312,14 @@ pub async fn compact_session_with_status(
         match generated {
             Some(summary) => {
                 if compaction_method.is_none() {
-                    compaction_method = Some("local".into());
+                    compaction_method = Some(CompactionMethod::Local);
                 }
                 summary
             }
             None => {
                 used_fallback = true;
                 if compaction_method.is_none() {
-                    compaction_method = Some("local".into());
+                    compaction_method = Some(CompactionMethod::Local);
                 }
                 build_summary(
                     &compact_entries,
@@ -332,7 +331,7 @@ pub async fn compact_session_with_status(
         }
     } else {
         notify_phase(&observer, ManualCompactionPhase::Local);
-        compaction_method = Some("local".into());
+        compaction_method = Some(CompactionMethod::Local);
         build_summary(
             &compact_entries,
             &plan,
@@ -378,7 +377,7 @@ pub async fn compact_session_with_status(
     details.read_files.dedup();
     details.modified_files.sort();
     details.modified_files.dedup();
-    details.method = compaction_method.clone();
+    details.method = compaction_method;
     details.remote_blob_bytes = remote_blob_bytes;
     details.fallback_reason = fallback_reason;
 
@@ -398,7 +397,7 @@ pub async fn compact_session_with_status(
     state.timestamp = evot_engine::now_ms();
     state.generation = state.generation.saturating_add(1);
     state.last_summary = Some(summary.clone());
-    state.context_summary_message = if compaction_method.as_deref() == Some("remote") {
+    state.context_summary_message = if compaction_method == Some(CompactionMethod::Remote) {
         None
     } else {
         new_engine_context.first().and_then(exact_user_text)
@@ -472,6 +471,7 @@ fn summarizer_context(summarizer: &CompactSummarizer) -> evot_engine::Summarizer
             &summarizer.llm.model,
             Some(&summarizer.llm.base_url),
             summarizer.llm.compat_caps,
+            summarizer.llm.route_capabilities,
             summarizer.llm.context_window,
             summarizer.llm.max_tokens,
             summarizer.llm.supports_image,

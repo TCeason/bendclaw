@@ -5,36 +5,12 @@ use super::capabilities::ModelCapabilities;
 use super::capabilities::ThinkingLevelPolicy;
 use super::capabilities::Verbosity;
 use super::overrides::ModelOverrides;
-use crate::provider::compat::is_native_openai_responses_route;
-use crate::provider::compat::CompatCaps;
-use crate::provider::compat::OpenAiCompat;
-use crate::provider::protocol::ApiProtocol;
+use crate::provider::route::default_base_url;
+use crate::provider::route::ApiProtocol;
+use crate::provider::route::OpenAiCompat;
+use crate::provider::route::RouteCapabilities;
+use crate::provider::route::RouteCapabilityOverrides;
 use crate::ThinkingLevel;
-
-/// Features implemented by the selected transport route.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct RouteCapabilities {
-    pub verbosity: bool,
-    pub remote_compaction: bool,
-}
-
-impl RouteCapabilities {
-    /// Compose endpoint-native route support with explicit compatibility
-    /// overrides. Model support is intersected separately by `ModelConfig`.
-    pub fn for_route(
-        protocol: ApiProtocol,
-        provider: &str,
-        base_url: &str,
-        explicit: CompatCaps,
-    ) -> Self {
-        let native_responses = is_native_openai_responses_route(provider, base_url);
-        Self {
-            verbosity: native_responses || explicit.contains(CompatCaps::VERBOSITY),
-            remote_compaction: protocol == ApiProtocol::OpenAiResponses
-                && (native_responses || explicit.contains(CompatCaps::REMOTE_COMPACTION)),
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub(super) struct ModelRoute {
@@ -73,46 +49,48 @@ impl ModelConfig {
     }
 
     pub fn anthropic(id: impl Into<String>, _display_name: impl Into<String>) -> Self {
-        Self::resolve(ResolveModelRequest {
-            protocol: ApiProtocol::AnthropicMessages,
-            provider: "anthropic".into(),
-            model_id: id.into(),
-            base_url: "https://api.anthropic.com".into(),
-            headers: HashMap::new(),
-            compat: None,
-            route_capabilities: RouteCapabilities::default(),
-            overrides: ModelOverrides::default(),
-        })
+        Self::preset(ApiProtocol::AnthropicMessages, "anthropic", id.into(), None)
     }
 
     pub fn openai(id: impl Into<String>, _display_name: impl Into<String>) -> Self {
-        Self::resolve(ResolveModelRequest {
-            protocol: ApiProtocol::OpenAiCompletions,
-            provider: "openai".into(),
-            model_id: id.into(),
-            base_url: "https://api.openai.com/v1".into(),
-            headers: HashMap::new(),
-            compat: Some(OpenAiCompat::openai()),
-            route_capabilities: RouteCapabilities {
-                verbosity: true,
-                remote_compaction: false,
-            },
-            overrides: ModelOverrides::default(),
-        })
+        Self::preset(
+            ApiProtocol::OpenAiCompletions,
+            "openai",
+            id.into(),
+            Some(OpenAiCompat::openai()),
+        )
     }
 
     pub fn openai_responses(id: impl Into<String>, _display_name: impl Into<String>) -> Self {
+        Self::preset(
+            ApiProtocol::OpenAiResponses,
+            "openai",
+            id.into(),
+            Some(OpenAiCompat::openai()),
+        )
+    }
+
+    fn preset(
+        protocol: ApiProtocol,
+        provider: &str,
+        model_id: String,
+        compat: Option<OpenAiCompat>,
+    ) -> Self {
+        let base_url = default_base_url(protocol, provider).to_string();
+        let route_capabilities = RouteCapabilities::for_route(
+            protocol,
+            provider,
+            &base_url,
+            RouteCapabilityOverrides::default(),
+        );
         Self::resolve(ResolveModelRequest {
-            protocol: ApiProtocol::OpenAiResponses,
-            provider: "openai".into(),
-            model_id: id.into(),
-            base_url: "https://api.openai.com/v1".into(),
+            protocol,
+            provider: provider.into(),
+            model_id,
+            base_url,
             headers: HashMap::new(),
-            compat: Some(OpenAiCompat::openai()),
-            route_capabilities: RouteCapabilities {
-                verbosity: true,
-                remote_compaction: true,
-            },
+            compat,
+            route_capabilities,
             overrides: ModelOverrides::default(),
         })
     }

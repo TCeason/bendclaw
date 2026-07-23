@@ -131,6 +131,7 @@ async fn call_provider(ctx: &RankContext, user_prompt: &str) -> Result<String> {
             &ctx.llm.model,
             Some(&ctx.llm.base_url),
             ctx.llm.compat_caps,
+            ctx.llm.route_capabilities,
             ctx.llm.context_window,
             ctx.llm.max_tokens,
             ctx.llm.supports_image,

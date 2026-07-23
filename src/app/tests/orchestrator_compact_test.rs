@@ -135,6 +135,7 @@ fn test_llm() -> LlmConfig {
         model: "gpt-4o".into(),
         thinking_level: ThinkingLevel::Off,
         compat_caps: Default::default(),
+        route_capabilities: Default::default(),
         context_window: None,
         max_tokens: None,
         supports_image: None,

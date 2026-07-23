@@ -147,7 +147,7 @@ fn stats_context_compaction_completed_round_trip() {
             after_tokens: 20000,
             messages_evicted: 12,
             current_run_reclaimed: 0,
-            method: Some("remote_failed_local".into()),
+            method: Some(CompactionMethod::RemoteFailedLocal),
             remote_blob_bytes: None,
             fallback_reason: Some("upstream rejected compaction item".into()),
         },
@@ -170,7 +170,7 @@ fn stats_context_compaction_completed_round_trip() {
                 assert_eq!(before_tokens, 50000);
                 assert_eq!(after_tokens, 20000);
                 assert_eq!(messages_evicted, 12);
-                assert_eq!(method.as_deref(), Some("remote_failed_local"));
+                assert_eq!(method, Some(CompactionMethod::RemoteFailedLocal));
                 assert_eq!(remote_blob_bytes, None);
                 assert_eq!(
                     fallback_reason.as_deref(),

@@ -1,5 +1,6 @@
 //! Transcript domain model — items, entries, and context projection.
 
+pub use evot_engine::CompactionMethod;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -94,9 +95,8 @@ pub struct CompactDetails {
     pub read_files: Vec<String>,
     #[serde(default)]
     pub modified_files: Vec<String>,
-    /// `remote`, `local`, or `remote_failed_local`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub method: Option<String>,
+    pub method: Option<CompactionMethod>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_blob_bytes: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

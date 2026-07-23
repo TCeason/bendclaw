@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 use super::error::*;
 use super::model::ModelConfig;
-use super::protocol::ApiProtocol;
+use super::route::ApiProtocol;
 use super::traits::*;
 
 /// Registry of all available stream providers, keyed by API protocol.

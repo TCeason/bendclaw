@@ -17,6 +17,11 @@ pub enum CompactReason {
     Manual,
 }
 
+pub fn bounded_fallback_reason(reason: &str) -> String {
+    let normalized = reason.split_whitespace().collect::<Vec<_>>().join(" ");
+    normalized.chars().take(500).collect()
+}
+
 /// How the evicted context was summarized.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

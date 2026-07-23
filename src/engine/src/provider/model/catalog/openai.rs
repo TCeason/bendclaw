@@ -26,10 +26,14 @@ const GPT_5_5_PRO_LEVELS: &[(ThinkingLevel, Option<&str>)] = &[
     (ThinkingLevel::Low, None),
 ];
 
+const OFF_NONE: &[(ThinkingLevel, Option<&str>)] = &[(ThinkingLevel::Off, Some("none"))];
+const GPT_5_5_FIRST_PARTY: &[(ThinkingLevel, Option<&str>)] = &[(ThinkingLevel::Minimal, None)];
+
 const GPT_5_6: ModelProfile = ModelProfile {
     context_window: 272_000,
     max_tokens: 128_000,
     thinking_levels: GPT_5_6_LEVELS,
+    first_party_responses_thinking_levels: OFF_NONE,
     remote_compaction: true,
     default_verbosity: Some(Verbosity::Low),
     ..BASE
@@ -37,9 +41,9 @@ const GPT_5_6: ModelProfile = ModelProfile {
 
 #[rustfmt::skip]
 const PROFILES: &[(&str, ModelProfile)] = &[
-    ("gpt-5.4",       ModelProfile { context_window: 272_000, max_tokens: 128_000, thinking_levels: GPT_5_4_LEVELS, remote_compaction: true, ..BASE }),
+    ("gpt-5.4",       ModelProfile { context_window: 272_000, max_tokens: 128_000, thinking_levels: GPT_5_4_LEVELS, first_party_responses_thinking_levels: OFF_NONE, remote_compaction: true, ..BASE }),
     ("gpt-5.4-pro",   ModelProfile { context_window: 1_050_000, max_tokens: 128_000, thinking_levels: GPT_LEVELS, remote_compaction: true, ..BASE }),
-    ("gpt-5.5",       ModelProfile { context_window: 272_000, max_tokens: 128_000, thinking_levels: GPT_LEVELS, remote_compaction: true, default_verbosity: Some(Verbosity::Low), ..BASE }),
+    ("gpt-5.5",       ModelProfile { context_window: 272_000, max_tokens: 128_000, thinking_levels: GPT_LEVELS, first_party_thinking_levels: GPT_5_5_FIRST_PARTY, first_party_responses_thinking_levels: OFF_NONE, remote_compaction: true, default_verbosity: Some(Verbosity::Low), ..BASE }),
     ("gpt-5.5-pro",   ModelProfile { context_window: 1_050_000, max_tokens: 128_000, thinking_levels: GPT_5_5_PRO_LEVELS, remote_compaction: true, ..BASE }),
     ("gpt-5.6-luna",  GPT_5_6),
     ("gpt-5.6-sol",   GPT_5_6),
@@ -72,6 +76,7 @@ pub(super) fn fallback(id: &str) -> Option<ModelProfile> {
             context_window: 128_000,
             max_tokens: 32_768,
             thinking_levels,
+            first_party_responses_thinking_levels: first_party_levels(id),
             ..BASE
         });
     }
@@ -84,4 +89,15 @@ pub(super) fn fallback(id: &str) -> Option<ModelProfile> {
         });
     }
     None
+}
+
+fn first_party_levels(id: &str) -> super::profile::ThinkingLevels {
+    if matches!(
+        id,
+        "gpt-5.1" | "gpt-5.2" | "gpt-5.3-codex" | "gpt-5.4-mini" | "gpt-5.4-nano"
+    ) {
+        OFF_NONE
+    } else {
+        &[]
+    }
 }

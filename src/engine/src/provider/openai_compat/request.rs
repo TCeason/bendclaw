@@ -1,8 +1,8 @@
 //! OpenAI-compatible request body building and content conversion.
 
-use crate::provider::compat::CompatCaps;
-use crate::provider::compat::MaxTokensField;
-use crate::provider::compat::OpenAiCompat;
+use crate::provider::route::CompatCaps;
+use crate::provider::route::MaxTokensField;
+use crate::provider::route::OpenAiCompat;
 use crate::provider::traits::StreamConfig;
 use crate::types::*;
 
@@ -274,12 +274,12 @@ fn apply_reasoning_effort(
     };
 
     match compat.thinking_format {
-        crate::provider::compat::ThinkingFormat::OpenRouter => {
+        crate::provider::route::ThinkingFormat::OpenRouter => {
             if let Some(effort) = effort {
                 body["reasoning"] = serde_json::json!({ "effort": effort });
             }
         }
-        crate::provider::compat::ThinkingFormat::DeepSeek => {
+        crate::provider::route::ThinkingFormat::DeepSeek => {
             body["thinking"] = if level == ThinkingLevel::Off {
                 serde_json::json!({ "type": "disabled" })
             } else {
@@ -291,7 +291,7 @@ fn apply_reasoning_effort(
                 }
             }
         }
-        crate::provider::compat::ThinkingFormat::OpenAi
+        crate::provider::route::ThinkingFormat::OpenAi
             if compat.has_cap(CompatCaps::REASONING_EFFORT) =>
         {
             // OpenAI-style transports only send an off value when the model map

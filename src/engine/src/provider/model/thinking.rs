@@ -4,11 +4,11 @@
 //! selectable. Transport metadata independently determines the wire format and
 //! whether that endpoint can carry an effort value.
 
-use super::model::ThinkingLevelPolicy;
-use super::ApiProtocol;
-use super::CompatCaps;
 use super::ModelConfig;
-use super::ThinkingFormat;
+use super::ThinkingLevelPolicy;
+use crate::provider::route::ApiProtocol;
+use crate::provider::route::CompatCaps;
+use crate::provider::route::ThinkingFormat;
 use crate::ThinkingLevel;
 
 /// Default token budgets for Anthropic budget-based thinking (non-adaptive).

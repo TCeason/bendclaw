@@ -48,11 +48,11 @@ fn model_config_presets_resolve_expected_routes() {
 
 #[test]
 fn route_resolution_is_endpoint_aware_and_explicitly_overridable() {
-    let official = OpenAiCompat::for_route("openai", "https://api.openai.com/v1/");
+    let official = OpenAiCompat::for_provider("openai");
     assert!(official.caps.contains(CompatCaps::STORE));
     assert!(official.caps.contains(CompatCaps::DEVELOPER_ROLE));
 
-    let proxy = OpenAiCompat::for_route("openai", "https://proxy.example.com/v1");
+    let proxy = OpenAiCompat::for_provider("openai");
     assert!(proxy.caps.contains(CompatCaps::STORE));
     assert!(proxy.caps.contains(CompatCaps::DEVELOPER_ROLE));
     assert!(proxy.caps.contains(CompatCaps::REASONING_EFFORT));
@@ -61,7 +61,7 @@ fn route_resolution_is_endpoint_aware_and_explicitly_overridable() {
         ApiProtocol::OpenAiResponses,
         "openai",
         "https://api.openai.com/v1",
-        CompatCaps::NONE,
+        RouteCapabilityOverrides::default(),
     );
     assert!(official_route.verbosity);
     assert!(official_route.remote_compaction);
@@ -70,7 +70,7 @@ fn route_resolution_is_endpoint_aware_and_explicitly_overridable() {
         ApiProtocol::OpenAiResponses,
         "openai",
         "https://openrouter.databend.cloud/openai/v1/",
-        CompatCaps::NONE,
+        RouteCapabilityOverrides::default(),
     );
     assert!(databend_route.verbosity);
     assert!(databend_route.remote_compaction);
@@ -79,7 +79,10 @@ fn route_resolution_is_endpoint_aware_and_explicitly_overridable() {
         ApiProtocol::OpenAiResponses,
         "openai",
         "https://proxy.example.com/v1",
-        CompatCaps::VERBOSITY | CompatCaps::REMOTE_COMPACTION,
+        RouteCapabilityOverrides {
+            verbosity: true,
+            remote_compaction: true,
+        },
     );
     assert!(proxy_route.verbosity);
     assert!(proxy_route.remote_compaction);
@@ -88,7 +91,10 @@ fn route_resolution_is_endpoint_aware_and_explicitly_overridable() {
         ApiProtocol::OpenAiCompletions,
         "openai",
         "https://proxy.example.com/v1",
-        CompatCaps::REMOTE_COMPACTION,
+        RouteCapabilityOverrides {
+            verbosity: false,
+            remote_compaction: true,
+        },
     );
     assert!(!chat_route.remote_compaction);
 }
@@ -323,21 +329,28 @@ fn openai_compat_profiles_are_transport_only() {
 }
 
 #[test]
-fn route_capability_flags_round_trip_through_provider_config() {
-    let caps = CompatCaps::VERBOSITY | CompatCaps::REMOTE_COMPACTION;
+fn transport_capability_names_round_trip() {
+    let caps = CompatCaps::STORE | CompatCaps::PROMPT_CACHE_KEY;
     let Ok(encoded) = serde_json::to_value(caps) else {
-        panic!("route capabilities must serialize");
+        panic!("transport capabilities must serialize");
     };
-    assert_eq!(
-        encoded,
-        serde_json::json!(["verbosity", "remote_compaction"])
-    );
-
+    assert_eq!(encoded, serde_json::json!(["store", "prompt_cache_key"]));
     let Ok(decoded) = serde_json::from_value::<CompatCaps>(encoded) else {
-        panic!("route capabilities must deserialize");
+        panic!("transport capabilities must deserialize");
     };
-    assert!(decoded.contains(CompatCaps::VERBOSITY));
-    assert!(decoded.contains(CompatCaps::REMOTE_COMPACTION));
+    assert_eq!(decoded, caps);
+}
+
+#[test]
+fn route_capability_names_are_parsed_separately_from_transport_caps() {
+    let mut overrides = RouteCapabilityOverrides::default();
+    assert!(overrides.set_named("verbosity"));
+    assert!(overrides.set_named("remote_compaction"));
+    assert!(!overrides.set_named("store"));
+    assert!(overrides.verbosity);
+    assert!(overrides.remote_compaction);
+    assert_eq!(CompatCaps::from_name("verbosity"), None);
+    assert_eq!(CompatCaps::from_name("remote_compaction"), None);
 }
 
 #[test]

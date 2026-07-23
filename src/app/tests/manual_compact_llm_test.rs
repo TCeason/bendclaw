@@ -9,6 +9,7 @@ use evot::conf::Protocol;
 use evot::conf::ProviderProfile;
 use evot::storage::MemoryStorage;
 use evot::types::AssistantBlock;
+use evot::types::CompactionMethod;
 use evot::types::TranscriptItem;
 use evot::types::UsageSummary;
 use evot_engine::provider::MockProvider;
@@ -48,7 +49,11 @@ async fn manual_compact_uses_remote_responses_and_persists_blob() -> TestResult 
         api_key: "test-key".into(),
         base_url: server.uri(),
         models: vec!["gpt-5.6-sol".into()],
-        compat_caps: evot_engine::provider::CompatCaps::REMOTE_COMPACTION,
+        compat_caps: evot_engine::provider::CompatCaps::NONE,
+        route_capabilities: evot_engine::provider::RouteCapabilityOverrides {
+            verbosity: false,
+            remote_compaction: true,
+        },
         thinking_level: None,
         context_window: None,
         max_tokens: None,
@@ -97,7 +102,7 @@ async fn manual_compact_uses_remote_responses_and_persists_blob() -> TestResult 
         outcome,
         evot::compact::orchestrator::ManualCompactionOutcome::Compacted {
             method: Some(ref method), ..
-        } if method == "remote"
+        } if *method == CompactionMethod::Remote
     ));
     let observed_phases = phases
         .lock()
@@ -122,7 +127,7 @@ async fn manual_compact_uses_remote_responses_and_persists_blob() -> TestResult 
     });
     let (details, messages, engine_messages, state) =
         compact.ok_or_else(|| std::io::Error::other("missing compact item"))?;
-    assert_eq!(details.method.as_deref(), Some("remote"));
+    assert_eq!(details.method, Some(CompactionMethod::Remote));
     assert_eq!(details.remote_blob_bytes, Some(19));
     assert!(matches!(
         messages.first(),
@@ -159,7 +164,11 @@ async fn manual_remote_failure_persists_fallback_reason() -> TestResult {
         api_key: "test-key".into(),
         base_url: server.uri(),
         models: vec!["gpt-5.6-sol".into()],
-        compat_caps: evot_engine::provider::CompatCaps::REMOTE_COMPACTION,
+        compat_caps: evot_engine::provider::CompatCaps::NONE,
+        route_capabilities: evot_engine::provider::RouteCapabilityOverrides {
+            verbosity: false,
+            remote_compaction: true,
+        },
         thinking_level: None,
         context_window: None,
         max_tokens: None,
@@ -202,7 +211,7 @@ async fn manual_remote_failure_persists_fallback_reason() -> TestResult {
             method: Some(ref method),
             fallback_reason: Some(ref reason),
             ..
-        } if method == "remote_failed_local" && reason.contains("Store must be set to false")
+        } if *method == CompactionMethod::RemoteFailedLocal && reason.contains("Store must be set to false")
     ));
 
     let raw = loaded.load_all_entries().await?;
@@ -211,7 +220,7 @@ async fn manual_remote_failure_persists_fallback_reason() -> TestResult {
         _ => None,
     });
     let details = details.ok_or_else(|| std::io::Error::other("missing compact details"))?;
-    assert_eq!(details.method.as_deref(), Some("remote_failed_local"));
+    assert_eq!(details.method, Some(CompactionMethod::RemoteFailedLocal));
     assert!(details
         .fallback_reason
         .as_deref()
@@ -230,6 +239,7 @@ async fn manual_compact_uses_llm_summary() -> TestResult {
         base_url: "http://localhost".into(),
         models: vec!["gpt-4o".into()],
         compat_caps: Default::default(),
+        route_capabilities: Default::default(),
         thinking_level: None,
         context_window: None,
         max_tokens: None,

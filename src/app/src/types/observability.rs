@@ -11,6 +11,7 @@ use serde::Serialize;
 use super::metrics::LlmCallMetrics;
 use super::metrics::UsageSummary;
 use super::transcript::CompactReason;
+use super::transcript::CompactionMethod;
 use super::transcript::TranscriptItem;
 
 // ---------------------------------------------------------------------------
@@ -123,9 +124,8 @@ pub enum CompactionResult {
         after_tokens: usize,
         messages_evicted: usize,
         current_run_reclaimed: usize,
-        /// `remote`, `local`, or `remote_failed_local`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        method: Option<String>,
+        method: Option<CompactionMethod>,
         /// Encrypted provider-native payload size, when remote succeeded.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         remote_blob_bytes: Option<usize>,

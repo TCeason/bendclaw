@@ -4,11 +4,58 @@
 //! `supports_image` are applied when provided, and left at the protocol default
 //! otherwise. These are set via `EVOT_LLM_<PROVIDER>_*` for any provider.
 
-use evot::agent::run::runtime::build_model_config;
+use evot::agent::run::runtime::build_model_config as resolve_model_config;
 use evot::conf::Protocol;
 use evot_engine::provider::ApiProtocol;
 use evot_engine::provider::CompatCaps;
 use evot_engine::provider::InputModality;
+use evot_engine::provider::ModelConfig;
+use evot_engine::provider::RouteCapabilityOverrides;
+
+#[allow(clippy::too_many_arguments)]
+fn build_model_config(
+    protocol: Protocol,
+    provider: &str,
+    model: &str,
+    base_url: Option<&str>,
+    compat_caps: CompatCaps,
+    context_window: Option<u32>,
+    max_tokens: Option<u32>,
+    supports_image: Option<bool>,
+) -> ModelConfig {
+    resolve_model_config(
+        protocol,
+        provider,
+        model,
+        base_url,
+        compat_caps,
+        RouteCapabilityOverrides::default(),
+        context_window,
+        max_tokens,
+        supports_image,
+    )
+}
+
+fn build_model_config_with_route(
+    protocol: Protocol,
+    provider: &str,
+    model: &str,
+    base_url: Option<&str>,
+    compat_caps: CompatCaps,
+    route_capabilities: RouteCapabilityOverrides,
+) -> ModelConfig {
+    resolve_model_config(
+        protocol,
+        provider,
+        model,
+        base_url,
+        compat_caps,
+        route_capabilities,
+        None,
+        None,
+        None,
+    )
+}
 
 #[test]
 fn openai_compatible_defaults_to_text_only() {
@@ -112,15 +159,16 @@ fn custom_route_extensions_require_explicit_transport_capabilities() {
     assert_eq!(without_caps.effective_verbosity(), None);
     assert!(!without_caps.can_remote_compact());
 
-    let with_caps = build_model_config(
+    let with_caps = build_model_config_with_route(
         Protocol::OpenAiResponses,
         "proxy",
         "gpt-5.6-sol",
         Some("https://proxy.example/v1"),
-        CompatCaps::VERBOSITY | CompatCaps::REMOTE_COMPACTION,
-        None,
-        None,
-        None,
+        CompatCaps::NONE,
+        RouteCapabilityOverrides {
+            verbosity: true,
+            remote_compaction: true,
+        },
     );
     assert_eq!(
         with_caps.effective_verbosity(),

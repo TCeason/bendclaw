@@ -94,10 +94,6 @@ impl ReasoningCapabilities {
         self.level_map.insert(level, mapping);
     }
 
-    pub(super) fn replace_level_map(&mut self, map: HashMap<ThinkingLevel, Option<String>>) {
-        *self = Self::new(self.supported, map, self.force_adaptive);
-    }
-
     pub(super) fn set_supported(&mut self, supported: bool) {
         self.supported = supported;
     }
@@ -114,6 +110,8 @@ pub(super) struct ModelCapabilities {
     pub(super) max_output_tokens: u32,
     pub(super) input: Vec<InputModality>,
     pub(super) reasoning: ReasoningCapabilities,
+    pub(super) first_party_reasoning_levels: HashMap<ThinkingLevel, Option<String>>,
+    pub(super) first_party_responses_reasoning_levels: HashMap<ThinkingLevel, Option<String>>,
     pub(super) default_verbosity: Option<Verbosity>,
     pub(super) remote_compaction: bool,
 }

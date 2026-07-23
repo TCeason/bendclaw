@@ -74,6 +74,7 @@ async fn rsearch_submit_does_not_persist_a_session(
         base_url: "http://localhost".into(),
         models: vec!["test-model".into()],
         compat_caps: Default::default(),
+        route_capabilities: Default::default(),
         thinking_level: None,
         context_window: None,
         max_tokens: None,

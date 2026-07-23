@@ -3,6 +3,7 @@ use std::io::BufRead;
 use std::path::Path;
 
 use evot_engine::provider::CompatCaps;
+use evot_engine::provider::RouteCapabilityOverrides;
 use indexmap::IndexMap;
 
 use crate::conf::default_config;
@@ -54,11 +55,27 @@ struct ProviderSource {
     base_url: Option<String>,
     #[serde(default, deserialize_with = "deserialize_one_or_many")]
     model: Option<Vec<String>>,
-    compat_caps: Option<CompatCaps>,
+    compat_caps: Option<ConfiguredCapabilities>,
     thinking_level: Option<String>,
     context_window: Option<u32>,
     max_tokens: Option<u32>,
     supports_image: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ConfiguredCapabilities {
+    transport: CompatCaps,
+    route: RouteCapabilityOverrides,
+}
+
+impl<'de> serde::Deserialize<'de> for ConfiguredCapabilities {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let names = Vec::<String>::deserialize(deserializer)?;
+        parse_configured_capabilities(names.iter().map(String::as_str))
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 /// Deserialize a TOML value as either a single string or an array of strings.
@@ -230,8 +247,9 @@ fn merge_provider_source(
         if let Some(model) = src.model {
             profile.models = model;
         }
-        if let Some(compat_caps) = src.compat_caps {
-            profile.compat_caps = compat_caps;
+        if let Some(capabilities) = src.compat_caps {
+            profile.compat_caps = capabilities.transport;
+            profile.route_capabilities = capabilities.route;
         }
         if let Some(level) = src.thinking_level {
             profile.thinking_level = Some(thinking_level_from_str(&level)?);
@@ -254,12 +272,14 @@ fn merge_provider_source(
             Some(level) => Some(thinking_level_from_str(&level)?),
             None => None,
         };
+        let capabilities = src.compat_caps.unwrap_or_default();
         providers.insert(name, ProviderProfile {
             protocol,
             api_key: src.api_key.unwrap_or_default(),
             base_url: src.base_url.unwrap_or_default(),
             models: src.model.unwrap_or_default(),
-            compat_caps: src.compat_caps.unwrap_or_default(),
+            compat_caps: capabilities.transport,
+            route_capabilities: capabilities.route,
             thinking_level,
             context_window: src.context_window,
             max_tokens: src.max_tokens,
@@ -475,19 +495,26 @@ fn parse_legacy_env_key(key: &str) -> Option<(&'static str, &'static str)> {
     None
 }
 
-fn parse_compat_caps(value: &str) -> Result<CompatCaps> {
-    let mut caps = CompatCaps::NONE;
-    for part in value.split(',') {
-        let part = part.trim();
-        if part.is_empty() {
+fn parse_configured_capabilities<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+) -> std::result::Result<ConfiguredCapabilities, String> {
+    let mut capabilities = ConfiguredCapabilities::default();
+    for name in names {
+        let name = name.trim();
+        if name.is_empty() {
             continue;
         }
-        let Some(cap) = CompatCaps::from_name(part) else {
-            return Err(EvotError::Conf(format!("unknown compat cap: {part}")));
-        };
-        caps |= cap;
+        if let Some(cap) = CompatCaps::from_name(name) {
+            capabilities.transport |= cap;
+        } else if !capabilities.route.set_named(name) {
+            return Err(format!("unknown compat cap: {name}"));
+        }
     }
-    Ok(caps)
+    Ok(capabilities)
+}
+
+fn parse_compat_caps(value: &str) -> Result<ConfiguredCapabilities> {
+    parse_configured_capabilities(value.split(',')).map_err(EvotError::Conf)
 }
 
 fn apply_provider_field(
@@ -505,6 +532,7 @@ fn apply_provider_field(
             base_url: String::new(),
             models: Vec::new(),
             compat_caps: CompatCaps::default(),
+            route_capabilities: RouteCapabilityOverrides::default(),
             thinking_level: None,
             context_window: None,
             max_tokens: None,
@@ -521,7 +549,11 @@ fn apply_provider_field(
                 .collect();
         }
         "_PROTOCOL" => profile.protocol = parse_protocol(value)?,
-        "_COMPAT_CAPS" => profile.compat_caps = parse_compat_caps(value)?,
+        "_COMPAT_CAPS" => {
+            let capabilities = parse_compat_caps(value)?;
+            profile.compat_caps = capabilities.transport;
+            profile.route_capabilities = capabilities.route;
+        }
         "_THINKING_LEVEL" => profile.thinking_level = Some(thinking_level_from_str(value)?),
         "_CONTEXT_WINDOW" => profile.context_window = Some(parse_token_count(name, field, value)?),
         "_MAX_TOKENS" => profile.max_tokens = Some(parse_token_count(name, field, value)?),

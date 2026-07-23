@@ -510,6 +510,7 @@ fn display_thinking_level(llm: &evot::conf::LlmConfig) -> String {
         &llm.model,
         Some(&llm.base_url),
         llm.compat_caps,
+        llm.route_capabilities,
         llm.context_window,
         llm.max_tokens,
         llm.supports_image,

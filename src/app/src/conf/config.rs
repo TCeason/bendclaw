@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use evot_engine::provider::CompatCaps;
+use evot_engine::provider::RouteCapabilityOverrides;
 use evot_engine::ThinkingLevel;
 use indexmap::IndexMap;
 use serde::Deserialize;
@@ -71,6 +72,7 @@ pub struct ProviderProfile {
     /// Available models; `models[0]` is the default.
     pub models: Vec<String>,
     pub compat_caps: CompatCaps,
+    pub route_capabilities: RouteCapabilityOverrides,
     /// Per-provider reasoning effort. When `None`, the global
     /// [`LlmSelection::thinking_level`] applies. Lets each provider run at a
     /// different effort (e.g. anthropic=xhigh, deepseek=off).
@@ -125,6 +127,7 @@ pub struct LlmConfig {
     pub model: String,
     pub thinking_level: ThinkingLevel,
     pub compat_caps: CompatCaps,
+    pub route_capabilities: RouteCapabilityOverrides,
     pub context_window: Option<u32>,
     pub max_tokens: Option<u32>,
     pub supports_image: Option<bool>,
@@ -144,6 +147,7 @@ impl LlmConfig {
             model: String::new(),
             thinking_level: ThinkingLevel::default(),
             compat_caps: CompatCaps::default(),
+            route_capabilities: RouteCapabilityOverrides::default(),
             context_window: None,
             max_tokens: None,
             supports_image: None,
@@ -216,6 +220,7 @@ impl Config {
             // global selection.
             thinking_level: profile.thinking_level.unwrap_or(self.llm.thinking_level),
             compat_caps: profile.compat_caps,
+            route_capabilities: profile.route_capabilities,
             context_window: profile.context_window,
             max_tokens: profile.max_tokens,
             supports_image: profile.supports_image,

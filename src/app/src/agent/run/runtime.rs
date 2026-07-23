@@ -64,6 +64,7 @@ pub struct EngineOptions {
     pub tools: Vec<Box<dyn evot_engine::AgentTool>>,
     pub thinking_level: evot_engine::ThinkingLevel,
     pub compat_caps: evot_engine::provider::CompatCaps,
+    pub route_capabilities: evot_engine::provider::RouteCapabilityOverrides,
     pub context_window: Option<u32>,
     pub max_tokens: Option<u32>,
     pub supports_image: Option<bool>,
@@ -1012,13 +1013,7 @@ fn map_agent_event(
                     after_tokens: stats.after_tokens,
                     messages_evicted: stats.messages_evicted,
                     current_run_reclaimed: stats.current_run_reclaimed,
-                    method: stats.method.map(|method| match method {
-                        evot_engine::CompactionMethod::Remote => "remote".to_string(),
-                        evot_engine::CompactionMethod::Local => "local".to_string(),
-                        evot_engine::CompactionMethod::RemoteFailedLocal => {
-                            "remote_failed_local".to_string()
-                        }
-                    }),
+                    method: stats.method,
                     remote_blob_bytes: stats.remote_blob_bytes,
                     fallback_reason: stats.fallback_reason.clone(),
                 }
@@ -1080,7 +1075,7 @@ fn automatic_compact_item(
         read_files: state.file_ops.read_only().into_iter().cloned().collect(),
         modified_files: state.file_ops.modified().into_iter().cloned().collect(),
         method: match result {
-            crate::types::CompactionResult::Compacted { method, .. } => method.clone(),
+            crate::types::CompactionResult::Compacted { method, .. } => *method,
             crate::types::CompactionResult::NoOp => None,
         },
         remote_blob_bytes: match result {
@@ -1174,10 +1169,12 @@ pub fn build_model_config(
     model: &str,
     base_url: Option<&str>,
     compat_caps: evot_engine::provider::CompatCaps,
+    route_capabilities: evot_engine::provider::RouteCapabilityOverrides,
     context_window: Option<u32>,
     max_tokens: Option<u32>,
     supports_image: Option<bool>,
 ) -> evot_engine::provider::ModelConfig {
+    use evot_engine::provider::default_base_url;
     use evot_engine::provider::ApiProtocol;
     use evot_engine::provider::ModelOverrides;
     use evot_engine::provider::OpenAiCompat;
@@ -1188,25 +1185,12 @@ pub fn build_model_config(
     // 1. model catalog (by model id)
     // 2. provider transport profile
     // 3. explicit env overrides
-    let (api, default_base) = match protocol {
-        Protocol::Anthropic => (ApiProtocol::AnthropicMessages, "https://api.anthropic.com"),
-        Protocol::OpenAiResponses => (
-            ApiProtocol::OpenAiResponses,
-            if provider == "openai" {
-                "https://api.openai.com/v1"
-            } else {
-                ""
-            },
-        ),
-        Protocol::OpenAi => (
-            ApiProtocol::OpenAiCompletions,
-            if provider == "openai" {
-                "https://api.openai.com/v1"
-            } else {
-                ""
-            },
-        ),
+    let api = match protocol {
+        Protocol::Anthropic => ApiProtocol::AnthropicMessages,
+        Protocol::OpenAiResponses => ApiProtocol::OpenAiResponses,
+        Protocol::OpenAi => ApiProtocol::OpenAiCompletions,
     };
+    let default_base = default_base_url(api, provider);
 
     let resolved_base = base_url
         .filter(|value| !value.trim().is_empty())
@@ -1214,16 +1198,14 @@ pub fn build_model_config(
         .to_string();
     let mut compat = match protocol {
         Protocol::Anthropic => None,
-        Protocol::OpenAi | Protocol::OpenAiResponses => {
-            Some(OpenAiCompat::for_route(provider, &resolved_base))
-        }
+        Protocol::OpenAi | Protocol::OpenAiResponses => Some(OpenAiCompat::for_provider(provider)),
     };
     if let Some(compat) = &mut compat {
         compat.caps |= compat_caps;
     }
 
     let route_capabilities =
-        RouteCapabilities::for_route(api, provider, &resolved_base, compat_caps);
+        RouteCapabilities::for_route(api, provider, &resolved_base, route_capabilities);
 
     evot_engine::provider::ModelConfig::resolve(ResolveModelRequest {
         protocol: api,
@@ -1256,6 +1238,7 @@ pub(crate) fn build_agent(
         &options.model,
         options.base_url.as_deref(),
         options.compat_caps,
+        options.route_capabilities,
         options.context_window,
         options.max_tokens,
         options.supports_image,

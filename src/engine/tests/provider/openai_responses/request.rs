@@ -40,10 +40,7 @@ fn same_named_openai_proxy_keeps_openai_transport_but_omits_route_extensions() {
         "openai",
         "gpt-5.6-sol",
         "https://proxy.example.com/v1",
-        Some(evotengine::provider::OpenAiCompat::for_route(
-            "openai",
-            "https://proxy.example.com/v1",
-        )),
+        Some(evotengine::provider::OpenAiCompat::for_provider("openai")),
         Default::default(),
         Default::default(),
     );
@@ -65,8 +62,7 @@ fn same_named_openai_proxy_keeps_openai_transport_but_omits_route_extensions() {
 
 #[test]
 fn responses_proxy_can_explicitly_enable_route_extensions() {
-    let compat =
-        evotengine::provider::OpenAiCompat::for_route("openai", "https://proxy.example.com/v1");
+    let compat = evotengine::provider::OpenAiCompat::for_provider("openai");
     let model = resolved_model_config(
         evotengine::provider::ApiProtocol::OpenAiResponses,
         "openai",
