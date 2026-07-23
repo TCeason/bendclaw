@@ -125,7 +125,6 @@ async fn call_provider(ctx: &RankContext, user_prompt: &str) -> Result<String> {
         thinking_level: ctx.llm.thinking_level,
         api_key: ctx.llm.api_key.clone(),
         max_tokens: Some(1024),
-        temperature: Some(0.0),
         model_config: Some(crate::agent::run::runtime::build_model_config(
             ctx.llm.protocol.clone(),
             &ctx.llm.provider,

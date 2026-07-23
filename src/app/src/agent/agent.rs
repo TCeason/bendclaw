@@ -569,6 +569,17 @@ impl Agent {
         custom_instructions: Option<String>,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<crate::compact::orchestrator::ManualCompactionOutcome> {
+        self.compact_with_observer(session_id, custom_instructions, cancel, None)
+            .await
+    }
+
+    pub async fn compact_with_observer(
+        &self,
+        session_id: &str,
+        custom_instructions: Option<String>,
+        cancel: tokio_util::sync::CancellationToken,
+        observer: Option<crate::compact::orchestrator::ManualCompactionObserver>,
+    ) -> Result<crate::compact::orchestrator::ManualCompactionOutcome> {
         match self.abort_run_and_wait(session_id, &cancel).await {
             AbortRunOutcome::Stopped => {}
             AbortRunOutcome::Cancelled => {
@@ -584,7 +595,7 @@ impl Agent {
         let Some(session) = self.load_session(session_id).await? else {
             return Ok(crate::compact::orchestrator::ManualCompactionOutcome::NothingToCompact);
         };
-        self.compact_resolved_session(&session, custom_instructions, cancel)
+        self.compact_resolved_session(&session, custom_instructions, cancel, observer)
             .await
     }
 
@@ -656,7 +667,7 @@ impl Agent {
                 let cancel = tokio_util::sync::CancellationToken::new();
                 let outcome = match self.abort_run_and_wait(&session_id, &cancel).await {
                     AbortRunOutcome::Stopped => {
-                        self.compact_resolved_session(session, custom_instructions, cancel)
+                        self.compact_resolved_session(session, custom_instructions, cancel, None)
                             .await?
                     }
                     AbortRunOutcome::Cancelled => {
@@ -696,6 +707,7 @@ impl Agent {
         session: &Arc<Session>,
         custom_instructions: Option<String>,
         cancel: tokio_util::sync::CancellationToken,
+        observer: Option<crate::compact::orchestrator::ManualCompactionObserver>,
     ) -> Result<crate::compact::orchestrator::ManualCompactionOutcome> {
         if cancel.is_cancelled() {
             return Ok(crate::compact::orchestrator::ManualCompactionOutcome::Cancelled);
@@ -710,6 +722,7 @@ impl Agent {
                 context_window,
                 ..Default::default()
             },
+            observer,
         };
         let result = crate::compact::orchestrator::compact_session_with_status(
             session,
@@ -728,6 +741,7 @@ impl Agent {
                 tokens_after,
                 messages_before,
                 messages_after,
+                details,
                 ..
             }) => Ok(
                 crate::compact::orchestrator::ManualCompactionOutcome::Compacted {
@@ -737,7 +751,16 @@ impl Agent {
                     messages_before,
                     messages_after,
                     context_window,
+                    messages_evicted: messages_before
+                        .saturating_sub(messages_after)
+                        .saturating_add(1),
+                    tool_results_shrunk: 0,
+                    current_run_reclaimed: 0,
+                    images_downgraded: 0,
+                    compaction_level: 3,
                     used_fallback: result.used_fallback,
+                    method: details.method,
+                    remote_blob_bytes: details.remote_blob_bytes,
                 },
             ),
             _ => Ok(crate::compact::orchestrator::ManualCompactionOutcome::NothingToCompact),
@@ -765,7 +788,7 @@ impl Agent {
         crate::compact::orchestrator::CompactSummarizer {
             provider,
             llm,
-            max_tokens: 4096,
+            reserve_tokens: evot_engine::DEFAULT_SUMMARY_RESERVE_TOKENS,
             timeout: COMPACTION_SUMMARY_TIMEOUT,
         }
     }
@@ -1296,6 +1319,8 @@ fn format_manual_compaction_outcome(
             messages_after,
             context_window,
             used_fallback,
+            method,
+            remote_blob_bytes,
             ..
         } => {
             let mut line = format!(
@@ -1305,6 +1330,18 @@ fn format_manual_compaction_outcome(
                 line.push_str(
                     "\nNote: the LLM summary was unavailable; a deterministic fallback summary was used.",
                 );
+            }
+            match method.as_deref() {
+                Some("remote") => {
+                    line.push_str("\nProvider-native remote compaction was used.");
+                    if let Some(bytes) = remote_blob_bytes {
+                        line.push_str(&format!(" Native blob: {bytes} bytes."));
+                    }
+                }
+                Some("remote_failed_local") => line.push_str(
+                    "\nProvider-native remote compaction failed; local summarization was used.",
+                ),
+                _ => {}
             }
             if *context_window > 0 && tokens_after >= context_window {
                 line.push_str(&format!(

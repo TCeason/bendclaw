@@ -69,33 +69,14 @@ fn test_adaptive_thinking_sent_for_anthropic_adaptive_model() {
 }
 
 #[test]
-fn test_anthropic_temperature_matches_pi_constraints() {
-    let off_supported = StreamConfigBuilder::anthropic()
+fn test_anthropic_request_omits_temperature() {
+    let config = StreamConfigBuilder::anthropic()
         .model("claude-sonnet-4-5")
         .model_config(ModelConfig::anthropic("claude-sonnet-4-5", "Sonnet 4.5"))
         .thinking(ThinkingLevel::Off)
-        .temperature(0.5)
         .build();
-    let off_body = build_request_body(&off_supported, false);
-    assert_eq!(off_body["temperature"], 0.5);
-
-    let thinking = StreamConfigBuilder::anthropic()
-        .model("claude-sonnet-4-5")
-        .model_config(ModelConfig::anthropic("claude-sonnet-4-5", "Sonnet 4.5"))
-        .thinking(ThinkingLevel::High)
-        .temperature(0.5)
-        .build();
-    let thinking_body = build_request_body(&thinking, false);
-    assert!(thinking_body.get("temperature").is_none());
-
-    let unsupported = StreamConfigBuilder::anthropic()
-        .model("claude-opus-4-8")
-        .model_config(ModelConfig::anthropic("claude-opus-4-8", "Opus 4.8"))
-        .thinking(ThinkingLevel::Off)
-        .temperature(0.5)
-        .build();
-    let unsupported_body = build_request_body(&unsupported, false);
-    assert!(unsupported_body.get("temperature").is_none());
+    let body = build_request_body(&config, false);
+    assert!(body.get("temperature").is_none());
 }
 
 #[test]

@@ -235,7 +235,6 @@ impl TestHarness {
             api_key: "test".into(),
             thinking_level: ThinkingLevel::Off,
             max_tokens: None,
-            temperature: None,
             model_config: self.model_config,
             convert_to_llm: None,
             transform_context: None,
@@ -284,7 +283,6 @@ impl TestHarness {
             api_key: "test".into(),
             thinking_level: ThinkingLevel::Off,
             max_tokens: None,
-            temperature: None,
             model_config: self.model_config,
             convert_to_llm: None,
             transform_context: None,
@@ -360,6 +358,7 @@ impl TestOutput {
                 AgentEvent::LlmCallRetry { .. } => "LlmCallRetry",
                 AgentEvent::LlmCallEnd { .. } => "LlmCallEnd",
                 AgentEvent::ContextCompactionStarted { .. } => "CompactionStart",
+                AgentEvent::ContextCompactionPhase { .. } => "CompactionPhase",
                 AgentEvent::ContextCompactionEnd { .. } => "CompactionEnd",
             })
             .collect()
@@ -477,7 +476,6 @@ pub fn make_config(provider: MockProvider) -> AgentLoopConfig {
         api_key: "test".into(),
         thinking_level: ThinkingLevel::Off,
         max_tokens: None,
-        temperature: None,
         model_config: None,
         convert_to_llm: None,
         transform_context: None,

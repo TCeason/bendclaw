@@ -112,6 +112,11 @@ pub struct CompactDetails {
     pub read_files: Vec<String>,
     #[serde(default)]
     pub modified_files: Vec<String>,
+    /// `remote`, `local`, or `remote_failed_local`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_blob_bytes: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------

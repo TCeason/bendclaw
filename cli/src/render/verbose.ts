@@ -325,17 +325,24 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
       const reclaimed = (result.current_run_reclaimed as number) ?? 0
       const imagesDowngraded = (result.images_downgraded as number) ?? 0
       const contextWindow = ((data.context_window as number) ?? 0)
+      const method = (result.method as string | undefined) ?? 'local'
+      const methodLabel = method === 'remote'
+        ? 'remote'
+        : method === 'remote_failed_local'
+          ? 'remote failed → local'
+          : 'local'
+      const remoteBlobBytes = (result.remote_blob_bytes as number | undefined) ?? 0
+      const blobLabel = remoteBlobBytes > 0
+        ? ` · blob ${remoteBlobBytes >= 1024 ? `${(remoteBlobBytes / 1024).toFixed(1)} KB` : `${remoteBlobBytes} B`}`
+        : ''
 
-      const level = evicted > 0 ? 3 : shrunk > 0 ? 1 : 0
-      const parts: string[] = []
-      if (evicted > 0) parts.push(`evicted ${evicted} msgs`)
-      if (shrunk > 0) parts.push(`shrunk ${shrunk} results`)
-      if (reclaimed > 0) parts.push(`reclaimed ${reclaimed}`)
-      if (imagesDowngraded > 0) parts.push(`imgs downgraded ${imagesDowngraded}`)
-      const summary = parts.length > 0 ? parts.join(' · ') : 'no changes'
+      const level = (result.compaction_level as number | undefined) ?? (evicted > 0 ? 3 : shrunk > 0 ? 1 : 0)
+      const summary = `evicted ${evicted} msgs · shrunk ${shrunk} results · reclaimed ${reclaimed} · imgs downgraded ${imagesDowngraded}`
 
+      const reason = (data.reason as string | undefined) ?? 'threshold'
+      const reasonLabel = reason === 'overflow' ? 'overflow recovery' : reason
       const lines: string[] = []
-      lines.push(`[COMPACT] ✓ · L${level} · ${beforeMsgs} → ${afterMsgs} msgs · saved ${humanTokens(saved)} (${savedPct}%)`)
+      lines.push(`[COMPACT] ✓ · ${methodLabel} · ${reasonLabel} · L${level} · ${beforeMsgs} → ${afterMsgs} msgs · ${humanTokens(before)} → ${humanTokens(after)} · saved ${humanTokens(saved)} (${savedPct}%)${blobLabel}`)
 
       const ctx = contextLine(after, contextWindow, saved)
       if (ctx) lines.push(ctx)

@@ -145,7 +145,7 @@ fn summarizer(provider: Arc<CapturingProvider>) -> CompactSummarizer {
     CompactSummarizer {
         provider,
         llm: test_llm(),
-        max_tokens: 4096,
+        reserve_tokens: evot_engine::DEFAULT_SUMMARY_RESERVE_TOKENS,
         timeout: std::time::Duration::from_secs(60),
     }
 }
@@ -188,10 +188,11 @@ async fn failed_llm_compaction_reports_deterministic_fallback() -> TestResult {
             summarizer: Some(CompactSummarizer {
                 provider: Arc::new(FailingProvider),
                 llm: test_llm(),
-                max_tokens: 4096,
+                reserve_tokens: evot_engine::DEFAULT_SUMMARY_RESERVE_TOKENS,
                 timeout: std::time::Duration::from_secs(60),
             }),
             settings: settings(),
+            observer: None,
         },
         CancellationToken::new(),
     )
@@ -225,10 +226,11 @@ async fn timed_out_llm_compaction_uses_deterministic_fallback() -> TestResult {
             summarizer: Some(CompactSummarizer {
                 provider: Arc::new(BlockingProvider { started }),
                 llm: test_llm(),
-                max_tokens: 4096,
+                reserve_tokens: evot_engine::DEFAULT_SUMMARY_RESERVE_TOKENS,
                 timeout: std::time::Duration::from_millis(10),
             }),
             settings: settings(),
+            observer: None,
         },
         CancellationToken::new(),
     )
@@ -269,10 +271,11 @@ async fn cancelled_llm_compaction_does_not_write_a_marker() -> TestResult {
                 summarizer: Some(CompactSummarizer {
                     provider,
                     llm: test_llm(),
-                    max_tokens: 4096,
+                    reserve_tokens: evot_engine::DEFAULT_SUMMARY_RESERVE_TOKENS,
                     timeout: std::time::Duration::from_secs(60),
                 }),
                 settings: settings(),
+                observer: None,
             },
             compact_cancel,
         )
@@ -289,6 +292,76 @@ async fn cancelled_llm_compaction_does_not_write_a_marker() -> TestResult {
         .await?
         .iter()
         .any(|entry| matches!(entry.item, TranscriptItem::Compact { .. })));
+    Ok(())
+}
+
+#[tokio::test]
+async fn manual_compaction_uses_shared_pi_style_serialization() -> TestResult {
+    let session = new_session().await?;
+    let long_tool_output = "x".repeat(5_000);
+    session
+        .write_items(vec![
+            user("inspect the gateway"),
+            TranscriptItem::Assistant {
+                content: vec![
+                    AssistantBlock::Thinking {
+                        text: "need to inspect retry settings".into(),
+                        metadata: None,
+                    },
+                    AssistantBlock::Text {
+                        text: "I will inspect the file.".into(),
+                    },
+                    AssistantBlock::ToolCall {
+                        id: "call-1".into(),
+                        name: "read".into(),
+                        input: serde_json::json!({"path": "src/gateway/retry.rs"}),
+                    },
+                ],
+                stop_reason: "tool_use".into(),
+                usage: UsageSummary::default(),
+                model: String::new(),
+                provider: String::new(),
+                timestamp: 0,
+                error_message: None,
+            },
+            TranscriptItem::ToolResult {
+                tool_call_id: "call-1".into(),
+                tool_name: "read".into(),
+                content: long_tool_output,
+                is_error: false,
+                details: serde_json::Value::Null,
+            },
+            user("recent request"),
+            assistant("recent answer"),
+        ])
+        .await?;
+
+    let provider = Arc::new(CapturingProvider::new(vec!["LLM SUMMARY"]));
+    let captured = provider.captured();
+    compact_session(
+        &session,
+        ManualCompactRequest {
+            reason: CompactReason::Manual,
+            custom_instructions: None,
+            summary_override: None,
+            summarizer: Some(summarizer(provider)),
+            settings: settings(),
+            observer: None,
+        },
+        CancellationToken::new(),
+    )
+    .await?
+    .ok_or_else(|| std::io::Error::other("expected compaction"))?;
+
+    let prompt = first_user_prompt(&captured)?;
+    assert!(prompt.contains("[User]: inspect the gateway"));
+    assert!(prompt.contains("[Assistant thinking]: need to inspect retry settings"));
+    assert!(prompt.contains("[Assistant]: I will inspect the file."));
+    assert!(prompt.contains("[Assistant tool calls]: read("));
+    assert!(prompt.contains("src/gateway/retry.rs"));
+    assert!(prompt.contains("[Tool result]:"));
+    assert!(prompt.contains("more characters truncated"));
+    assert!(!prompt.contains(&"x".repeat(3_000)));
     Ok(())
 }
 
@@ -315,6 +388,7 @@ async fn llm_compaction_injects_custom_instructions() -> TestResult {
             summary_override: None,
             summarizer: Some(summarizer(provider)),
             settings: settings(),
+            observer: None,
         },
         CancellationToken::new(),
     )
@@ -323,10 +397,19 @@ async fn llm_compaction_injects_custom_instructions() -> TestResult {
 
     let prompt = first_user_prompt(&captured)?;
     assert!(
-        prompt.contains("Additional user instructions"),
-        "missing instructions header in prompt: {prompt}"
+        prompt.contains("Additional focus: focus on architectural decisions"),
+        "missing instructions in prompt: {prompt}"
     );
-    assert!(prompt.contains("focus on architectural decisions"));
+    let conversation_end = prompt
+        .find("</conversation>")
+        .ok_or_else(|| std::io::Error::other("missing conversation end"))?;
+    let instructions = prompt
+        .find("Additional focus:")
+        .ok_or_else(|| std::io::Error::other("missing instructions"))?;
+    assert!(
+        instructions > conversation_end,
+        "instructions must be outside conversation data: {prompt}"
+    );
     Ok(())
 }
 
@@ -352,6 +435,7 @@ async fn second_compaction_passes_previous_summary() -> TestResult {
             summary_override: None,
             summarizer: Some(summarizer(provider1)),
             settings: settings(),
+            observer: None,
         },
         CancellationToken::new(),
     )
@@ -378,6 +462,7 @@ async fn second_compaction_passes_previous_summary() -> TestResult {
             summary_override: None,
             summarizer: Some(summarizer(provider2)),
             settings: settings(),
+            observer: None,
         },
         CancellationToken::new(),
     )

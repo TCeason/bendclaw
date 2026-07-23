@@ -27,6 +27,7 @@ pub fn prepare_input(
         conversation,
         turn_prefix,
         previous_summary,
+        custom_instructions: None,
         file_ops,
         evicted_count: evicted.len(),
         completed_requests,

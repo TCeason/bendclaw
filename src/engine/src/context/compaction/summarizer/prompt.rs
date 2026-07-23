@@ -77,17 +77,37 @@ Summarize the prefix to provide context for the retained suffix:\n\n\
 - [Information needed to understand the retained recent work]\n\n\
 Be concise. Focus on what's needed to understand the kept suffix.";
 
+/// Append optional user guidance to the task instructions, outside the
+/// `<conversation>` data block.
+fn with_custom_instructions(mut prompt: String, instructions: Option<&str>) -> String {
+    if let Some(instructions) = instructions.filter(|value| !value.trim().is_empty()) {
+        prompt.push_str("\n\nAdditional focus: ");
+        prompt.push_str(instructions.trim());
+    }
+    prompt
+}
+
 /// Build the user message for initial summarization.
-pub fn format_initial(conversation: &str) -> String {
-    format!("<conversation>\n{conversation}\n</conversation>\n\n{INITIAL_PROMPT}")
+pub fn format_initial(conversation: &str, custom_instructions: Option<&str>) -> String {
+    with_custom_instructions(
+        format!("<conversation>\n{conversation}\n</conversation>\n\n{INITIAL_PROMPT}"),
+        custom_instructions,
+    )
 }
 
 /// Build the user message for incremental update.
-pub fn format_update(conversation: &str, previous_summary: &str) -> String {
-    format!(
-        "<conversation>\n{conversation}\n</conversation>\n\n\
-         <previous-summary>\n{previous_summary}\n</previous-summary>\n\n\
-         {UPDATE_PROMPT}"
+pub fn format_update(
+    conversation: &str,
+    previous_summary: &str,
+    custom_instructions: Option<&str>,
+) -> String {
+    with_custom_instructions(
+        format!(
+            "<conversation>\n{conversation}\n</conversation>\n\n\
+             <previous-summary>\n{previous_summary}\n</previous-summary>\n\n\
+             {UPDATE_PROMPT}"
+        ),
+        custom_instructions,
     )
 }
 

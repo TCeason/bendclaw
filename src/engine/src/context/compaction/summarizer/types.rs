@@ -11,6 +11,8 @@ pub struct SummarizerInput {
     pub turn_prefix: Option<String>,
     /// Previous LLM summary for incremental update.
     pub previous_summary: Option<String>,
+    /// Optional user instructions appended to the summarization task prompt.
+    pub custom_instructions: Option<String>,
     /// File operations extracted from evicted zone (rule-based, always present).
     pub file_ops: FileOps,
     /// Number of evicted messages (for summary header).

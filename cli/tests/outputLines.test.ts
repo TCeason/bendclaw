@@ -8,6 +8,8 @@ import {
   buildToolCall,
   buildToolCard,
   buildVerboseEvent,
+  buildEventCard,
+  isVisibleEvent,
   buildError,
   AssistantStreamBuffer,
   findSafeSplitPoint,
@@ -679,6 +681,50 @@ describe('buildVerboseEvent', () => {
     })
     expect(result.text).toContain('[LLM] ✓ · claude-fable-5 · turn 3')
     expect(result.text).not.toContain('fallback')
+  })
+
+  test('formats and renders provider-native compaction as a visible card', () => {
+    const completed = formatCompactionCompleted({
+      context_window: 200000,
+      result: {
+        type: 'compacted',
+        method: 'remote',
+        remote_blob_bytes: 1536,
+        before_message_count: 48,
+        after_message_count: 12,
+        before_tokens: 168000,
+        after_tokens: 24000,
+        messages_evicted: 36,
+        tool_results_shrunk: 0,
+        images_downgraded: 0,
+        current_run_reclaimed: 0,
+      },
+    })
+    expect(completed).toContain('[COMPACT] ✓ · remote · threshold · L3')
+    expect(completed).toContain('168k → 24k')
+    expect(completed).toContain('blob 1.5 KB')
+    expect(isVisibleEvent(completed)).toBe(true)
+
+    const card = buildEventCard(completed)
+    expect(card[0]!.text).toBe('✦ compact')
+    expect(card[1]!.text).toContain('✓ · remote')
+  })
+
+  test('shows remote fallback but keeps skipped compaction log-only', () => {
+    const fallback = formatCompactionCompleted({
+      result: {
+        type: 'compacted',
+        method: 'remote_failed_local',
+        before_message_count: 20,
+        after_message_count: 8,
+        before_tokens: 50000,
+        after_tokens: 20000,
+        messages_evicted: 12,
+      },
+    })
+    expect(fallback).toContain('remote failed → local')
+    expect(isVisibleEvent(fallback)).toBe(true)
+    expect(isVisibleEvent('[COMPACT] ✓ · skipped · within budget')).toBe(false)
   })
 
   test('formats compact verbose with status symbols and preserves details', () => {

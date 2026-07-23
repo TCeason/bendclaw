@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::ops::Range;
+use std::sync::Arc;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -14,6 +15,37 @@ pub enum CompactReason {
     Threshold,
     Overflow,
     Manual,
+}
+
+/// How the evicted context was summarized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionMethod {
+    /// Provider-native server-side compaction (opaque encrypted item).
+    Remote,
+    /// Local text summarization.
+    Local,
+    /// Remote compaction was attempted but failed; fell back to local.
+    RemoteFailedLocal,
+}
+
+/// Live phase shared by automatic and manual compaction frontends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionPhase {
+    Planning,
+    Remote,
+    LocalFallback,
+    Local,
+    Complete,
+}
+
+pub type CompactionObserver = Arc<dyn Fn(CompactionPhase) + Send + Sync>;
+
+pub fn notify_compaction_phase(observer: &Option<CompactionObserver>, phase: CompactionPhase) {
+    if let Some(observer) = observer {
+        observer(phase);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +196,12 @@ pub struct CompactionStats {
     pub images_downgraded: usize,
     /// CurrentRun results reclaimed.
     pub current_run_reclaimed: usize,
+    /// How the summary was produced (None for legacy/no-op stats).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<CompactionMethod>,
+    /// Size of the provider-native compaction payload, when remote ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_blob_bytes: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------

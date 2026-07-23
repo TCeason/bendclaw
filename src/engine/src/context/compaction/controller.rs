@@ -20,6 +20,7 @@ pub struct CompactionController {
     /// Seeded from the session's last compaction on resume so follow-up
     /// compactions update the existing summary instead of restarting.
     state: CompactionState,
+    observer: Option<CompactionObserver>,
 }
 
 impl CompactionController {
@@ -29,12 +30,19 @@ impl CompactionController {
             overflow_recovery_attempted: false,
             last_compaction_ts: None,
             state: CompactionState::default(),
+            observer: None,
         }
     }
 
     /// Seed cross-compaction state (e.g. restored from a persisted session).
     pub fn with_state(mut self, state: CompactionState) -> Self {
         self.state = state;
+        self
+    }
+
+    /// Observe live phases for automatic compaction.
+    pub fn with_observer(mut self, observer: CompactionObserver) -> Self {
+        self.observer = Some(observer);
         self
     }
 
@@ -86,8 +94,12 @@ impl CompactionController {
                         messages.pop();
                     }
                 }
-                // Overflow always uses rule-based (fast, never fails)
-                let stats = self.run_compaction(messages, None, cancel).await;
+                // Overflow still tries provider-native compaction first. If it
+                // fails, use the deterministic emergency summary so recovery
+                // stays fast and cannot fail on a second model call.
+                let stats = self
+                    .run_compaction(messages, summarizer_ctx, false, cancel)
+                    .await;
                 CompactionResponse {
                     action: AfterResponseAction::Retry,
                     stats,
@@ -111,7 +123,9 @@ impl CompactionController {
             }
 
             TriggerDecision::Threshold { context_tokens } => {
-                let stats = self.run_compaction(messages, summarizer_ctx, cancel).await;
+                let stats = self
+                    .run_compaction(messages, summarizer_ctx, true, cancel)
+                    .await;
                 CompactionResponse {
                     action: AfterResponseAction::Continue,
                     stats,
@@ -139,7 +153,9 @@ impl CompactionController {
         cancel: CancellationToken,
     ) -> CompactionResponse {
         if estimated_tokens > self.config.trigger_threshold() {
-            let stats = self.run_compaction(messages, summarizer_ctx, cancel).await;
+            let stats = self
+                .run_compaction(messages, summarizer_ctx, true, cancel)
+                .await;
             return CompactionResponse {
                 action: AfterResponseAction::Continue,
                 stats,
@@ -159,13 +175,15 @@ impl CompactionController {
         summarizer_ctx: Option<&SummarizerContext>,
         cancel: CancellationToken,
     ) -> Option<CompactionStats> {
-        self.run_compaction(messages, summarizer_ctx, cancel).await
+        self.run_compaction(messages, summarizer_ctx, true, cancel)
+            .await
     }
 
     async fn run_compaction(
         &mut self,
         messages: &mut Vec<AgentMessage>,
         summarizer_ctx: Option<&SummarizerContext>,
+        use_llm_fallback: bool,
         cancel: CancellationToken,
     ) -> Option<CompactionStats> {
         // A resumed context already contains the previous summary as a user
@@ -187,15 +205,20 @@ impl CompactionController {
             restore_removed_summary(messages, removed_summary);
             return None;
         };
+        notify_compaction_phase(&self.observer, CompactionPhase::Planning);
 
         // For overflow, summarizer_ctx is None which triggers emergency summary.
-        let outcome = executor::execute(
+        let outcome = executor::execute_with_options(
             std::mem::take(messages),
             &plan,
             &self.config,
             Some(&self.state),
             summarizer_ctx,
-            cancel,
+            executor::ExecutionOptions {
+                use_llm_fallback,
+                observer: self.observer.clone(),
+                cancel: cancel.clone(),
+            },
         )
         .await;
 
@@ -203,12 +226,16 @@ impl CompactionController {
         if outcome.stats.before_message_count == 0 {
             *messages = outcome.messages;
             restore_removed_summary(messages, removed_summary);
+            if !cancel.is_cancelled() {
+                notify_compaction_phase(&self.observer, CompactionPhase::Complete);
+            }
             return None;
         }
 
         *messages = outcome.messages;
         self.state = outcome.state;
         self.last_compaction_ts = Some(now_ms());
+        notify_compaction_phase(&self.observer, CompactionPhase::Complete);
 
         Some(outcome.stats)
     }

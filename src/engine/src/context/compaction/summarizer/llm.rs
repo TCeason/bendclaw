@@ -17,32 +17,33 @@ use crate::types::*;
 pub async fn summarize(
     input: SummarizerInput,
     ctx: &SummarizerContext,
-    max_tokens: u32,
+    reserve_tokens: u32,
     cancel: CancellationToken,
 ) -> Result<SummarizerOutput, SummarizerError> {
-    // Build main summary prompt
-    let user_prompt = match &input.previous_summary {
-        Some(prev) => prompt::format_update(&input.conversation, prev),
-        None => prompt::format_initial(&input.conversation),
+    let main_max_tokens = output_budget(ctx, reserve_tokens.saturating_mul(4) / 5);
+    let prefix_max_tokens = output_budget(ctx, reserve_tokens / 2);
+
+    // A split can begin at the current turn, leaving no prior history. Match
+    // pi by avoiding a useless first model request in that case.
+    let mut summary = if input.conversation.trim().is_empty() && input.turn_prefix.is_some() {
+        "No prior history.".to_string()
+    } else {
+        let user_prompt = match &input.previous_summary {
+            Some(previous) => prompt::format_update(
+                &input.conversation,
+                previous,
+                input.custom_instructions.as_deref(),
+            ),
+            None => {
+                prompt::format_initial(&input.conversation, input.custom_instructions.as_deref())
+            }
+        };
+        call_provider(ctx, &user_prompt, main_max_tokens, cancel.clone()).await?
     };
 
-    // Main summary call
-    let main_summary = call_provider(ctx, &user_prompt, max_tokens, cancel.clone()).await?;
-
-    // Turn prefix call (if split turn). Very small test/default max_tokens can
-    // round to zero, so keep the provider call valid.
-    let turn_prefix_summary = match &input.turn_prefix {
-        Some(prefix_text) => {
-            let prefix_prompt = prompt::format_turn_prefix(prefix_text);
-            let prefix_max = (max_tokens / 2).max(1);
-            Some(call_provider(ctx, &prefix_prompt, prefix_max, cancel).await?)
-        }
-        None => None,
-    };
-
-    // Merge summaries
-    let mut summary = main_summary;
-    if let Some(prefix_summary) = turn_prefix_summary {
+    if let Some(prefix_text) = &input.turn_prefix {
+        let prefix_prompt = prompt::format_turn_prefix(prefix_text);
+        let prefix_summary = call_provider(ctx, &prefix_prompt, prefix_max_tokens, cancel).await?;
         summary.push_str("\n\n---\n\n**Turn Context (split turn):**\n\n");
         summary.push_str(&prefix_summary);
     }
@@ -51,6 +52,15 @@ pub async fn summarize(
     summary.push_str(&format_file_ops_xml(&input.file_ops));
 
     Ok(SummarizerOutput { summary })
+}
+
+fn output_budget(ctx: &SummarizerContext, requested: u32) -> u32 {
+    let model_max = ctx
+        .model_config
+        .as_ref()
+        .map(|model| model.max_tokens)
+        .unwrap_or(u32::MAX);
+    requested.min(model_max).max(1)
 }
 
 /// Call the provider for a single summarization request.
@@ -75,7 +85,6 @@ async fn call_provider(
         thinking_level: ctx.thinking_level,
         api_key: ctx.api_key.clone(),
         max_tokens: Some(max_tokens),
-        temperature: Some(0.0),
         model_config: ctx.model_config.clone(),
         cache_config: CacheConfig::default(),
         prompt_cache_key: None,

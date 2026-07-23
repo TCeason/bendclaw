@@ -105,7 +105,7 @@ async fn executor_reduces_message_count() {
     let original_count = messages.len();
 
     let cancel = CancellationToken::new();
-    let outcome = executor::execute(messages, &plan, &config, None, None, cancel).await;
+    let outcome = executor::execute(messages, &plan, &config, None, None, true, cancel).await;
 
     assert!(outcome.messages.len() < original_count);
     assert!(outcome.stats.messages_evicted > 0);
@@ -128,7 +128,7 @@ async fn executor_preserves_pinned_head() {
 
     let plan = planned(&messages, &config);
     let cancel = CancellationToken::new();
-    let outcome = executor::execute(messages, &plan, &config, None, None, cancel).await;
+    let outcome = executor::execute(messages, &plan, &config, None, None, true, cancel).await;
 
     // First two messages should be preserved
     let first_text = match &outcome.messages[0] {
@@ -169,7 +169,7 @@ async fn executor_inserts_marker() {
 
     let plan = planned(&messages, &config);
     let cancel = CancellationToken::new();
-    let outcome = executor::execute(messages, &plan, &config, None, None, cancel).await;
+    let outcome = executor::execute(messages, &plan, &config, None, None, true, cancel).await;
 
     // There should be a marker message containing "[Context compacted"
     let has_marker = outcome.messages.iter().any(|m| {
@@ -208,6 +208,7 @@ async fn executor_bounds_summary_consistently() {
         &config,
         None,
         None,
+        true,
         CancellationToken::new(),
     )
     .await;
@@ -245,7 +246,7 @@ async fn executor_tracks_file_ops_in_state() {
 
     let plan = planned(&messages, &config);
     let cancel = CancellationToken::new();
-    let outcome = executor::execute(messages, &plan, &config, None, None, cancel).await;
+    let outcome = executor::execute(messages, &plan, &config, None, None, true, cancel).await;
 
     // State should have tracked file edits
     assert!(!outcome.state.file_ops.edited.is_empty());

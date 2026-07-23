@@ -87,17 +87,6 @@ pub(super) async fn stream_assistant_response(
             config.thinking_level,
             config.model_config.as_ref(),
         );
-        // Anthropic rejects temperature while thinking is enabled, and Opus
-        // 4.7/4.8 reject it entirely. Other protocols retain their temperature.
-        let suppress_temperature = config.model_config.as_ref().is_some_and(|model| {
-            model.api == crate::provider::ApiProtocol::AnthropicMessages
-                && (thinking_level != ThinkingLevel::Off || !model.supports_temperature)
-        });
-        let effective_temperature = if suppress_temperature {
-            None
-        } else {
-            config.temperature
-        };
 
         let stream_config = StreamConfig {
             model: config.model.clone(),
@@ -107,7 +96,6 @@ pub(super) async fn stream_assistant_response(
             thinking_level,
             api_key: config.api_key.clone(),
             max_tokens: config.max_tokens,
-            temperature: effective_temperature,
             model_config: config.model_config.clone(),
             cache_config: config.cache_config.clone(),
             prompt_cache_key: context.prompt_cache_key.clone(),
@@ -125,7 +113,6 @@ pub(super) async fn stream_assistant_response(
                 messages: llm_messages.clone(),
                 tools: tool_defs.clone(),
                 max_tokens: config.max_tokens,
-                temperature: effective_temperature,
             },
             stats: llm_stats,
             budget: budget.clone(),

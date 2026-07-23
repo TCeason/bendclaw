@@ -8,6 +8,33 @@ import { assistantToolCalls, findAssistantToolCall } from '../src/term/app/assis
 import type { OutputLine } from '../src/render/output.js'
 
 describe('term stream machine', () => {
+  test('automatic compaction phases drive method-specific spinner labels', () => {
+    const initial = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
+    const cases = [
+      ['planning', 'compact'],
+      ['remote', 'compact_remote'],
+      ['local_fallback', 'compact_local_fallback'],
+      ['local', 'compact_local'],
+    ] as const
+
+    let state = initial
+    for (const [phase, toolName] of cases) {
+      const update = reduceRunEvent(state, {
+        kind: 'context_compaction_phase',
+        payload: { phase },
+      }, { termRows: 24 })
+      state = update.state
+      expect(state.spinnerState.phase).toBe('executing')
+      expect(state.spinnerState.toolName).toBe(toolName)
+    }
+
+    const complete = reduceRunEvent(state, {
+      kind: 'context_compaction_phase',
+      payload: { phase: 'complete' },
+    }, { termRows: 24 })
+    expect(complete.state.spinnerState.phase).toBe('preparing')
+  })
+
   test('assistant delta keeps the whole message in the dynamic zone (no mid-stream commit)', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()

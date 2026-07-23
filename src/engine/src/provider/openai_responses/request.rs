@@ -95,8 +95,14 @@ pub fn build_request_body(config: &StreamConfig) -> serde_json::Value {
         "input": input,
         "stream": true,
         "store": false,
-        "max_output_tokens": config.resolved_max_tokens().max(MIN_OUTPUT_TOKENS),
     });
+    // Codex-style GPT Responses upstreams reject the text-generation budget;
+    // they determine the output cap server-side. Other Responses-compatible
+    // models retain evot's explicit budget.
+    if !is_gpt_or_codex(&config.model) {
+        body["max_output_tokens"] =
+            serde_json::json!(config.resolved_max_tokens().max(MIN_OUTPUT_TOKENS));
+    }
 
     if !config.tools.is_empty() {
         body["tools"] = serde_json::Value::Array(
@@ -119,11 +125,12 @@ pub fn build_request_body(config: &StreamConfig) -> serde_json::Value {
     if let Some(key) = &config.prompt_cache_key {
         body["prompt_cache_key"] = serde_json::json!(key);
     }
-    if let Some(temperature) = config.temperature {
-        body["temperature"] = serde_json::json!(temperature);
-    }
     apply_reasoning(&mut body, config, reasoning);
     body
+}
+
+fn is_gpt_or_codex(model: &str) -> bool {
+    model.starts_with("gpt-") || model.starts_with("codex-")
 }
 
 fn apply_reasoning(body: &mut serde_json::Value, config: &StreamConfig, enabled: bool) {

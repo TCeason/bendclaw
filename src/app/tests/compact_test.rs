@@ -43,6 +43,7 @@ async fn compact_session_persists_structured_item_with_summary_override() -> Tes
             custom_instructions: None,
             summary_override: Some("LLM supplied summary".into()),
             summarizer: None,
+            observer: None,
             settings: CompactSettings {
                 keep_recent_tokens: KEEP_RECENT_TOKENS,
                 keep_recent_min_messages: 2,
@@ -85,7 +86,7 @@ async fn compact_session_persists_structured_item_with_summary_override() -> Tes
 }
 
 #[tokio::test]
-async fn compact_context_view_bounds_oversized_summary() -> TestResult {
+async fn compact_context_view_preserves_full_generated_summary() -> TestResult {
     let dir = TempDir::new()?;
     let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
     let session = Session::new(
@@ -95,10 +96,7 @@ async fn compact_context_view_bounds_oversized_summary() -> TestResult {
         storage.clone(),
     )
     .await?;
-    let oversized = format!(
-        "overview {} latest critical conclusion",
-        "x".repeat(evot_engine::DEFAULT_SUMMARY_MAX_BYTES * 2)
-    );
+    let oversized = format!("overview {} latest critical conclusion", "x".repeat(32_000));
     session
         .write_items(vec![user("old"), assistant("old reply")])
         .await?;
@@ -108,7 +106,7 @@ async fn compact_context_view_bounds_oversized_summary() -> TestResult {
         id: "large".into(),
         created_at: 0,
         reason: CompactReason::Threshold,
-        summary: oversized,
+        summary: oversized.clone(),
         tokens_before: 100,
         tokens_after: 50,
         messages_before: 2,
@@ -134,8 +132,8 @@ async fn compact_context_view_bounds_oversized_summary() -> TestResult {
         Some(TranscriptItem::User { text, .. }) => text,
         _ => return Err(std::io::Error::other("expected compact summary user item").into()),
     };
-    assert!(summary.len() <= evot_engine::DEFAULT_SUMMARY_MAX_BYTES + 100);
-    assert!(summary.contains("compaction summary truncated"));
+    assert!(summary.contains(&oversized));
+    assert!(!summary.contains("compaction summary truncated"));
     assert!(summary.contains("latest critical conclusion"));
     Ok(())
 }
@@ -202,6 +200,7 @@ async fn compact_after_clear_does_not_inherit_previous_summary() -> TestResult {
             custom_instructions: None,
             summary_override: None,
             summarizer: None,
+            observer: None,
             settings: CompactSettings {
                 keep_recent_tokens: KEEP_RECENT_TOKENS,
                 keep_recent_min_messages: 2,
@@ -248,6 +247,7 @@ async fn compact_context_view_uses_latest_compact_boundary() -> TestResult {
             custom_instructions: None,
             summary_override: Some("summary one".into()),
             summarizer: None,
+            observer: None,
             settings: CompactSettings {
                 keep_recent_tokens: KEEP_RECENT_TOKENS,
                 keep_recent_min_messages: 2,

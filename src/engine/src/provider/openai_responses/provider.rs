@@ -7,6 +7,7 @@ use tracing::debug;
 use super::request;
 use super::sse_decode;
 use crate::provider::error::ProviderError;
+use crate::provider::model::ModelConfig;
 use crate::provider::stream_http;
 use crate::provider::traits::*;
 
@@ -30,16 +31,27 @@ impl StreamProvider for OpenAiResponsesProvider {
             config.model, url
         );
 
-        let client = crate::provider::error::new_client()?;
-        let mut builder = client
-            .post(&url)
-            .header("content-type", "application/json")
-            .header("authorization", format!("Bearer {}", config.api_key));
-        for (key, value) in &model_config.headers {
-            builder = builder.header(key, value);
+        let mut response = send(&url, model_config, &config.api_key, &body).await?;
+
+        // A native compaction blob can become invalid after an upstream account
+        // or compatibility boundary. On semantic client rejection, retry once
+        // with the readable fallback carried beside the blob. Auth/routing
+        // errors are not replay failures and are left to normal retry handling.
+        if matches!(response.status().as_u16(), 400 | 422) {
+            let (messages, found) =
+                crate::context::compaction::remote::downgrade_replay_messages(&config.messages);
+            if found {
+                tracing::warn!(
+                    status = response.status().as_u16(),
+                    "Responses rejected remote compaction replay; retrying with local summary"
+                );
+                let mut fallback = config.clone();
+                fallback.messages = messages;
+                let fallback_body = request::build_request_body(&fallback);
+                response = send(&url, model_config, &config.api_key, &fallback_body).await?;
+            }
         }
 
-        let response = stream_http::send_stream_request(builder.json(&body)).await?;
         let response = stream_http::check_error_status(response).await?;
         match stream_http::classify_response(&response) {
             stream_http::StreamResponseKind::Streaming => {
@@ -53,4 +65,21 @@ impl StreamProvider for OpenAiResponsesProvider {
             )),
         }
     }
+}
+
+async fn send(
+    url: &str,
+    model_config: &ModelConfig,
+    api_key: &str,
+    body: &serde_json::Value,
+) -> Result<reqwest::Response, ProviderError> {
+    let client = crate::provider::error::new_client()?;
+    let mut builder = client
+        .post(url)
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {api_key}"));
+    for (key, value) in &model_config.headers {
+        builder = builder.header(key, value);
+    }
+    stream_http::send_stream_request(builder.json(body)).await
 }

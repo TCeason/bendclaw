@@ -230,16 +230,6 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
         body["thinking"] = serde_json::json!({ "type": "disabled" });
     }
 
-    let supports_temperature = config
-        .model_config
-        .as_ref()
-        .is_none_or(|model| model.supports_temperature);
-    if thinking_level == ThinkingLevel::Off && supports_temperature {
-        if let Some(temp) = config.temperature {
-            body["temperature"] = serde_json::json!(temp);
-        }
-    }
-
     body
 }
 

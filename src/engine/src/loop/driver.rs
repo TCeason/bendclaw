@@ -5,11 +5,15 @@
 //!
 //! Both return a stream of `AgentEvent`s.
 
+use std::sync::Arc;
+
 use tokio::sync::mpsc;
 
 use super::assistant_sanitize::sanitize_assistant_text;
 use super::compaction::post_response_compaction;
 use super::compaction::pre_prompt_compaction;
+use super::compaction::CompactionRequestShape;
+use super::compaction::PostCompactionInput;
 use super::config::AgentLoopConfig;
 use super::doom_loop::DoomLoopDetector;
 use super::llm_call::stream_assistant_response;
@@ -132,9 +136,16 @@ async fn run_loop(
     let mut thinking_only_guard = ThinkingOnlyGuard::new();
     let mut context_tracker = ContextTracker::new();
     let mut compaction_controller = config.context_config.as_ref().map(|ctx_cfg| {
+        let phase_tx = tx.clone();
+        let observer: crate::context::CompactionObserver = Arc::new(move |phase| {
+            phase_tx
+                .send(AgentEvent::ContextCompactionPhase { phase })
+                .ok();
+        });
         let controller = crate::context::CompactionController::new(
             crate::context::CompactionConfig::from_context_config(ctx_cfg),
-        );
+        )
+        .with_observer(observer);
         match config.initial_compaction_state.clone() {
             Some(state) => controller.with_state(state),
             None => controller,
@@ -239,6 +250,11 @@ async fn run_loop(
                 &mut context_tracker,
                 &mut context.messages,
                 config,
+                CompactionRequestShape {
+                    system_prompt: &context.system_prompt,
+                    tools: &tool_defs,
+                    prompt_cache_key: context.prompt_cache_key.as_deref(),
+                },
                 cancel.clone(),
                 tx,
             )
@@ -316,8 +332,15 @@ async fn run_loop(
                     &mut compaction_controller,
                     &mut context_tracker,
                     &mut context.messages,
-                    &message,
-                    config,
+                    PostCompactionInput {
+                        assistant_message: &message,
+                        config,
+                        request_shape: CompactionRequestShape {
+                            system_prompt: &context.system_prompt,
+                            tools: &tool_defs,
+                            prompt_cache_key: context.prompt_cache_key.as_deref(),
+                        },
+                    },
                     cancel.clone(),
                     tx,
                 )

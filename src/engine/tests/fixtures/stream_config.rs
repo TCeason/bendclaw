@@ -13,7 +13,6 @@ pub struct StreamConfigBuilder {
     thinking_level: ThinkingLevel,
     api_key: String,
     max_tokens: Option<u32>,
-    temperature: Option<f32>,
     model_config: Option<ModelConfig>,
     cache_config: CacheConfig,
     prompt_cache_key: Option<String>,
@@ -30,7 +29,6 @@ impl StreamConfigBuilder {
             thinking_level: ThinkingLevel::Off,
             api_key: "test-key".into(),
             max_tokens: Some(1024),
-            temperature: None,
             model_config: None,
             cache_config: CacheConfig::default(),
             prompt_cache_key: None,
@@ -91,11 +89,6 @@ impl StreamConfigBuilder {
         self
     }
 
-    pub fn temperature(mut self, temp: f32) -> Self {
-        self.temperature = Some(temp);
-        self
-    }
-
     pub fn model_config(mut self, config: ModelConfig) -> Self {
         self.model_config = Some(config);
         self
@@ -128,7 +121,6 @@ impl StreamConfigBuilder {
             thinking_level: self.thinking_level,
             api_key: self.api_key,
             max_tokens: self.max_tokens,
-            temperature: self.temperature,
             model_config: self.model_config,
             cache_config: self.cache_config,
             prompt_cache_key: self.prompt_cache_key,

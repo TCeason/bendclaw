@@ -1,4 +1,4 @@
-import { buildError, buildVerboseEvent, buildLlmCard, isVisibleLlmEvent, type OutputLine } from '../../render/output.js'
+import { buildError, buildVerboseEvent, buildEventCard, isVisibleEvent, type OutputLine } from '../../render/output.js'
 import { formatDuration } from '../../render/format.js'
 import { recordStreamDelta, resetStreamStats, setSpinnerPhase, type SpinnerState } from '../spinner.js'
 import { assistantToolCalls } from './assistant-content.js'
@@ -89,12 +89,12 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
     }
   }
 
-  // LLM / COMPACT / SPILL stats are always produced but only belong in
-  // screen.log. The exceptions are LLM errors and retries, which render as
-  // tool-style cards in the TUI so the user always sees them.
+  // LLM / COMPACT / SPILL stats are always produced. LLM errors/retries and
+  // completed compactions that changed context render as visible cards; all
+  // remaining observability detail belongs in screen.log.
   const routeVerbose = (text: string, target: { commit: OutputLine[]; write: OutputLine[] }) => {
-    if (isVisibleLlmEvent(text)) {
-      target.commit.push(...buildLlmCard(text))
+    if (isVisibleEvent(text)) {
+      target.commit.push(...buildEventCard(text))
       // Remember the error message (the `    error     <msg>` tail) so a
       // following `error` event with the same text isn't rendered twice.
       const m = text.match(/\n\s*error\s+(.+)$/s)
@@ -123,12 +123,12 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
     state = {
       ...flushed.state,
       activeLlmCall,
-      // Each provider attempt starts in the waiting phase: the request is in
-      // flight and no content has arrived. Auto-compaction is local work and
-      // gets its own executing label instead of masquerading as thinking.
+      // Compaction execution is driven by the real-time phase event. The
+      // started event is an observability snapshot and may be delivered beside
+      // completion, so it must not overwrite the method-specific phase label.
       spinnerState: activeLlmCall
         ? setSpinnerPhase(resetStreamStats(flushed.state.spinnerState), 'waiting')
-        : setSpinnerPhase(resetStreamStats(flushed.state.spinnerState), 'executing', 'compact'),
+        : flushed.state.spinnerState,
     }
     commitLines.push(...flushed.lines)
     mergeFlushExpanded(flushed)
@@ -136,6 +136,29 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
     for (const evt of newEvents) {
       routeVerbose(evt.text, { commit: commitLines, write: writeLines })
     }
+  }
+
+  if (event.kind === 'context_compaction_phase') {
+    const phase = p.phase as string | undefined
+    if (phase === 'complete') {
+      state = {
+        ...state,
+        spinnerState: setSpinnerPhase(resetStreamStats(state.spinnerState), 'preparing'),
+      }
+    } else {
+      const toolName = phase === 'remote'
+        ? 'compact_remote'
+        : phase === 'local_fallback'
+          ? 'compact_local_fallback'
+          : phase === 'local'
+            ? 'compact_local'
+            : 'compact'
+      state = {
+        ...state,
+        spinnerState: setSpinnerPhase(resetStreamStats(state.spinnerState), 'executing', toolName),
+      }
+    }
+    rerenderStatus = true
   }
 
   if (event.kind === 'assistant_delta') {

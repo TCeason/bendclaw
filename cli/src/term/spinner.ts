@@ -58,6 +58,9 @@ export function toolActionLabel(toolName: string): string {
     case 'plan': return 'Planning'
     case 'skill': return 'Loading skill'
     case 'compact': return 'Compacting'
+    case 'compact_remote': return 'Compacting remote'
+    case 'compact_local': return 'Compacting local'
+    case 'compact_local_fallback': return 'Compacting local fallback'
     case 'ask_user': case 'askuser': return 'Waiting for you'
     default: return 'Working'
   }

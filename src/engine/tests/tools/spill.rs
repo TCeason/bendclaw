@@ -267,7 +267,6 @@ async fn test_agent_loop_spill_integration() {
         api_key: "test".into(),
         thinking_level: ThinkingLevel::Off,
         max_tokens: None,
-        temperature: None,
         model_config: None,
         convert_to_llm: None,
         transform_context: None,

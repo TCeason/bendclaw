@@ -10,6 +10,8 @@ mod history;
 mod memory;
 #[path = "context/planner.rs"]
 mod planner;
+#[path = "context/remote.rs"]
+mod remote;
 #[path = "context/session.rs"]
 mod session;
 #[path = "context/summarizer.rs"]

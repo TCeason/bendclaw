@@ -13,6 +13,7 @@ import { createSpinnerState, advanceSpinner, formatSpinnerLine, setSpinnerPhase,
 import { createSelectorState, selectorExpandItems, selectorClearQuery, selectorFocusOn, type SelectorItem } from './selector.js'
 import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
 import { buildAssistantLines, buildUserMessage, messagesToOutputLines, type OutputLine } from '../render/output.js'
+import { formatCompactionCompleted } from '../render/verbose.js'
 import { wrapTextWithAnsi } from '../render/wrap.js'
 import { Agent, QueryStream, fastExit, type CompactionTask, type ManualCompactionOutcome, type SessionMeta, type ConfigInfo, type QueuedPrompt } from '../native/index.js'
 import { createInitialState, type AppState } from './app/state.js'
@@ -159,6 +160,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     ...createInitialState(agent.model, agent.cwd),
   }
   let spinnerState = createSpinnerState()
+  let manualCompactionPhase: string | null = null
   let editor: EditorState = createEditorState()
   // Undo stack lives outside EditorState so snapshots stay plain data. Cleared
   // on submit/clear so a previous prompt cannot be restored into a new one.
@@ -572,8 +574,18 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       // Usage arrives only when the provider completes this call. During an
       // active call, show only its live output estimate; retaining the previous
       // call here would present stale cache/input values as if they were current.
+      const compactToolName = manualCompactionPhase === 'remote'
+        ? 'compact_remote'
+        : manualCompactionPhase === 'local_fallback'
+          ? 'compact_local_fallback'
+          : manualCompactionPhase === 'local'
+            ? 'compact_local'
+            : 'compact'
+      const spinnerForDisplay = compactionTask
+        ? { ...spinnerState, toolName: compactToolName }
+        : spinnerState
       const spinnerText = formatSpinnerLine(
-        spinnerState,
+        spinnerForDisplay,
         Date.now(),
         // Manual compaction reports no per-call usage of its own; showing the
         // previous run's tokens here would misattribute them to compaction.
@@ -775,6 +787,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     titleFrame = 0
     spinnerTimer = setInterval(() => {
       spinnerState = advanceSpinner(spinnerState)
+      if (compactionTask) manualCompactionPhase = compactionTask.phase
       if (streamMachine) {
         streamMachine = { ...streamMachine, spinnerState }
       }
@@ -912,16 +925,41 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (hidden > 0) restoreLines([resumeElidedLine(hidden)])
     restoreLines(messagesToOutputLines(shown))
 
+    const method = outcome.method === 'remote'
+      ? 'remote'
+      : outcome.method === 'remote_failed_local'
+        ? 'remote_failed_local'
+        : 'local'
+    const details = formatCompactionCompleted({
+      reason: 'manual',
+      context_window: outcome.context_window,
+      result: {
+        type: 'compacted',
+        before_message_count: outcome.messages_before,
+        after_message_count: outcome.messages_after,
+        before_tokens: outcome.tokens_before,
+        after_tokens: outcome.tokens_after,
+        messages_evicted: outcome.messages_evicted,
+        tool_results_shrunk: outcome.tool_results_shrunk,
+        current_run_reclaimed: outcome.current_run_reclaimed,
+        images_downgraded: outcome.images_downgraded,
+        compaction_level: outcome.compaction_level,
+        method,
+        remote_blob_bytes: outcome.remote_blob_bytes,
+      },
+    })
+    const detailLines = details.split('\n')
+    const headline = detailLines[0]?.replace(/^\[COMPACT\] ✓ · /, '') ?? 'manual'
     const label = { id: 'sys-compact-label', kind: 'system' as const, text: '  [compaction]' }
     const status = {
       id: 'sys-compact-result',
       kind: 'system' as const,
-      text: `  Compacted from ${outcome.tokens_before.toLocaleString()} to ${outcome.tokens_after.toLocaleString()} tokens (ctrl+o to expand)`,
+      text: `  Compacted · ${headline} (ctrl+o to expand)`,
     }
     compactLines.push(label, status)
     expandedLines.push(
       label,
-      { ...status, text: `  Compacted from ${outcome.tokens_before.toLocaleString()} to ${outcome.tokens_after.toLocaleString()} tokens` },
+      { ...status, text: `  ${details}` },
       ...buildAssistantLines(outcome.summary),
     )
     if (outcome.used_fallback) {
@@ -964,6 +1002,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     spinnerState = setSpinnerPhase(createSpinnerState(), 'executing', 'compact')
     startSpinner()
     compactionTask = agent.compact(sessionId, customInstructions || undefined)
+    manualCompactionPhase = compactionTask.phase
     renderer.requestRender()
     try {
       const outcome = await compactionTask.result()
@@ -978,6 +1017,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       commitSystem('sys-compact-err', `Compact failed: ${err?.message ?? err}`, 'error')
     } finally {
       compactionTask = null
+      manualCompactionPhase = null
       isLoading = false
       stopSpinner()
       renderer.requestRender()

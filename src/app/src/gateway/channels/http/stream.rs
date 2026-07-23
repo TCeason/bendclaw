@@ -257,6 +257,14 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
                 }
             }));
         }
+        RunEventPayload::ContextCompactionPhase { phase } => {
+            events.push(json!({
+                "type": "context_compaction_phase",
+                "data": {
+                    "phase": phase,
+                }
+            }));
+        }
         _ => {}
     }
 

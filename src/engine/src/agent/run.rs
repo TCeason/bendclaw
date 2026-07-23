@@ -205,7 +205,6 @@ impl Agent {
             api_key: self.api_key.clone(),
             thinking_level: self.thinking_level,
             max_tokens: self.max_tokens,
-            temperature: self.temperature,
             model_config: self.model_config.clone(),
             convert_to_llm: None,
             transform_context: None,

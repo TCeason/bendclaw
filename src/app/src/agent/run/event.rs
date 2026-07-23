@@ -159,6 +159,9 @@ pub enum RunEventPayload {
         #[serde(skip_serializing_if = "Option::is_none")]
         message_stats: Option<LlmMessageStats>,
     },
+    ContextCompactionPhase {
+        phase: evot_engine::CompactionPhase,
+    },
     ContextCompactionCompleted {
         reason: CompactReason,
         result: CompactionResult,
@@ -247,6 +250,7 @@ impl RunEventPayload {
             Self::LlmCallRetry { .. } => "llm_call_retry",
             Self::LlmCallCompleted { .. } => "llm_call_completed",
             Self::ContextCompactionStarted { .. } => "context_compaction_started",
+            Self::ContextCompactionPhase { .. } => "context_compaction_phase",
             Self::ContextCompactionCompleted { .. } => "context_compaction_completed",
             Self::RunFinished { .. } => "run_finished",
             Self::Error { .. } => "error",

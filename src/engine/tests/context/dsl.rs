@@ -45,6 +45,7 @@ async fn compact_pattern_with_size(
         &config,
         None,
         None,
+        true,
         CancellationToken::new(),
     )
     .await;
@@ -91,6 +92,7 @@ async fn dsl_compaction_removes_orphan_tool_call_created_by_boundary() {
         &config,
         None,
         None,
+        true,
         CancellationToken::new(),
     )
     .await;

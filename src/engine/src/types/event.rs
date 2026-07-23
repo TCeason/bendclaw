@@ -129,6 +129,10 @@ pub enum AgentEvent {
         trigger_threshold: usize,
         will_retry: bool,
     },
+    /// Live lifecycle phase, emitted at the actual execution boundary.
+    ContextCompactionPhase {
+        phase: crate::context::CompactionPhase,
+    },
     ContextCompactionEnd {
         reason: crate::context::CompactReason,
         stats: crate::context::CompactionStats,
@@ -155,7 +159,6 @@ pub struct LlmCallRequest {
     pub messages: Vec<Message>,
     pub tools: Vec<ToolDefinition>,
     pub max_tokens: Option<u32>,
-    pub temperature: Option<f32>,
 }
 
 /// Pre-computed message stats for an LLM call, computed at the engine layer

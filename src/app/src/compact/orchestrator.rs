@@ -31,6 +31,9 @@ impl Default for CompactSettings {
     }
 }
 
+pub use evot_engine::CompactionPhase as ManualCompactionPhase;
+pub type ManualCompactionObserver = evot_engine::CompactionObserver;
+
 #[derive(Clone)]
 pub struct ManualCompactRequest {
     pub reason: CompactReason,
@@ -38,13 +41,16 @@ pub struct ManualCompactRequest {
     pub summary_override: Option<String>,
     pub summarizer: Option<CompactSummarizer>,
     pub settings: CompactSettings,
+    pub observer: Option<ManualCompactionObserver>,
 }
 
 #[derive(Clone)]
 pub struct CompactSummarizer {
     pub provider: std::sync::Arc<dyn evot_engine::provider::StreamProvider>,
     pub llm: LlmConfig,
-    pub max_tokens: u32,
+    /// Tokens reserved for the summary request and output. The engine applies
+    /// pi's output ratios: 80% for history, 50% for a split-turn prefix.
+    pub reserve_tokens: u32,
     /// Maximum wall-clock time for one LLM summarization pass. Expiry uses the
     /// deterministic fallback; explicit user cancellation still cancels the
     /// entire compaction without writing a marker.
@@ -61,7 +67,16 @@ pub enum ManualCompactionOutcome {
         messages_before: usize,
         messages_after: usize,
         context_window: usize,
+        messages_evicted: usize,
+        tool_results_shrunk: usize,
+        current_run_reclaimed: usize,
+        images_downgraded: usize,
+        compaction_level: usize,
         used_fallback: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        method: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        remote_blob_bytes: Option<usize>,
     },
     NothingToCompact,
     Cancelled,
@@ -106,6 +121,8 @@ pub async fn compact_session_with_status(
         });
     }
 
+    let observer = request.observer.clone();
+    notify_phase(&observer, ManualCompactionPhase::Planning);
     let (mut app_context, mut engine_context, previous_state, expected_seq) =
         session.compaction_snapshot().await;
     if let Some(summary_message) = previous_state
@@ -162,9 +179,109 @@ pub async fn compact_session_with_status(
     let has_summarizer = request.summarizer.is_some();
     let summary_override = request.summary_override.filter(|s| !s.trim().is_empty());
     let mut used_fallback = !has_summarizer && summary_override.is_none();
+    let mut compaction_method: Option<String> = None;
+    let mut remote_result: Option<(
+        evot_engine::context::compaction::remote::RemoteCompaction,
+        evot_engine::SummarizerContext,
+    )> = None;
+
+    // Manual `/compact` follows the same remote-first policy as automatic
+    // compaction. Explicit summary overrides remain local by definition.
+    if summary_override.is_none() {
+        if let Some(summarizer) = request.summarizer.as_ref() {
+            let ctx = summarizer_context(summarizer);
+            if evot_engine::context::compaction::remote::supports(&ctx) {
+                notify_phase(&observer, ManualCompactionPhase::Remote);
+                let mut remote_messages =
+                    evot_engine::context::compaction::remote::with_previous_local_summary(
+                        &compact_entries[plan.summarize.clone()]
+                            .iter()
+                            .map(|entry| entry.message.clone())
+                            .collect::<Vec<_>>(),
+                        previous_state
+                            .as_ref()
+                            .and_then(|state| state.context_summary_message.as_ref())
+                            .and(previous_summary),
+                    );
+                if let Some(prefix) = plan.turn_prefix.as_ref() {
+                    remote_messages.extend(
+                        compact_entries[prefix.clone()]
+                            .iter()
+                            .map(|entry| entry.message.clone()),
+                    );
+                }
+                let remote_cancel = cancel.child_token();
+                let remote_call = evot_engine::context::compaction::remote::compact(
+                    &ctx,
+                    &remote_messages,
+                    remote_cancel.clone(),
+                );
+                let remote = tokio::select! {
+                    _ = cancel.cancelled() => {
+                        remote_cancel.cancel();
+                        return Ok(CompactSessionOutcome {
+                            status: CompactSessionStatus::Cancelled,
+                            item: None,
+                            used_fallback: false,
+                        });
+                    }
+                    result = tokio::time::timeout(summarizer.timeout, remote_call) => result,
+                };
+                match remote {
+                    Ok(Ok(compaction)) => {
+                        compaction_method = Some("remote".into());
+                        remote_result = Some((compaction, ctx));
+                    }
+                    Ok(Err(evot_engine::context::compaction::remote::RemoteError::Cancelled)) => {
+                        return Ok(CompactSessionOutcome {
+                            status: CompactSessionStatus::Cancelled,
+                            item: None,
+                            used_fallback: false,
+                        });
+                    }
+                    Ok(Err(evot_engine::context::compaction::remote::RemoteError::Failed(
+                        error,
+                    ))) => {
+                        tracing::warn!(stage = "compact", status = "remote_failed", %error,
+                            "manual remote compaction failed; falling back to local summary");
+                        compaction_method = Some("remote_failed_local".into());
+                        notify_phase(&observer, ManualCompactionPhase::LocalFallback);
+                    }
+                    Err(_) => {
+                        remote_cancel.cancel();
+                        tracing::warn!(
+                            stage = "compact",
+                            status = "remote_timeout",
+                            "manual remote compaction timed out; falling back to local summary"
+                        );
+                        compaction_method = Some("remote_failed_local".into());
+                        notify_phase(&observer, ManualCompactionPhase::LocalFallback);
+                    }
+                }
+            } else {
+                compaction_method = Some("local".into());
+                notify_phase(&observer, ManualCompactionPhase::Local);
+            }
+        }
+    }
+
     let summary = if let Some(summary) = summary_override {
+        notify_phase(&observer, ManualCompactionPhase::Local);
+        compaction_method = Some("local".into());
         summary
+    } else if remote_result.is_some() {
+        // Remote state is authoritative for compatible future turns. Keep a
+        // deterministic readable summary for exports and model switching.
+        build_summary(
+            &compact_entries,
+            &plan,
+            previous_summary,
+            request.custom_instructions.as_deref(),
+        )
     } else if let Some(summarizer) = request.summarizer.as_ref() {
+        if compaction_method.is_none() {
+            notify_phase(&observer, ManualCompactionPhase::Local);
+        }
         let generated = summarize_with_llm(
             &compact_entries,
             &plan,
@@ -182,9 +299,17 @@ pub async fn compact_session_with_status(
             });
         }
         match generated {
-            Some(summary) => summary,
+            Some(summary) => {
+                if compaction_method.is_none() {
+                    compaction_method = Some("local".into());
+                }
+                summary
+            }
             None => {
                 used_fallback = true;
+                if compaction_method.is_none() {
+                    compaction_method = Some("local".into());
+                }
                 build_summary(
                     &compact_entries,
                     &plan,
@@ -194,6 +319,8 @@ pub async fn compact_session_with_status(
             }
         }
     } else {
+        notify_phase(&observer, ManualCompactionPhase::Local);
+        compaction_method = Some("local".into());
         build_summary(
             &compact_entries,
             &plan,
@@ -201,9 +328,18 @@ pub async fn compact_session_with_status(
             request.custom_instructions.as_deref(),
         )
     };
-    let summary = evot_engine::truncate_summary(&summary, evot_engine::DEFAULT_SUMMARY_MAX_BYTES);
     let summary_item = compact_summary_item(&summary);
-    let summary_message = convert::agent_message_from_transcript(&summary_item);
+    let remote_blob_bytes = remote_result
+        .as_ref()
+        .map(|(compaction, _)| compaction.encrypted_bytes);
+    let summary_message = match remote_result {
+        Some((compaction, ctx)) => evot_engine::context::compaction::remote::replacement_message(
+            &ctx,
+            compaction,
+            summary.clone(),
+        ),
+        None => convert::agent_message_from_transcript(&summary_item),
+    };
     let mut new_context = vec![summary_item];
     new_context.extend(app_context[plan.first_kept..].iter().cloned());
     let mut new_engine_context = vec![summary_message];
@@ -230,6 +366,8 @@ pub async fn compact_session_with_status(
     details.read_files.dedup();
     details.modified_files.sort();
     details.modified_files.dedup();
+    details.method = compaction_method.clone();
+    details.remote_blob_bytes = remote_blob_bytes;
 
     let mut state = previous_state.unwrap_or_default();
     state
@@ -247,7 +385,11 @@ pub async fn compact_session_with_status(
     state.timestamp = evot_engine::now_ms();
     state.generation = state.generation.saturating_add(1);
     state.last_summary = Some(summary.clone());
-    state.context_summary_message = new_engine_context.first().and_then(exact_user_text);
+    state.context_summary_message = if compaction_method.as_deref() == Some("remote") {
+        None
+    } else {
+        new_engine_context.first().and_then(exact_user_text)
+    };
 
     let item = TranscriptItem::Compact {
         id: crate::types::new_id(),
@@ -274,11 +416,16 @@ pub async fn compact_session_with_status(
     session
         .write_compact(item.clone(), new_context, expected_seq)
         .await?;
+    notify_phase(&observer, ManualCompactionPhase::Complete);
     Ok(CompactSessionOutcome {
         status: CompactSessionStatus::Compacted,
         item: Some(item),
         used_fallback,
     })
+}
+
+fn notify_phase(observer: &Option<ManualCompactionObserver>, phase: ManualCompactionPhase) {
+    evot_engine::context::compaction::types::notify_compaction_phase(observer, phase);
 }
 
 fn is_exact_user_text(message: &evot_engine::AgentMessage, expected: &str) -> bool {
@@ -295,54 +442,17 @@ fn exact_user_text(message: &evot_engine::AgentMessage) -> Option<String> {
     }
 }
 
-async fn summarize_with_llm(
-    entries: &[evot_engine::CompactEntry],
-    plan: &evot_engine::SessionCompactPlan,
-    previous_summary: Option<&str>,
-    custom_instructions: Option<&str>,
-    summarizer: &CompactSummarizer,
-    cancel: CancellationToken,
-) -> Option<String> {
-    let conversation = entries[plan.summarize.clone()]
-        .iter()
-        .map(format_entry_for_summary)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let conversation =
-        if let Some(instructions) = custom_instructions.filter(|s| !s.trim().is_empty()) {
-            format!(
-                "Additional user instructions for this compaction:\n{}\n\n{}",
-                instructions.trim(),
-                conversation
-            )
-        } else {
-            conversation
-        };
-
-    let input = evot_engine::SummarizerInput {
-        conversation,
-        turn_prefix: plan.turn_prefix.as_ref().map(|range| {
-            entries[range.clone()]
-                .iter()
-                .map(format_entry_for_summary)
-                .filter(|line| !line.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n")
-        }),
-        previous_summary: previous_summary.map(str::to_string),
-        file_ops: plan.file_ops.clone(),
-        evicted_count: plan.summarize.len(),
-        completed_requests: Vec::new(),
-        env_discoveries: Vec::new(),
-        last_conclusion: None,
-    };
-    let ctx = evot_engine::SummarizerContext {
+fn summarizer_context(summarizer: &CompactSummarizer) -> evot_engine::SummarizerContext {
+    evot_engine::SummarizerContext {
         provider: summarizer.provider.clone(),
         model: summarizer.llm.model.clone(),
         api_key: summarizer.llm.api_key.clone(),
         thinking_level: summarizer.llm.thinking_level,
+        system_prompt: String::new(),
+        tools: vec![],
+        max_tokens: Some(summarizer.reserve_tokens),
+        cache_config: evot_engine::CacheConfig::default(),
+        prompt_cache_key: None,
         model_config: Some(crate::agent::run::runtime::build_model_config(
             summarizer.llm.protocol.clone(),
             &summarizer.llm.provider,
@@ -353,9 +463,36 @@ async fn summarize_with_llm(
             summarizer.llm.max_tokens,
             summarizer.llm.supports_image,
         )),
+    }
+}
+
+async fn summarize_with_llm(
+    entries: &[evot_engine::CompactEntry],
+    plan: &evot_engine::SessionCompactPlan,
+    previous_summary: Option<&str>,
+    custom_instructions: Option<&str>,
+    summarizer: &CompactSummarizer,
+    cancel: CancellationToken,
+) -> Option<String> {
+    let conversation = serialize_entries(entries, plan.summarize.clone());
+
+    let input = evot_engine::SummarizerInput {
+        conversation,
+        turn_prefix: plan
+            .turn_prefix
+            .as_ref()
+            .map(|range| serialize_entries(entries, range.clone())),
+        previous_summary: previous_summary.map(str::to_string),
+        custom_instructions: custom_instructions.map(str::to_string),
+        file_ops: plan.file_ops.clone(),
+        evicted_count: plan.summarize.len(),
+        completed_requests: Vec::new(),
+        env_discoveries: Vec::new(),
+        last_conclusion: None,
     };
+    let ctx = summarizer_context(summarizer);
     let mode = evot_engine::SummarizerMode::Llm {
-        max_tokens: summarizer.max_tokens,
+        reserve_tokens: summarizer.reserve_tokens,
     };
     let llm_cancel = cancel.child_token();
     let summarize = mode.summarize(input, Some(&ctx), llm_cancel.clone());
@@ -382,21 +519,15 @@ async fn summarize_with_llm(
     }
 }
 
-fn format_entry_for_summary(entry: &evot_engine::CompactEntry) -> String {
-    let Some(message) = entry.message.as_llm() else {
-        return String::new();
-    };
-    match message {
-        evot_engine::Message::User { content, .. } => format!("User: {}", content_text(content)),
-        evot_engine::Message::Assistant { content, .. } => {
-            format!("Assistant: {}", content_text(content))
-        }
-        evot_engine::Message::ToolResult {
-            tool_name, content, ..
-        } => {
-            format!("Tool result {tool_name}: {}", content_text(content))
-        }
-    }
+fn serialize_entries(
+    entries: &[evot_engine::CompactEntry],
+    range: std::ops::Range<usize>,
+) -> String {
+    let messages = entries[range]
+        .iter()
+        .map(|entry| entry.message.clone())
+        .collect::<Vec<_>>();
+    evot_engine::context::compaction::summarizer::serialize::serialize_messages(&messages)
 }
 
 fn build_summary(

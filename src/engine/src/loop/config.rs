@@ -27,7 +27,6 @@ pub struct AgentLoopConfig {
     pub api_key: String,
     pub thinking_level: ThinkingLevel,
     pub max_tokens: Option<u32>,
-    pub temperature: Option<f32>,
 
     /// Optional model configuration for multi-provider support.
     /// When set, passed through to StreamConfig so providers can use

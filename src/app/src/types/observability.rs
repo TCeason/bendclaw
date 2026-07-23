@@ -125,6 +125,12 @@ pub enum CompactionResult {
         tool_results_shrunk: usize,
         images_downgraded: usize,
         current_run_reclaimed: usize,
+        /// `remote`, `local`, or `remote_failed_local`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        method: Option<String>,
+        /// Encrypted provider-native payload size, when remote succeeded.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        remote_blob_bytes: Option<usize>,
     },
 }
 

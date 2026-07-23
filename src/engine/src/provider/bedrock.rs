@@ -322,9 +322,6 @@ pub fn build_bedrock_body(config: &StreamConfig) -> serde_json::Value {
     if let Some(max) = config.max_tokens {
         inference_config["maxTokens"] = serde_json::json!(max);
     }
-    if let Some(temp) = config.temperature {
-        inference_config["temperature"] = serde_json::json!(temp);
-    }
     if inference_config != serde_json::json!({}) {
         body["inferenceConfig"] = inference_config;
     }

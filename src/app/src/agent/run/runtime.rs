@@ -413,7 +413,18 @@ async fn drive_one_turn(
                             "skipping stale automatic compaction after concurrent transcript activity"
                         );
                     } else {
-                        let new_context = from_agent_messages(&messages);
+                        let mut new_context = from_agent_messages(&messages);
+                        if let Some(summary) = summary.as_deref() {
+                            for (index, message) in messages.iter().enumerate() {
+                                if evot_engine::context::compaction::remote::is_replacement_message(
+                                    message,
+                                ) && index < new_context.len()
+                                {
+                                    new_context[index] =
+                                        crate::compact::context_view::compact_summary_item(summary);
+                                }
+                            }
+                        }
                         let item = automatic_compact_item(
                             reason.clone(),
                             &result,
@@ -979,6 +990,10 @@ fn map_agent_event(
             ]
         }
 
+        evot_engine::AgentEvent::ContextCompactionPhase { phase } => vec![RuntimeEvent::Public(
+            RunEventPayload::ContextCompactionPhase { phase: *phase },
+        )],
+
         evot_engine::AgentEvent::ContextCompactionEnd {
             reason,
             stats,
@@ -1002,6 +1017,14 @@ fn map_agent_event(
                     tool_results_shrunk: stats.tool_results_shrunk,
                     images_downgraded: stats.images_downgraded,
                     current_run_reclaimed: stats.current_run_reclaimed,
+                    method: stats.method.map(|method| match method {
+                        evot_engine::CompactionMethod::Remote => "remote".to_string(),
+                        evot_engine::CompactionMethod::Local => "local".to_string(),
+                        evot_engine::CompactionMethod::RemoteFailedLocal => {
+                            "remote_failed_local".to_string()
+                        }
+                    }),
+                    remote_blob_bytes: stats.remote_blob_bytes,
                 }
             } else {
                 crate::types::CompactionResult::NoOp
@@ -1060,6 +1083,16 @@ fn automatic_compact_item(
     let details = crate::types::CompactDetails {
         read_files: state.file_ops.read_only().into_iter().cloned().collect(),
         modified_files: state.file_ops.modified().into_iter().cloned().collect(),
+        method: match result {
+            crate::types::CompactionResult::Compacted { method, .. } => method.clone(),
+            crate::types::CompactionResult::NoOp => None,
+        },
+        remote_blob_bytes: match result {
+            crate::types::CompactionResult::Compacted {
+                remote_blob_bytes, ..
+            } => *remote_blob_bytes,
+            crate::types::CompactionResult::NoOp => None,
+        },
     };
     TranscriptItem::Compact {
         id: crate::types::new_id(),

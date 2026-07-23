@@ -1,13 +1,26 @@
 //! Tests for the CompactionController.
 
+use std::sync::Arc;
+
 use evotengine::context::compaction::config::CompactionConfig;
 use evotengine::context::compaction::controller::CompactionController;
 use evotengine::context::compaction::types::AfterResponseAction;
+use evotengine::context::compaction::types::CompactionPhase;
 use evotengine::context::compaction::types::ModelId;
 use evotengine::context::compaction::types::UsageSnapshot;
+use evotengine::context::SummarizerContext;
 use evotengine::context::SummarizerMode;
+use evotengine::provider::ApiProtocol;
+use evotengine::provider::MockProvider;
+use evotengine::provider::MockResponse;
+use evotengine::provider::ModelConfig;
 use evotengine::types::*;
 use tokio_util::sync::CancellationToken;
+use wiremock::matchers::method;
+use wiremock::matchers::path;
+use wiremock::Mock;
+use wiremock::MockServer;
+use wiremock::ResponseTemplate;
 
 fn user_msg(text: &str) -> AgentMessage {
     AgentMessage::Llm(Message::User {
@@ -68,6 +81,34 @@ fn config_small() -> CompactionConfig {
         summarizer_mode: SummarizerMode::default(),
         summary_max_chars: 4000,
     }
+}
+
+#[tokio::test]
+async fn controller_reports_live_local_phase_order() {
+    let phases = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = Arc::clone(&phases);
+    let observer: evotengine::CompactionObserver = Arc::new(move |phase| {
+        if let Ok(mut phases) = observed.lock() {
+            phases.push(phase);
+        }
+    });
+    let mut ctrl = CompactionController::new(config_small()).with_observer(observer);
+    let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];
+    for _ in 0..20 {
+        messages.push(user_msg(&big_text(300)));
+        messages.push(assistant_msg(&big_text(300)));
+    }
+
+    let result = ctrl
+        .compact_on_estimate(&mut messages, 9_000, None, CancellationToken::new())
+        .await;
+    assert!(result.stats.is_some());
+    let phases = phases.lock().unwrap_or_else(|error| error.into_inner());
+    assert_eq!(phases.as_slice(), [
+        CompactionPhase::Planning,
+        CompactionPhase::Local,
+        CompactionPhase::Complete,
+    ]);
 }
 
 #[tokio::test]
@@ -325,6 +366,131 @@ async fn controller_restores_seeded_summary_when_there_is_no_plan() {
         matches!(&messages[0], AgentMessage::Llm(Message::User { content, .. })
         if matches!(content.as_slice(), [Content::Text { text }] if text == "summary message"))
     );
+}
+
+#[tokio::test]
+async fn controller_retries_remote_after_an_earlier_compaction_failure() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/responses"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("transient remote failure"))
+        .mount(&server)
+        .await;
+    let provider = Arc::new(MockProvider::new(vec![
+        MockResponse::Text("first local summary".into()),
+        MockResponse::Text("second local summary".into()),
+    ]));
+    let ctx = SummarizerContext {
+        provider,
+        model: "gpt-5.6-sol".into(),
+        api_key: "test-key".into(),
+        thinking_level: ThinkingLevel::Off,
+        system_prompt: String::new(),
+        tools: vec![],
+        max_tokens: Some(1024),
+        cache_config: CacheConfig::default(),
+        prompt_cache_key: None,
+        model_config: Some(ModelConfig::resolve(
+            ApiProtocol::OpenAiResponses,
+            "openai",
+            "gpt-5.6-sol",
+            "gpt-5.6-sol",
+            server.uri(),
+            None,
+        )),
+    };
+    let mut ctrl = CompactionController::new(config_small());
+    let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];
+    for _ in 0..20 {
+        messages.push(user_msg(&big_text(300)));
+        messages.push(assistant_msg(&big_text(300)));
+    }
+    messages.push(user_msg("recent"));
+    messages.push(assistant_msg("recent answer"));
+
+    let first = ctrl
+        .force_compact(&mut messages, Some(&ctx), CancellationToken::new())
+        .await;
+    assert!(matches!(
+        first.and_then(|stats| stats.method),
+        Some(evotengine::CompactionMethod::RemoteFailedLocal)
+    ));
+
+    for _ in 0..20 {
+        messages.push(user_msg(&big_text(300)));
+        messages.push(assistant_msg(&big_text(300)));
+    }
+    let second = ctrl
+        .force_compact(&mut messages, Some(&ctx), CancellationToken::new())
+        .await;
+    assert!(matches!(
+        second.and_then(|stats| stats.method),
+        Some(evotengine::CompactionMethod::RemoteFailedLocal)
+    ));
+
+    let requests = server.received_requests().await.unwrap_or_default();
+    assert_eq!(requests.len(), 2, "each compaction must retry remote");
+}
+
+#[tokio::test]
+async fn controller_reports_live_remote_fallback_phase_order() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/responses"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("transient remote failure"))
+        .mount(&server)
+        .await;
+    let provider = Arc::new(MockProvider::new(vec![MockResponse::Text(
+        "local fallback summary".into(),
+    )]));
+    let ctx = SummarizerContext {
+        provider,
+        model: "gpt-5.6-sol".into(),
+        api_key: "test-key".into(),
+        thinking_level: ThinkingLevel::Off,
+        system_prompt: String::new(),
+        tools: vec![],
+        max_tokens: Some(1024),
+        cache_config: CacheConfig::default(),
+        prompt_cache_key: None,
+        model_config: Some(ModelConfig::resolve(
+            ApiProtocol::OpenAiResponses,
+            "openai",
+            "gpt-5.6-sol",
+            "gpt-5.6-sol",
+            server.uri(),
+            None,
+        )),
+    };
+
+    let phases = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = Arc::clone(&phases);
+    let observer: evotengine::CompactionObserver = Arc::new(move |phase| {
+        if let Ok(mut phases) = observed.lock() {
+            phases.push(phase);
+        }
+    });
+    let mut ctrl = CompactionController::new(config_small()).with_observer(observer);
+    let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];
+    for _ in 0..20 {
+        messages.push(user_msg(&big_text(300)));
+        messages.push(assistant_msg(&big_text(300)));
+    }
+
+    let stats = ctrl
+        .force_compact(&mut messages, Some(&ctx), CancellationToken::new())
+        .await;
+    assert!(matches!(
+        stats.and_then(|stats| stats.method),
+        Some(evotengine::CompactionMethod::RemoteFailedLocal)
+    ));
+    let phases = phases.lock().unwrap_or_else(|error| error.into_inner());
+    assert_eq!(phases.as_slice(), [
+        CompactionPhase::Planning,
+        CompactionPhase::Remote,
+        CompactionPhase::LocalFallback,
+        CompactionPhase::Complete,
+    ]);
 }
 
 #[tokio::test]

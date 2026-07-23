@@ -5,7 +5,6 @@ const SUMMARY_PREFIX: &str =
     "The conversation history before this point was compacted into the following summary:\n\n";
 
 pub fn compact_summary_text(summary: &str) -> String {
-    let summary = evot_engine::truncate_summary(summary, evot_engine::DEFAULT_SUMMARY_MAX_BYTES);
     format!("{SUMMARY_PREFIX}{summary}")
 }
 

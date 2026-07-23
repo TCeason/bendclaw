@@ -260,13 +260,12 @@ fn test_build_request_body_with_tools() {
         .messages(vec![Message::user("List files")])
         .tools(vec![tool_def("bash", "Run a command")])
         .max_tokens(1024)
-        .temperature(0.5)
         .build();
 
     let body = build_request_body(&config, &compat);
     assert!(body["tools"].is_array());
     assert_eq!(body["tools"][0]["function"]["name"], "bash");
-    assert_eq!(body["temperature"], 0.5);
+    assert!(body.get("temperature").is_none());
 }
 
 #[test]

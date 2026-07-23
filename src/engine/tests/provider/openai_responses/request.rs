@@ -25,8 +25,23 @@ fn native_openai_request_uses_responses_schema_with_reasoning_and_tools() {
     assert_eq!(body["reasoning"]["summary"], "auto");
     assert!(body.get("messages").is_none());
     assert!(body.get("reasoning_effort").is_none());
-    assert!(body["max_output_tokens"].is_number());
+    assert!(body.get("max_output_tokens").is_none());
+    assert!(body.get("temperature").is_none());
     assert_eq!(body["store"], false);
+}
+
+#[test]
+fn non_gpt_responses_keeps_output_budget_without_temperature() {
+    let mut model = ModelConfig::openai_responses("grok-4.5", "Grok 4.5");
+    model.reasoning = false;
+    let config = StreamConfigBuilder::openai()
+        .model("grok-4.5")
+        .model_config(model)
+        .build();
+
+    let body = build_request_body(&config);
+    assert!(body["max_output_tokens"].is_number());
+    assert!(body.get("temperature").is_none());
 }
 
 #[test]

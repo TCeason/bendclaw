@@ -332,9 +332,10 @@ pub struct ModelConfig {
     /// Anthropic adaptive thinking (`thinking.type: adaptive`).
     #[serde(default)]
     pub force_adaptive_thinking: bool,
-    /// Whether this model accepts a temperature parameter.
-    #[serde(default = "default_supports_temperature")]
-    pub supports_temperature: bool,
+    /// Whether this model accepts a `compaction_trigger` input item on the
+    /// Responses API (provider-native server-side compaction).
+    #[serde(default)]
+    pub supports_remote_compaction: bool,
 }
 
 fn default_reasoning_capability() -> bool {
@@ -343,10 +344,6 @@ fn default_reasoning_capability() -> bool {
 
 fn default_input_modalities() -> Vec<InputModality> {
     vec![InputModality::Text]
-}
-
-fn default_supports_temperature() -> bool {
-    true
 }
 
 fn protocol_defaults(api: ApiProtocol) -> ModelMetadata {
@@ -428,7 +425,7 @@ impl ModelConfig {
             compat,
             thinking_level_map,
             force_adaptive_thinking: metadata.force_adaptive_thinking,
-            supports_temperature: metadata.supports_temperature,
+            supports_remote_compaction: metadata.supports_remote_compaction,
         }
     }
 

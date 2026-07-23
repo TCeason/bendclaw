@@ -1276,6 +1276,8 @@ async fn stats_after_compact_filtered_on_resume() -> TestResult {
                 tool_results_shrunk: 2,
                 images_downgraded: 0,
                 current_run_reclaimed: 0,
+                method: None,
+                remote_blob_bytes: None,
             },
             context_window: 0,
             will_retry: false,

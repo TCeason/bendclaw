@@ -193,6 +193,7 @@ fn emergency_includes_message_count() {
         conversation: String::new(),
         turn_prefix: None,
         previous_summary: None,
+        custom_instructions: None,
         file_ops: FileOps::default(),
         evicted_count: 15,
         completed_requests: vec![],
@@ -209,6 +210,7 @@ fn emergency_includes_completed_requests() {
         conversation: String::new(),
         turn_prefix: None,
         previous_summary: None,
+        custom_instructions: None,
         file_ops: FileOps::default(),
         evicted_count: 5,
         completed_requests: vec!["Fix bug #123".into(), "Add tests".into()],
@@ -231,6 +233,7 @@ fn emergency_includes_file_ops() {
         conversation: String::new(),
         turn_prefix: None,
         previous_summary: None,
+        custom_instructions: None,
         file_ops,
         evicted_count: 5,
         completed_requests: vec![],
@@ -250,6 +253,7 @@ fn emergency_includes_conclusion() {
         conversation: String::new(),
         turn_prefix: None,
         previous_summary: None,
+        custom_instructions: None,
         file_ops: FileOps::default(),
         evicted_count: 3,
         completed_requests: vec![],
@@ -269,6 +273,7 @@ fn emergency_includes_turn_prefix() {
             "User asked: refactor auth module\nTools used: read(/src/auth.rs)".into(),
         ),
         previous_summary: None,
+        custom_instructions: None,
         file_ops: FileOps::default(),
         evicted_count: 10,
         completed_requests: vec![],
@@ -290,6 +295,7 @@ async fn mode_llm_without_context_returns_error() {
         conversation: "[User]: hello".into(),
         turn_prefix: None,
         previous_summary: None,
+        custom_instructions: None,
         file_ops: FileOps::default(),
         evicted_count: 2,
         completed_requests: vec![],
@@ -297,7 +303,9 @@ async fn mode_llm_without_context_returns_error() {
         last_conclusion: None,
     };
     let cancel = CancellationToken::new();
-    let mode = SummarizerMode::Llm { max_tokens: 4096 };
+    let mode = SummarizerMode::Llm {
+        reserve_tokens: 4096,
+    };
     let result = mode.summarize(input, None, cancel).await;
     assert!(result.is_err());
 }
@@ -311,6 +319,7 @@ fn base_input(conversation: &str) -> SummarizerInput {
         conversation: conversation.into(),
         turn_prefix: None,
         previous_summary: None,
+        custom_instructions: None,
         file_ops: FileOps::default(),
         evicted_count: 1,
         completed_requests: vec![],
@@ -332,6 +341,11 @@ async fn summarize_capturing_with_model_config(
         model: "test-model".into(),
         api_key: "test-key".into(),
         thinking_level: ThinkingLevel::Off,
+        system_prompt: String::new(),
+        tools: vec![],
+        max_tokens: None,
+        cache_config: CacheConfig::default(),
+        prompt_cache_key: None,
         model_config,
     };
     let result = llm::summarize(input, &ctx, max_tokens, CancellationToken::new()).await;
@@ -441,12 +455,40 @@ async fn llm_summarize_merges_turn_prefix_with_halved_budget() {
 
     let requests = captured.lock();
     assert_eq!(requests.len(), 2, "split turn issues two LLM calls");
-    assert_eq!(requests[0].max_tokens, Some(4096));
+    assert_eq!(
+        requests[0].max_tokens,
+        Some(3276),
+        "main budget is floor(80% of reserve)"
+    );
     assert_eq!(
         requests[1].max_tokens,
         Some(2048),
-        "prefix budget is halved"
+        "prefix budget is 50% of reserve"
     );
+}
+
+#[tokio::test]
+async fn llm_summarize_split_turn_without_history_skips_main_request() {
+    let mut input = base_input("");
+    input.turn_prefix = Some("[User]: prefix of the split turn".into());
+    let (result, captured) = summarize_capturing(input, 16_384, vec![Reply::text(
+        "## Original Request\nPrefix",
+    )])
+    .await;
+
+    let output = match result {
+        Ok(output) => output,
+        Err(error) => panic!("expected summary, got {error:?}"),
+    };
+    assert!(output.summary.starts_with("No prior history."));
+    assert!(output.summary.contains("Prefix"));
+    let requests = captured.lock();
+    assert_eq!(
+        requests.len(),
+        1,
+        "empty history must not issue a main call"
+    );
+    assert_eq!(requests[0].max_tokens, Some(8192));
 }
 
 #[tokio::test]

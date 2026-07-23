@@ -23,16 +23,49 @@ const OVERFLOW_EXHAUSTED_MESSAGE: &str =
 const PREFLIGHT_CONTEXT_MESSAGE: &str =
     "Context remains at or above the model window after compaction. The request was not sent because it would leave no usable output budget. Reduce context or switch to a larger-context model.";
 
+pub(super) struct CompactionRequestShape<'a> {
+    pub(super) system_prompt: &'a str,
+    pub(super) tools: &'a [crate::provider::ToolDefinition],
+    pub(super) prompt_cache_key: Option<&'a str>,
+}
+
+impl CompactionRequestShape<'_> {
+    fn summarizer_context(&self, config: &AgentLoopConfig) -> SummarizerContext {
+        SummarizerContext {
+            provider: Arc::clone(&config.provider),
+            model: config.model.clone(),
+            api_key: config.api_key.clone(),
+            thinking_level: config.thinking_level,
+            system_prompt: self.system_prompt.to_string(),
+            tools: self.tools.to_vec(),
+            max_tokens: config.max_tokens,
+            cache_config: config.cache_config.clone(),
+            prompt_cache_key: self.prompt_cache_key.map(str::to_string),
+            model_config: config.model_config.clone(),
+        }
+    }
+}
+
+pub(super) struct PostCompactionInput<'a> {
+    pub(super) assistant_message: &'a Message,
+    pub(super) config: &'a AgentLoopConfig,
+    pub(super) request_shape: CompactionRequestShape<'a>,
+}
+
 /// Run the post-response compaction policy for one assistant message.
 pub(super) async fn post_response_compaction(
     controller: &mut Option<CompactionController>,
     tracker: &mut ContextTracker,
     messages: &mut Vec<AgentMessage>,
-    assistant_message: &Message,
-    config: &AgentLoopConfig,
+    input: PostCompactionInput<'_>,
     cancel: CancellationToken,
     tx: &mpsc::UnboundedSender<AgentEvent>,
 ) -> bool {
+    let PostCompactionInput {
+        assistant_message,
+        config,
+        request_shape,
+    } = input;
     let ctrl = match controller.as_mut() {
         Some(ctrl) => ctrl,
         None => {
@@ -53,13 +86,7 @@ pub(super) async fn post_response_compaction(
         provider: usage.model.provider.clone(),
         model: config.model.clone(),
     };
-    let summarizer_ctx = SummarizerContext {
-        provider: Arc::clone(&config.provider),
-        model: config.model.clone(),
-        api_key: config.api_key.clone(),
-        thinking_level: config.thinking_level,
-        model_config: config.model_config.clone(),
-    };
+    let summarizer_ctx = request_shape.summarizer_context(config);
 
     let response = ctrl
         .after_response(
@@ -125,6 +152,7 @@ pub(super) async fn pre_prompt_compaction(
     tracker: &mut ContextTracker,
     messages: &mut Vec<AgentMessage>,
     config: &AgentLoopConfig,
+    request_shape: CompactionRequestShape<'_>,
     cancel: CancellationToken,
     tx: &mpsc::UnboundedSender<AgentEvent>,
 ) -> bool {
@@ -133,13 +161,7 @@ pub(super) async fn pre_prompt_compaction(
         None => return true,
     };
 
-    let summarizer_ctx = SummarizerContext {
-        provider: Arc::clone(&config.provider),
-        model: config.model.clone(),
-        api_key: config.api_key.clone(),
-        thinking_level: config.thinking_level,
-        model_config: config.model_config.clone(),
-    };
+    let summarizer_ctx = request_shape.summarizer_context(config);
 
     loop {
         let estimated_tokens = tracker.estimate_context_tokens_for_model(

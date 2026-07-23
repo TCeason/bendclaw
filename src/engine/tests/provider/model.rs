@@ -28,6 +28,56 @@ fn model_config_openai_responses() {
 }
 
 #[test]
+fn remote_compaction_capability_is_gpt_and_codex_only() {
+    // Capability comes from the model catalog, independent of transport.
+    for id in ["gpt-5.6-sol", "gpt-5.5", "codex-mini"] {
+        assert!(
+            ModelConfig::openai_responses(id, id).supports_remote_compaction,
+            "{id}"
+        );
+    }
+    for id in ["o3", "grok-4.5", "claude-opus-4-6", "unknown-model"] {
+        assert!(
+            !ModelConfig::openai_responses(id, id).supports_remote_compaction,
+            "{id}"
+        );
+    }
+}
+
+#[test]
+fn date_suffixed_anthropic_ids_match_their_catalog_entries() {
+    // Known ids resolve from the declarative profile table; date-suffixed
+    // variants resolve through the version-gate fallback. Both paths must
+    // agree on capabilities.
+    for (bare, dated) in [
+        ("claude-opus-4-6", "claude-opus-4-6-20260115"),
+        ("claude-opus-4-8", "claude-opus-4-8-20260601"),
+        ("claude-sonnet-4-5", "claude-sonnet-4-5-20250929"),
+        ("claude-haiku-4-5", "claude-haiku-4-5-20251001"),
+    ] {
+        let bare = ModelConfig::anthropic(bare, bare);
+        let dated = ModelConfig::anthropic(dated, dated);
+        assert_eq!(bare.context_window, dated.context_window, "{}", dated.id);
+        assert_eq!(bare.max_tokens, dated.max_tokens, "{}", dated.id);
+        assert_eq!(
+            bare.thinking_level_map, dated.thinking_level_map,
+            "{}",
+            dated.id
+        );
+        assert_eq!(
+            bare.force_adaptive_thinking, dated.force_adaptive_thinking,
+            "{}",
+            dated.id
+        );
+        assert_eq!(
+            bare.supports_remote_compaction, dated.supports_remote_compaction,
+            "{}",
+            dated.id
+        );
+    }
+}
+
+#[test]
 fn model_config_kimi_coding_matches_pi_catalog() {
     for id in ["k2p7", "kimi-for-coding", "kimi-for-coding-highspeed"] {
         let config = ModelConfig::anthropic(id, id);

@@ -1,8 +1,17 @@
 //! Model capability catalog.
 //!
-//! Model metadata is keyed by model id, not by the configured transport channel.
-//! A user may route `grok-4.5` through `openai` or `grok`; the context window and
-//! reasoning map still come from this catalog.
+//! Known model ids are declarative [`ModelProfile`] records — one entry per
+//! model in [`MODEL_PROFILES`], mirroring pi's generated model tables
+//! (`packages/ai/src/providers/*.models.ts`). Capabilities are plain data;
+//! resolution is a table lookup.
+//!
+//! Family fallback rules cover only ids absent from the table (date-suffixed
+//! or not-yet-catalogued versions), so an unknown `gpt-*` or `claude-*` id
+//! still gets sane limits.
+//!
+//! Metadata is keyed by model id, not by the configured transport channel.
+//! A user may route `grok-4.5` through `openai` or `grok`; the context window
+//! and reasoning map still come from this catalog.
 //!
 //! Layers:
 //! 1. [`resolve`] — fixed per-model capabilities
@@ -13,7 +22,198 @@ use std::collections::HashMap;
 
 use super::model::InputModality;
 
-/// Intrinsic capabilities of a concrete model id.
+// ---------------------------------------------------------------------------
+// Profile vocabulary
+// ---------------------------------------------------------------------------
+
+/// pi thinking level → wire effort. `None` marks the level unsupported.
+type ThinkingLevels = &'static [(&'static str, Option<&'static str>)];
+
+/// Declarative capability record for one model id.
+#[derive(Debug, Clone, Copy)]
+pub struct ModelProfile {
+    pub context_window: u32,
+    pub max_tokens: u32,
+    pub reasoning: bool,
+    pub vision: bool,
+    pub thinking_levels: ThinkingLevels,
+    /// Anthropic adaptive thinking (`thinking.type: adaptive` +
+    /// `output_config.effort`). When false, budget-based thinking is used for
+    /// Anthropic transports.
+    pub adaptive_thinking: bool,
+    /// Server-side compaction via a `compaction_trigger` input item on the
+    /// Responses API (GPT/Codex first-party upstreams).
+    pub remote_compaction: bool,
+}
+
+/// Baseline every profile entry extends: vision reasoning model with
+/// conservative legacy-Anthropic limits and no protocol extensions.
+const BASE: ModelProfile = ModelProfile {
+    context_window: 200_000,
+    max_tokens: 8_192,
+    reasoning: true,
+    vision: true,
+    thinking_levels: &[],
+    adaptive_thinking: false,
+    remote_compaction: false,
+};
+
+impl ModelProfile {
+    fn metadata(&self) -> ModelMetadata {
+        ModelMetadata {
+            context_window: self.context_window,
+            max_tokens: self.max_tokens,
+            reasoning: self.reasoning,
+            input: if self.vision {
+                vec![InputModality::Text, InputModality::Image]
+            } else {
+                vec![InputModality::Text]
+            },
+            thinking_level_map: levels_map(self.thinking_levels),
+            force_adaptive_thinking: self.adaptive_thinking,
+            supports_remote_compaction: self.remote_compaction,
+        }
+    }
+}
+
+fn levels_map(levels: ThinkingLevels) -> HashMap<String, Option<String>> {
+    levels
+        .iter()
+        .map(|(level, effort)| ((*level).to_string(), effort.map(str::to_string)))
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Thinking ramps shared by profile entries
+// ---------------------------------------------------------------------------
+
+const GPT_LEVELS: ThinkingLevels = &[("adaptive", Some("medium")), ("xhigh", Some("xhigh"))];
+const GPT_5_4_LEVELS: ThinkingLevels = &[("adaptive", Some("xhigh")), ("xhigh", Some("xhigh"))];
+const GPT_5_6_LEVELS: ThinkingLevels = &[
+    ("adaptive", Some("medium")),
+    ("xhigh", Some("xhigh")),
+    ("max", Some("max")),
+];
+const GPT_5_5_PRO_LEVELS: ThinkingLevels = &[
+    ("adaptive", Some("medium")),
+    ("xhigh", Some("xhigh")),
+    ("off", None),
+    ("minimal", None),
+    ("low", None),
+];
+const K3_LEVELS: ThinkingLevels = &[
+    ("off", None),
+    ("minimal", None),
+    ("low", Some("low")),
+    ("medium", None),
+    ("high", Some("high")),
+    ("xhigh", None),
+    ("max", Some("max")),
+];
+const GROK_4_5_LEVELS: ThinkingLevels = &[
+    ("off", None),
+    ("minimal", None),
+    ("low", Some("low")),
+    ("medium", Some("medium")),
+    ("high", Some("high")),
+    ("adaptive", Some("high")),
+    ("xhigh", None),
+    ("max", None),
+];
+const FABLE_LEVELS: ThinkingLevels = &[
+    ("max", Some("max")),
+    ("xhigh", Some("xhigh")),
+    ("off", None),
+];
+const ANTHROPIC_MAX_XHIGH_LEVELS: ThinkingLevels =
+    &[("max", Some("max")), ("xhigh", Some("xhigh"))];
+/// Adaptive models predating the xhigh tier: alias persisted `xhigh` to `max`.
+const ANTHROPIC_MAX_ONLY_LEVELS: ThinkingLevels = &[("max", Some("max")), ("xhigh", Some("max"))];
+
+// ---------------------------------------------------------------------------
+// The catalog — one declarative record per known model id
+// ---------------------------------------------------------------------------
+
+const GPT_5_6: ModelProfile = ModelProfile {
+    context_window: 272_000,
+    max_tokens: 128_000,
+    thinking_levels: GPT_5_6_LEVELS,
+    remote_compaction: true,
+    ..BASE
+};
+
+/// Anthropic adaptive-thinking generation (opus 4.7+, sonnet 5+).
+const ANTHROPIC_ADAPTIVE_XHIGH: ModelProfile = ModelProfile {
+    context_window: 1_000_000,
+    max_tokens: 128_000,
+    thinking_levels: ANTHROPIC_MAX_XHIGH_LEVELS,
+    adaptive_thinking: true,
+    ..BASE
+};
+
+/// First adaptive generation (opus 4.6, sonnet 4.6): max tier, no xhigh.
+const ANTHROPIC_ADAPTIVE_MAX_ONLY: ModelProfile = ModelProfile {
+    context_window: 1_000_000,
+    max_tokens: 128_000,
+    thinking_levels: ANTHROPIC_MAX_ONLY_LEVELS,
+    adaptive_thinking: true,
+    ..BASE
+};
+
+/// Budget-thinking Anthropic 4.x generation.
+const ANTHROPIC_MODERN: ModelProfile = ModelProfile {
+    context_window: 200_000,
+    max_tokens: 64_000,
+    ..BASE
+};
+
+/// Kimi Coding ids use the Anthropic Messages transport but must not inherit
+/// the conservative unknown-Anthropic fallback. Mirrors pi's generated
+/// `kimi-coding.models.ts`.
+const KIMI_CODING: ModelProfile = ModelProfile {
+    context_window: 262_144,
+    max_tokens: 32_768,
+    adaptive_thinking: true,
+    ..BASE
+};
+
+#[rustfmt::skip]
+const MODEL_PROFILES: &[(&str, ModelProfile)] = &[
+    // -- OpenAI first-party (Responses transport, native compaction) --------
+    ("gpt-5.4",       ModelProfile { context_window: 272_000, max_tokens: 128_000, thinking_levels: GPT_5_4_LEVELS, remote_compaction: true, ..BASE }),
+    ("gpt-5.4-pro",   ModelProfile { context_window: 1_050_000, max_tokens: 128_000, thinking_levels: GPT_LEVELS, remote_compaction: true, ..BASE }),
+    ("gpt-5.5",       ModelProfile { context_window: 272_000, max_tokens: 128_000, thinking_levels: GPT_LEVELS, remote_compaction: true, ..BASE }),
+    ("gpt-5.5-pro",   ModelProfile { context_window: 1_050_000, max_tokens: 128_000, thinking_levels: GPT_5_5_PRO_LEVELS, remote_compaction: true, ..BASE }),
+    ("gpt-5.6-luna",  GPT_5_6),
+    ("gpt-5.6-sol",   GPT_5_6),
+    ("gpt-5.6-terra", GPT_5_6),
+    // -- Anthropic (date-suffixed ids resolve via the family fallback) --------
+    ("claude-fable-5",    ModelProfile { context_window: 1_000_000, max_tokens: 128_000, thinking_levels: FABLE_LEVELS, adaptive_thinking: true, ..BASE }),
+    ("claude-opus-4-8",   ANTHROPIC_ADAPTIVE_XHIGH),
+    ("claude-opus-4-7",   ANTHROPIC_ADAPTIVE_XHIGH),
+    ("claude-opus-4-6",   ANTHROPIC_ADAPTIVE_MAX_ONLY),
+    ("claude-opus-4-5",   ANTHROPIC_MODERN),
+    ("claude-opus-4-1",   ANTHROPIC_MODERN),
+    ("claude-sonnet-5",   ANTHROPIC_ADAPTIVE_XHIGH),
+    ("claude-sonnet-4-6", ANTHROPIC_ADAPTIVE_MAX_ONLY),
+    ("claude-sonnet-4-5", ANTHROPIC_MODERN),
+    ("claude-haiku-4-5",  ANTHROPIC_MODERN),
+    // -- xAI -----------------------------------------------------------------
+    ("grok-4.5",               ModelProfile { context_window: 500_000, max_tokens: 500_000, thinking_levels: GROK_4_5_LEVELS, ..BASE }),
+    ("grok-composer-2.5-fast", ModelProfile { context_window: 200_000, max_tokens: 200_000, reasoning: false, vision: false, ..BASE }),
+    // -- Kimi Coding (Anthropic Messages transport) ---------------------------
+    ("k2p7",                      KIMI_CODING),
+    ("kimi-for-coding",           KIMI_CODING),
+    ("kimi-for-coding-highspeed", KIMI_CODING),
+    ("k3",                ModelProfile { context_window: 1_048_576, max_tokens: 131_072, thinking_levels: K3_LEVELS, adaptive_thinking: true, ..BASE }),
+    ("kimi-k2-thinking",  ModelProfile { context_window: 262_144, max_tokens: 32_768, vision: false, adaptive_thinking: true, ..BASE }),
+];
+
+// ---------------------------------------------------------------------------
+// Resolution
+// ---------------------------------------------------------------------------
+
+/// Intrinsic capabilities of a concrete model id, resolved from the catalog.
 #[derive(Debug, Clone)]
 pub struct ModelMetadata {
     pub context_window: u32,
@@ -24,70 +224,46 @@ pub struct ModelMetadata {
     /// Anthropic adaptive thinking (`thinking.type: adaptive` + `output_config.effort`).
     /// When false, budget-based thinking is used for Anthropic transports.
     pub force_adaptive_thinking: bool,
-    /// Whether the Anthropic model accepts a temperature parameter.
-    pub supports_temperature: bool,
+    /// Server-side (provider-native) compaction via a `compaction_trigger`
+    /// input item on the Responses API. GPT/Codex first-party models only.
+    pub supports_remote_compaction: bool,
 }
 
 impl ModelMetadata {
     pub fn text_only(context_window: u32, max_tokens: u32) -> Self {
-        Self {
+        ModelProfile {
             context_window,
             max_tokens,
-            reasoning: true,
-            input: vec![InputModality::Text],
-            thinking_level_map: HashMap::new(),
-            force_adaptive_thinking: false,
-            supports_temperature: true,
+            vision: false,
+            ..BASE
         }
+        .metadata()
     }
 
     pub fn vision(context_window: u32, max_tokens: u32) -> Self {
-        Self {
+        ModelProfile {
             context_window,
             max_tokens,
-            reasoning: true,
-            input: vec![InputModality::Text, InputModality::Image],
-            thinking_level_map: HashMap::new(),
-            force_adaptive_thinking: false,
-            supports_temperature: true,
+            ..BASE
         }
-    }
-
-    pub fn with_reasoning(mut self, reasoning: bool) -> Self {
-        self.reasoning = reasoning;
-        self
-    }
-
-    pub fn with_thinking_map(mut self, map: HashMap<String, Option<String>>) -> Self {
-        self.thinking_level_map = map;
-        self
-    }
-
-    pub fn with_adaptive_thinking(mut self, force: bool) -> Self {
-        self.force_adaptive_thinking = force;
-        self
-    }
-
-    pub fn with_temperature(mut self, supported: bool) -> Self {
-        self.supports_temperature = supported;
-        self
+        .metadata()
     }
 }
 
 /// Resolve metadata for a model id.
 ///
 /// Accepts bare ids (`grok-4.5`) and common prefixed forms (`xai/grok-4.5`,
-/// `openai/gpt-5.6-sol`). Returns `None` for unknown models so callers can apply
-/// protocol-specific defaults.
+/// `openai/gpt-5.6-sol`). Returns `None` for unknown models so callers can
+/// apply protocol-specific defaults.
 pub fn resolve(model_id: &str) -> Option<ModelMetadata> {
     let id = normalize_model_id(model_id);
     if id.is_empty() {
         return None;
     }
-    resolve_exact(&id)
-        .or_else(|| resolve_openai_family(&id))
-        .or_else(|| resolve_anthropic_family(&id))
-        .or_else(|| resolve_grok_family(&id))
+    if let Some((_, profile)) = MODEL_PROFILES.iter().find(|(key, _)| *key == id) {
+        return Some(profile.metadata());
+    }
+    openai_family_fallback(&id).or_else(|| anthropic_family_fallback(&id))
 }
 
 /// Normalize a model id for catalog lookup without changing the wire id.
@@ -102,126 +278,94 @@ pub fn normalize_model_id(model_id: &str) -> String {
 }
 
 pub(crate) fn kimi_k3_thinking_level_map() -> HashMap<String, Option<String>> {
-    let mut levels = HashMap::new();
-    levels.insert("off".into(), None);
-    levels.insert("minimal".into(), None);
-    levels.insert("low".into(), Some("low".into()));
-    levels.insert("medium".into(), None);
-    levels.insert("high".into(), Some("high".into()));
-    levels.insert("xhigh".into(), None);
-    levels.insert("max".into(), Some("max".into()));
-    levels
+    levels_map(K3_LEVELS)
 }
 
-fn resolve_exact(id: &str) -> Option<ModelMetadata> {
-    match id {
-        // Kimi Coding model metadata mirrors pi's generated
-        // `packages/ai/src/providers/kimi-coding.models.ts` catalog. These ids
-        // use the Anthropic Messages transport but must not inherit the
-        // conservative unknown-Anthropic fallback (200k context / 8k output).
-        "k2p7" | "kimi-for-coding" | "kimi-for-coding-highspeed" => {
-            Some(ModelMetadata::vision(262_144, 32_768).with_adaptive_thinking(true))
+// ---------------------------------------------------------------------------
+// Family fallbacks — rules for ids missing from MODEL_PROFILES
+// ---------------------------------------------------------------------------
+
+/// First-party OpenAI ids not in the table: known family, conservative caps.
+fn openai_family_fallback(id: &str) -> Option<ModelMetadata> {
+    let profile = if id.starts_with("gpt-") || id.starts_with("codex-") {
+        ModelProfile {
+            context_window: 128_000,
+            max_tokens: 32_768,
+            remote_compaction: true,
+            ..BASE
         }
-        "k3" => Some(
-            ModelMetadata::vision(1_048_576, 131_072)
-                .with_thinking_map(kimi_k3_thinking_level_map())
-                .with_adaptive_thinking(true),
-        ),
-        "kimi-k2-thinking" => {
-            Some(ModelMetadata::text_only(262_144, 32_768).with_adaptive_thinking(true))
+    } else if id.starts_with("o1") || id.starts_with("o3") || id.starts_with("o4") {
+        // o-series upstreams do not accept the `compaction_trigger` extension.
+        ModelProfile {
+            context_window: 128_000,
+            max_tokens: 32_768,
+            ..BASE
         }
-        // Tiny fixture used by engine tests.
-        #[cfg(test)]
-        "tiny-context" => Some(ModelMetadata::text_only(128, 32_768)),
-        _ => None,
-    }
-}
-fn resolve_openai_family(id: &str) -> Option<ModelMetadata> {
-    let (context_window, max_tokens) = match id {
-        "gpt-5.4" | "gpt-5.5" | "gpt-5.6-luna" | "gpt-5.6-sol" | "gpt-5.6-terra" => {
-            (272_000, 128_000)
-        }
-        "gpt-5.4-pro" | "gpt-5.5-pro" => (1_050_000, 128_000),
-        // Other first-party OpenAI model ids: known family, conservative caps.
-        _ if id.starts_with("gpt-")
-            || id.starts_with("codex-")
-            || id.starts_with("o1")
-            || id.starts_with("o3")
-            || id.starts_with("o4") =>
-        {
-            (128_000, 32_768)
-        }
-        _ => return None,
+    } else {
+        return None;
     };
-
-    Some(
-        ModelMetadata::vision(context_window, max_tokens)
-            .with_thinking_map(openai_thinking_level_map(id)),
-    )
+    let mut metadata = profile.metadata();
+    metadata.thinking_level_map = openai_fallback_thinking_map(id);
+    Some(metadata)
 }
 
-fn openai_thinking_level_map(id: &str) -> HashMap<String, Option<String>> {
+/// Version-rule thinking ramp for uncatalogued GPT/Codex ids, matching the
+/// explicit ramps in [`MODEL_PROFILES`].
+fn openai_fallback_thinking_map(id: &str) -> HashMap<String, Option<String>> {
     let mut map = HashMap::new();
     if !(id.starts_with("gpt-5") || id.starts_with("codex-")) {
         return map;
     }
 
-    let default = if id == "gpt-5.4" { "xhigh" } else { "medium" };
-    map.insert("adaptive".into(), Some(default.into()));
+    map.insert("adaptive".into(), Some("medium".into()));
 
     // xhigh only on gpt-5.2+ (pi's supportsOpenAiXhigh).
-    if supports_openai_xhigh(id) {
+    let supports_xhigh = ["gpt-5.2", "gpt-5.3", "gpt-5.4", "gpt-5.5", "gpt-5.6"]
+        .iter()
+        .any(|family| id.contains(family));
+    if supports_xhigh {
         map.insert("xhigh".into(), Some("xhigh".into()));
     }
 
-    // max only on gpt-5.6 family.
+    // max only on the gpt-5.6 family.
     if id.contains("gpt-5.6") {
         map.insert("max".into(), Some("max".into()));
-    }
-
-    if id.ends_with("gpt-5.5-pro") {
-        map.insert("off".into(), None);
-        map.insert("minimal".into(), None);
-        map.insert("low".into(), None);
     }
 
     map
 }
 
-fn supports_openai_xhigh(id: &str) -> bool {
-    id.contains("gpt-5.2")
-        || id.contains("gpt-5.3")
-        || id.contains("gpt-5.4")
-        || id.contains("gpt-5.5")
-        || id.contains("gpt-5.6")
-}
-
-fn resolve_anthropic_family(id: &str) -> Option<ModelMetadata> {
+/// Anthropic ids not in the table: capabilities are gated on the version
+/// embedded in the id (which may carry a date suffix), so this stays a rule.
+fn anthropic_family_fallback(id: &str) -> Option<ModelMetadata> {
     let Some((family, major, minor)) = anthropic_model_version(id) else {
         // Known Anthropic id shape without a modern version gate.
         if id.contains("claude") || id.contains("fable") {
-            return Some(ModelMetadata::vision(200_000, 8192).with_thinking_map(HashMap::new()));
+            return Some(BASE.metadata());
         }
         return None;
     };
 
     let adaptive = is_anthropic_adaptive(family, major, minor);
-    let million_ctx = adaptive;
-    let (context_window, max_tokens) = if million_ctx {
-        (1_000_000, 128_000)
+    let profile = if adaptive {
+        ModelProfile {
+            context_window: 1_000_000,
+            max_tokens: 128_000,
+            adaptive_thinking: true,
+            ..BASE
+        }
     } else if major >= 4 {
-        (200_000, 64_000)
+        ModelProfile {
+            context_window: 200_000,
+            max_tokens: 64_000,
+            ..BASE
+        }
     } else {
-        (200_000, 8192)
+        BASE
     };
-
-    let supports_temperature = !(family == "opus" && major == 4 && matches!(minor, 7 | 8));
-    Some(
-        ModelMetadata::vision(context_window, max_tokens)
-            .with_thinking_map(anthropic_thinking_level_map(family, major, minor))
-            .with_adaptive_thinking(adaptive)
-            .with_temperature(supports_temperature),
-    )
+    let mut metadata = profile.metadata();
+    metadata.thinking_level_map = anthropic_thinking_level_map(family, major, minor);
+    Some(metadata)
 }
 
 fn is_anthropic_adaptive(family: &str, major: u32, minor: u32) -> bool {
@@ -266,25 +410,4 @@ fn anthropic_model_version(id: &str) -> Option<(&'static str, u32, u32)> {
     let major: u32 = parts.next()?.parse().ok()?;
     let minor: u32 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
     Some((family, major, minor))
-}
-
-fn resolve_grok_family(id: &str) -> Option<ModelMetadata> {
-    match id {
-        "grok-4.5" => {
-            let mut levels = HashMap::new();
-            levels.insert("off".into(), None);
-            levels.insert("minimal".into(), None);
-            levels.insert("low".into(), Some("low".into()));
-            levels.insert("medium".into(), Some("medium".into()));
-            levels.insert("high".into(), Some("high".into()));
-            levels.insert("adaptive".into(), Some("high".into()));
-            levels.insert("xhigh".into(), None);
-            levels.insert("max".into(), None);
-            Some(ModelMetadata::vision(500_000, 500_000).with_thinking_map(levels))
-        }
-        "grok-composer-2.5-fast" => {
-            Some(ModelMetadata::text_only(200_000, 200_000).with_reasoning(false))
-        }
-        _ => None,
-    }
 }

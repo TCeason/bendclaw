@@ -720,10 +720,12 @@ export function buildVerboseEvent(eventText: string): OutputLine[] {
   }))
 }
 
-/** True for LLM events that must always reach the TUI (errors and retries),
- *  as opposed to per-call stats that only belong in screen.log. */
-export function isVisibleLlmEvent(text: string): boolean {
+/** True for events that must always reach the TUI: LLM errors/retries and
+ *  compactions that actually changed context. Per-call/no-op stats remain in
+ *  screen.log only. */
+export function isVisibleEvent(text: string): boolean {
   return /^\[LLM\]\s+[↻✗]/u.test(text)
+    || /^\[COMPACT\]\s+✓\s+·\s+(?!skipped\b)/u.test(text)
 }
 
 /**
@@ -763,6 +765,23 @@ export function buildLlmCard(text: string): OutputLine[] {
   return lines
 }
 
+export function buildEventCard(text: string): OutputLine[] {
+  if (text.startsWith('[COMPACT]')) {
+    const rawLines = text.split('\n')
+    const head = (rawLines[0] ?? '').replace(/^\[COMPACT\]\s+✓\s*·?\s*/u, '').trim()
+    const lines: OutputLine[] = [
+      { id: genId('tool'), kind: 'tool', text: '✦ compact' },
+      { id: genId('tool'), kind: 'tool', text: `  ✓ · ${head}` },
+    ]
+    for (const line of rawLines.slice(1)) {
+      const body = line.replace(/^\s*(context|summary)\s*/u, '').trim()
+      if (body) lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${body}` })
+    }
+    return lines
+  }
+  return buildLlmCard(text)
+}
+
 export function buildError(message: string): OutputLine[] {
   return [{ id: genId('err'), kind: 'error', text: `Error: ${message}` }]
 }
@@ -783,10 +802,10 @@ export function messagesToOutputLines(messages: UIMessage[]): OutputLine[] {
       continue
     }
 
-    // Replay only the LLM errors/retries (as cards), matching live behavior.
+    // Replay the same always-visible event cards as the live stream.
     if (msg.verboseEvents) {
       for (const evt of msg.verboseEvents) {
-        if (isVisibleLlmEvent(evt.text)) lines.push(...buildLlmCard(evt.text))
+        if (isVisibleEvent(evt.text)) lines.push(...buildEventCard(evt.text))
       }
     }
 

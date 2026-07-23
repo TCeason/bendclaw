@@ -149,6 +149,8 @@ fn stats_context_compaction_completed_round_trip() {
             tool_results_shrunk: 3,
             images_downgraded: 0,
             current_run_reclaimed: 0,
+            method: Some("remote".into()),
+            remote_blob_bytes: Some(1024),
         },
         context_window: 0,
         will_retry: false,
@@ -161,11 +163,15 @@ fn stats_context_compaction_completed_round_trip() {
                 before_tokens,
                 after_tokens,
                 messages_evicted,
+                method,
+                remote_blob_bytes,
                 ..
             } => {
                 assert_eq!(before_tokens, 50000);
                 assert_eq!(after_tokens, 20000);
                 assert_eq!(messages_evicted, 12);
+                assert_eq!(method.as_deref(), Some("remote"));
+                assert_eq!(remote_blob_bytes, Some(1024));
             }
             _ => panic!("expected Compacted"),
         }

@@ -2,13 +2,6 @@
 
 use super::summarizer::SummarizerMode;
 
-/// Byte cap for a stored compaction summary. Sized for the structured
-/// checkpoint format (Goal/Progress/Decisions/Next Steps/Critical Context):
-/// 4 KB routinely amputated the trailing sections, which are exactly what the
-/// next compaction's incremental update needs. 16 KB ≈ 4k tokens is still a
-/// small fraction of any supported context window. (pi stores summaries
-/// untruncated with a ~13k-token generation budget.)
-pub const DEFAULT_SUMMARY_MAX_BYTES: usize = 16_000;
 const SUMMARY_TRUNCATION_MARKER: &str = "\n\n[… compaction summary truncated …]\n\n";
 
 /// Bound a compaction summary while retaining both its overview and latest
@@ -90,7 +83,9 @@ impl CompactionConfig {
             tool_output_max_lines: 200,
             keep_recent_images: 2,
             summarizer_mode: SummarizerMode::default(),
-            summary_max_chars: DEFAULT_SUMMARY_MAX_BYTES,
+            // The provider output budget already bounds generated summaries;
+            // match pi by retaining that summary without a second byte cap.
+            summary_max_chars: usize::MAX,
         }
     }
 

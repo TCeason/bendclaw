@@ -203,10 +203,6 @@ pub fn build_request_body(config: &StreamConfig, compat: &OpenAiCompat) -> serde
 
     apply_reasoning_effort(&mut body, config, compat);
 
-    if let Some(temp) = config.temperature {
-        body["temperature"] = serde_json::json!(temp);
-    }
-
     body
 }
 

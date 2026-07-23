@@ -186,16 +186,29 @@ export type ManualCompactionOutcome =
       messages_before: number
       messages_after: number
       context_window: number
+      messages_evicted: number
+      tool_results_shrunk: number
+      current_run_reclaimed: number
+      images_downgraded: number
+      compaction_level: number
       used_fallback: boolean
+      method?: 'remote' | 'local' | 'remote_failed_local'
+      remote_blob_bytes?: number
     }
   | { status: 'nothing_to_compact' }
   | { status: 'cancelled' }
+
+export type CompactionPhase = 'planning' | 'remote' | 'local_fallback' | 'local' | 'complete'
 
 export class CompactionTask {
   private raw: any
 
   constructor(raw: any) {
     this.raw = raw
+  }
+
+  get phase(): CompactionPhase {
+    return this.raw.phase as CompactionPhase
   }
 
   async result(): Promise<ManualCompactionOutcome> {

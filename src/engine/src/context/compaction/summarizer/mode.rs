@@ -11,15 +11,19 @@ use super::types::SummarizerOutput;
 use crate::provider::StreamProvider;
 use crate::types::ThinkingLevel;
 
+pub const DEFAULT_SUMMARY_RESERVE_TOKENS: u32 = 16_384;
+
 /// LLM-generated structured summary configuration.
 #[derive(Debug, Clone)]
 pub enum SummarizerMode {
-    Llm { max_tokens: u32 },
+    Llm { reserve_tokens: u32 },
 }
 
 impl Default for SummarizerMode {
     fn default() -> Self {
-        Self::Llm { max_tokens: 4096 }
+        Self::Llm {
+            reserve_tokens: DEFAULT_SUMMARY_RESERVE_TOKENS,
+        }
     }
 }
 
@@ -29,6 +33,13 @@ pub struct SummarizerContext {
     pub model: String,
     pub api_key: String,
     pub thinking_level: ThinkingLevel,
+    /// Normal-turn request shape. Remote compaction mirrors these fields so
+    /// provider-native state includes the same instructions/tools/settings.
+    pub system_prompt: String,
+    pub tools: Vec<crate::provider::ToolDefinition>,
+    pub max_tokens: Option<u32>,
+    pub cache_config: crate::types::CacheConfig,
+    pub prompt_cache_key: Option<String>,
     /// Full transport/provider metadata for the summarization request. Without
     /// this, custom Anthropic-compatible channels silently fall back to the
     /// default Anthropic base URL and compaction fails before the main request.
@@ -44,11 +55,11 @@ impl SummarizerMode {
         cancel: CancellationToken,
     ) -> Result<SummarizerOutput, SummarizerError> {
         match self {
-            Self::Llm { max_tokens } => {
+            Self::Llm { reserve_tokens } => {
                 let ctx = ctx.ok_or_else(|| {
                     SummarizerError::Failed("LLM mode requires SummarizerContext".into())
                 })?;
-                llm::summarize(input, ctx, *max_tokens, cancel).await
+                llm::summarize(input, ctx, *reserve_tokens, cancel).await
             }
         }
     }
