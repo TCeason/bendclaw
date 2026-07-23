@@ -5,7 +5,12 @@ export function modelOptions(configInfo: ConfigInfo | undefined, fallbackModel: 
   const configured = configInfo?.availableModels ?? []
   if (configured.length > 0) return configured
   const provider = configInfo?.provider ?? ''
-  return [{ provider, model: fallbackModel, spec: provider ? `${provider}:${fallbackModel}` : fallbackModel }]
+  return [{
+    provider,
+    protocol: configInfo?.protocol,
+    model: fallbackModel,
+    spec: provider ? `${provider}:${fallbackModel}` : fallbackModel,
+  }]
 }
 
 export function sortModelOptionsForSelector(options: ModelOption[], activeSpec: string): ModelOption[] {
@@ -29,6 +34,17 @@ export function sortModelOptionsForSelector(options: ModelOption[], activeSpec: 
 
 export function currentModelSpec(configInfo: ConfigInfo | undefined, model: string): string {
   return configInfo?.provider ? `${configInfo.provider}:${model}` : model
+}
+
+export function formatModelOptionDetail(option: ModelOption): string {
+  const protocol = option.protocol === 'anthropic'
+    ? 'Anthropic Messages'
+    : option.protocol === 'openai'
+      ? 'OpenAI Chat Completions'
+      : option.protocol === 'openai_responses'
+        ? 'OpenAI Responses'
+        : option.protocol ?? ''
+  return [option.provider, protocol].filter(Boolean).join(' · ')
 }
 
 export function formatModelLabel(model: string, provider: string): string {

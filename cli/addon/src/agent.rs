@@ -306,7 +306,7 @@ impl NapiAgent {
         }
     }
 
-    /// Get config info: active provider, env path, base URL, and configured models.
+    /// Get config info: active provider/protocol, env path, base URL, and configured models.
     /// Reloads the config file so edits are visible without restarting the CLI.
     #[napi]
     pub fn config_info(&self) -> Result<String> {
@@ -319,6 +319,7 @@ impl NapiAgent {
         let thinking_level = display_thinking_level(&llm);
         let info = serde_json::json!({
             "provider": provider,
+            "protocol": llm.protocol.to_string(),
             "envPath": env_path,
             "hasApiKey": has_api_key,
             "baseUrl": llm.base_url,
@@ -329,7 +330,8 @@ impl NapiAgent {
     }
 
     /// Get configured models as provider-qualified specs. Provider qualification
-    /// keeps entries distinct when multiple providers expose the same model id.
+    /// keeps entries distinct when multiple providers expose the same model id;
+    /// config info also carries each provider's wire protocol.
     #[napi]
     pub fn available_models(&self) -> Result<Vec<String>> {
         let config = self.load_config()?;
@@ -354,6 +356,7 @@ impl NapiAgent {
                 if !model.is_empty() {
                     models.push(serde_json::json!({
                         "provider": provider,
+                        "protocol": profile.protocol.to_string(),
                         "model": model,
                         "spec": format!("{provider}:{model}"),
                     }));
@@ -369,6 +372,7 @@ impl NapiAgent {
         if !llm.model.trim().is_empty() && !current_is_listed {
             models.push(serde_json::json!({
                 "provider": llm.provider,
+                "protocol": llm.protocol.to_string(),
                 "model": llm.model,
                 "spec": format!("{}:{}", llm.provider, llm.model),
             }));

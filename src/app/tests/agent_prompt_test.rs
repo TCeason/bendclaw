@@ -37,6 +37,18 @@ fn base_prompt_contains_section_headers() {
 }
 
 #[test]
+fn base_prompt_contains_output_efficiency_constraints() {
+    let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let prompt = base_prompt(&tmp.path().to_string_lossy());
+
+    assert!(prompt.contains("concise, direct, and proportional to the task"));
+    assert!(prompt.contains("Lead with the outcome, not a chronological account"));
+    assert!(prompt.contains("Summarize successful commands and tests by their result"));
+    assert!(prompt.contains("Do not add a generic offer to do more"));
+    assert!(!prompt.contains("never trim test output"));
+}
+
+#[test]
 fn reads_single_context_file() {
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
     std::fs::write(tmp.path().join("EVOT.md"), "# My Project\nDo X.")

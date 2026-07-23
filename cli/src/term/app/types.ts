@@ -16,8 +16,21 @@ export interface UIMessage {
   timestamp: number
   /** Ordered assistant content, matching pi's AssistantMessage.content. */
   content?: UIAssistantBlock[]
+  /** Persisted compaction boundary reconstructed for transcript display. */
+  compaction?: UICompaction
   /** Verbose events that occurred before this message */
   verboseEvents?: VerboseEvent[]
+}
+
+export interface UICompaction {
+  reason: 'threshold' | 'overflow' | 'manual'
+  summary: string
+  tokensBefore: number
+  tokensAfter: number
+  messagesBefore: number
+  messagesAfter: number
+  method?: string
+  remoteBlobBytes?: number
 }
 
 export type UIAssistantBlock =

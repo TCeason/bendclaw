@@ -93,7 +93,7 @@ import {
   type AskUserParams,
 } from './host-tools.js'
 import { extractPlanItems, type PlanModeItem } from './plan-mode.js'
-import { currentModelSpec, formatModelLabel, modelOptions, selectModelOption, sortModelOptionsForSelector } from './app/provider.js'
+import { currentModelSpec, formatModelLabel, formatModelOptionDetail, modelOptions, selectModelOption, sortModelOptionsForSelector } from './app/provider.js'
 import chalk from 'chalk'
 import {
   shouldCollapse,
@@ -666,8 +666,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     return committer.contextFor(lines)
   }
 
-  function restoreLines(outputLines: OutputLine[]) {
-    committer.restore(outputLines)
+  function restoreLines(outputLines: OutputLine[], expandedOutputLines: OutputLine[] = outputLines) {
+    committer.restore(outputLines, expandedOutputLines)
   }
 
   function commitLines(outputLines: OutputLine[]) {
@@ -881,7 +881,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       // only trims what's painted, not what the model remembers.
       const { shown, hidden } = selectResumeMessages(messages)
       if (hidden > 0) restoreLines([resumeElidedLine(hidden)])
-      restoreLines(messagesToOutputLines(shown))
+      restoreLines(messagesToOutputLines(shown), messagesToOutputLines(shown, true))
       restoreLines([
         { id: 'sys-resumed-gap', kind: 'system', text: '' },
         { id: 'sys-resumed', kind: 'system', text: chalk.dim(`  resumed session ${session.session_id.slice(0, 8)}`) },
@@ -2131,13 +2131,16 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       if (models.length > 1) {
         const activeSpec = currentModelSpec(configInfo, agent.model)
         const sortedModels = sortModelOptionsForSelector(models, activeSpec)
-        const items: SelectorItem[] = sortedModels.map(option => ({
-          label: option.model,
-          detail: option.provider,
-          id: option.spec,
-          selected: option.spec === activeSpec,
-          searchText: `${option.model} ${option.provider}`,
-        }))
+        const items: SelectorItem[] = sortedModels.map(option => {
+          const detail = formatModelOptionDetail(option)
+          return {
+            label: option.model,
+            detail,
+            id: option.spec,
+            selected: option.spec === activeSpec,
+            searchText: `${option.model} ${detail} ${option.protocol ?? ''}`,
+          }
+        })
         overlay = {
           kind: 'selector',
           state: selectorFocusOn(

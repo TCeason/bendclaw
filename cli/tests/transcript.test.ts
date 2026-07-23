@@ -93,14 +93,38 @@ describe('transcript conversion', () => {
     expect(messages[0]?.text).toBe('old answer')
   })
 
-  test('keeps compact transcript markers out of ordinary resumed messages', () => {
+  test('restores compact transcript markers as expandable resume cards', () => {
     const messages = transcriptToMessages([{
       type: 'compact',
+      reason: 'manual',
       summary: 'summary text',
       tokens_before: 12345,
+      tokens_after: 4567,
+      messages_before: 20,
+      messages_after: 4,
+      details: { method: 'remote', remote_blob_bytes: 2048 },
     } as any])
 
-    expect(messages).toEqual([])
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.compaction).toEqual({
+      reason: 'manual',
+      summary: 'summary text',
+      tokensBefore: 12345,
+      tokensAfter: 4567,
+      messagesBefore: 20,
+      messagesAfter: 4,
+      method: 'remote',
+      remoteBlobBytes: 2048,
+    })
+
+    const collapsed = messagesToOutputLines(messages).map(line => line.text).join('\n')
+    expect(collapsed).toContain('✦ compact')
+    expect(collapsed).toContain('summary hidden (ctrl+o to expand)')
+    expect(collapsed).not.toContain('summary text')
+
+    const expanded = messagesToOutputLines(messages, true).map(line => line.text).join('\n')
+    expect(expanded).toContain('✦ compact')
+    expect(expanded).toContain('summary text')
   })
 
   test('does not replay historical runtime errors on resume', () => {

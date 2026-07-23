@@ -64,8 +64,12 @@ export interface QueuedPrompt {
 
 export type PromptQueueKind = 'steering' | 'follow_up'
 
+export type ModelProtocol = 'anthropic' | 'openai' | 'openai_responses'
+
 export interface ModelOption {
   provider: string
+  /** Wire protocol configured for this provider. */
+  protocol?: ModelProtocol
   model: string
   /** Provider-qualified value accepted by --model and the model setter. */
   spec: string
@@ -73,6 +77,7 @@ export interface ModelOption {
 
 export interface ConfigInfo {
   provider: string
+  protocol: ModelProtocol
   envPath: string
   hasApiKey: boolean
   baseUrl: string | null

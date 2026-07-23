@@ -31,6 +31,13 @@ interface RawItem {
   // Stats
   kind?: string
   data?: Record<string, unknown>
+  // Compact
+  reason?: 'threshold' | 'overflow' | 'manual'
+  summary?: string
+  tokens_before?: number
+  tokens_after?: number
+  messages_before?: number
+  messages_after?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -66,8 +73,28 @@ export function transcriptToMessages(items: RawItem[]): UIMessage[] {
         timestamp: 0,
         content,
       })
+    } else if (t === 'compact') {
+      const details = item.details && typeof item.details === 'object' && !Array.isArray(item.details)
+        ? item.details as Record<string, unknown>
+        : undefined
+      messages.push({
+        id: `transcript-compact-${idx++}`,
+        role: 'assistant',
+        text: '',
+        timestamp: 0,
+        compaction: {
+          reason: item.reason ?? 'threshold',
+          summary: item.summary ?? '',
+          tokensBefore: item.tokens_before ?? 0,
+          tokensAfter: item.tokens_after ?? 0,
+          messagesBefore: item.messages_before ?? 0,
+          messagesAfter: item.messages_after ?? 0,
+          method: typeof details?.method === 'string' ? details.method : undefined,
+          remoteBlobBytes: typeof details?.remote_blob_bytes === 'number' ? details.remote_blob_bytes : undefined,
+        },
+      })
     }
-    // stats, tool_result, system, extension, compact, marker — skipped
+    // stats, tool_result, system, extension, marker — skipped
   }
 
   return messages

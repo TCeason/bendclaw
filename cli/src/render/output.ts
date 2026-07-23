@@ -12,7 +12,8 @@ import { renderMarkdown, renderThinkingMarkdown } from './markdown.js'
 import { colorizeUnifiedDiff } from './diff.js'
 import { highlightCode, highlightCodeLine } from '../markdown/render/ansi.js'
 import { truncate, formatDuration, toolResultLines, formatBashCommandDisplay, expandLinesHint, COLLAPSE_HINT, summarizeInline } from './format.js'
-import type { UIMessage, UIToolCall } from '../term/app/types.js'
+import { formatCompactionCompleted } from './verbose.js'
+import type { UICompaction, UIMessage, UIToolCall } from '../term/app/types.js'
 
 // ---------------------------------------------------------------------------
 // Tool presentation — icon + primary argument per tool, followed by a stable
@@ -794,9 +795,38 @@ export function buildSystem(text: string): OutputLine[] {
 // Convert UIMessages to OutputLines (for resume)
 // ---------------------------------------------------------------------------
 
-export function messagesToOutputLines(messages: UIMessage[]): OutputLine[] {
+function buildCompactionLines(compaction: UICompaction, expanded: boolean): OutputLine[] {
+  const messagesEvicted = Math.max(0, compaction.messagesBefore - compaction.messagesAfter)
+  const details = formatCompactionCompleted({
+    reason: compaction.reason,
+    result: {
+      type: 'compacted',
+      before_message_count: compaction.messagesBefore,
+      after_message_count: compaction.messagesAfter,
+      before_tokens: compaction.tokensBefore,
+      after_tokens: compaction.tokensAfter,
+      messages_evicted: messagesEvicted,
+      current_run_reclaimed: 0,
+      method: compaction.method,
+      remote_blob_bytes: compaction.remoteBlobBytes,
+    },
+  })
+  const lines = buildEventCard(details)
+  if (!compaction.summary.trim()) return lines
+  if (expanded) return [...lines, ...buildAssistantLines(compaction.summary)]
+  return [
+    ...lines,
+    { id: genId('tool-hint'), kind: 'tool_result', text: '  ... summary hidden (ctrl+o to expand)' },
+  ]
+}
+
+export function messagesToOutputLines(messages: UIMessage[], expanded: boolean = false): OutputLine[] {
   const lines: OutputLine[] = []
   for (const msg of messages) {
+    if (msg.compaction) {
+      lines.push(...buildCompactionLines(msg.compaction, expanded))
+      continue
+    }
     if (msg.role === 'user') {
       lines.push(...buildUserMessage(msg.text))
       continue

@@ -18,10 +18,10 @@ export class Committer {
     return { prevKind: prev?.kind, columns: this.deps.columns() }
   }
 
-  restore(lines: OutputLine[]): void {
-    if (lines.length === 0) return
+  restore(lines: OutputLine[], expandedLines: OutputLine[] = lines): void {
+    if (lines.length === 0 && expandedLines.length === 0) return
     this.deps.compactLines.push(...lines)
-    this.deps.expandedLines.push(...lines)
+    this.deps.expandedLines.push(...expandedLines)
     this.deps.requestRender()
   }
 
