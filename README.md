@@ -3,11 +3,11 @@
 </p>
 
 <p align="center">
-  An agent engine that completes complex, long-running work with minimal tokens and maximum quality.
+  <strong>Same quality. Up to 78% less cost.</strong>
 </p>
 
 <p align="center">
-  <em>Every gain measured under a rigorous trace + eval framework — earned through relentless iteration, never guessed at.</em>
+  <em>Fewer tool calls. Less context waste. More work per token.</em>
 </p>
 
 <p align="center">
@@ -31,31 +31,23 @@
 
 ## Benchmark
 
-Same task, same eval environment, different models. evot completes the work with fewer tokens, less time, and lower cost — on both frontier and open-source models.
+Same task and eval environment, across three agents and three models. The matrix shows how both choices affect cost, tool usage, and concurrent work.
 
-<table align="center">
-  <tr>
-    <td align="center"><strong>Claude Opus 4.6</strong></td>
-    <td align="center"><strong>DeepSeek V4 Pro</strong></td>
-  </tr>
-  <tr>
-    <td><a href=".github/assets/benchmark-opus-4.6.png"><img src=".github/assets/benchmark-opus-4.6.png" alt="evot benchmark — Claude Opus 4.6" width="480" /></a></td>
-    <td><a href=".github/assets/benchmark-deepseek-v4-pro.png"><img src=".github/assets/benchmark-deepseek-v4-pro.png" alt="evot benchmark — DeepSeek V4 Pro" width="480" /></a></td>
-  </tr>
-</table>
+<p align="center">
+  <a href=".github/assets/benchmark-agent-model-comparison.png"><img src=".github/assets/benchmark-agent-model-comparison.png" alt="Benchmark comparing evot, Claude Code, and pi across Claude Fable 5, GPT 5.6, and Claude Opus 4.8" width="960" /></a>
+</p>
+
+<p align="center"><em>Cost and tool calls: lower is better. Parallelism: higher means more concurrent work.</em></p>
 
 > Task: Fix a real bug in serde_json ([issue #979](https://github.com/serde-rs/json/issues/979)) — investigate root cause, apply fix, write regression test, verify all tests pass.
 
-| Model | Metric | evot | claude-code | Difference |
-|-------|--------|------|-------------|------------|
-| Opus 4.6 | Cost | $2.24 | $6.16 | **64% cheaper** |
-| Opus 4.6 | Time | 2m 56s | 3m 51s | **24% faster** |
-| Opus 4.6 | Input tokens | 574.8K | 1.5M | **62% fewer** |
-| DeepSeek V4 Pro | Cost | $0.02 | $0.07 | **67% cheaper** |
-| DeepSeek V4 Pro | Time | 6m 10s | 16m 34s | **63% faster** |
-| DeepSeek V4 Pro | Input tokens | 42.9K | 133.8K | **68% fewer** |
+| Model | evot cost | Claude Code cost | pi cost | evot tool calls | Claude Code tool calls | pi tool calls |
+|-------|----------:|-----------------:|--------:|----------------:|-----------------------:|--------------:|
+| Claude Fable 5 | $0.52 | $1.90 | **$0.50** | **8** | 13 | 11 |
+| GPT 5.6 | **$0.61** | $2.15 | $1.18 | **9** | 12 | 13 |
+| Claude Opus 4.8 | **$1.06** | $4.83 | $1.61 | **10** | 13 | 16 |
 
-All agents produce correct, passing code. The difference is how they manage context.
+All nine runs produce correct, passing code. Compared with Claude Code, evot costs **72–78% less** and uses **23–38% fewer tool calls**. It also uses fewer tool calls than pi on every model, while costing less on GPT 5.6 and Claude Opus 4.8.
 
 ### Why is evot faster and cheaper?
 
