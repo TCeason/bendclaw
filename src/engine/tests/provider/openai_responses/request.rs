@@ -5,6 +5,16 @@ use evotengine::types::*;
 use super::super::fixtures::stream_config::*;
 
 #[test]
+fn internal_system_prompt_boundary_is_not_sent() {
+    let config = StreamConfigBuilder::openai()
+        .system_prompt("stable\n__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__\ndynamic")
+        .build();
+
+    let body = build_request_body(&config);
+    assert_eq!(body["input"][0]["content"], "stable\n\ndynamic");
+}
+
+#[test]
 fn native_openai_request_uses_responses_schema_with_reasoning_and_tools() {
     let config = StreamConfigBuilder::openai()
         .model("gpt-5.5")

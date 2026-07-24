@@ -1,3 +1,4 @@
+use crate::provider::system_prompt::without_dynamic_boundary;
 use crate::provider::traits::StreamConfig;
 use crate::types::*;
 
@@ -16,7 +17,8 @@ pub fn build_request_body(config: &StreamConfig) -> serde_json::Value {
         .unwrap_or(true);
     let mut input = Vec::new();
 
-    if !config.system_prompt.is_empty() {
+    let system_prompt = without_dynamic_boundary(&config.system_prompt);
+    if !system_prompt.is_empty() {
         let role = if reasoning
             && config
                 .model_config
@@ -30,7 +32,7 @@ pub fn build_request_body(config: &StreamConfig) -> serde_json::Value {
         };
         input.push(serde_json::json!({
             "role": role,
-            "content": config.system_prompt,
+            "content": system_prompt.as_ref(),
         }));
     }
 

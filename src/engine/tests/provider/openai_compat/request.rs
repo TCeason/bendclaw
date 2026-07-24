@@ -8,6 +8,22 @@ use evotengine::types::*;
 use super::super::fixtures::stream_config::*;
 
 #[test]
+fn internal_system_prompt_boundary_is_not_sent() {
+    let config = StreamConfigBuilder::openai()
+        .system_prompt("stable\n__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__\ndynamic")
+        .build();
+
+    let body = build_request_body(&config, &OpenAiCompat::openai());
+    assert_eq!(body["messages"][0]["content"], "stable\n\ndynamic");
+
+    let static_only = StreamConfigBuilder::openai()
+        .system_prompt("stable\n\n__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__")
+        .build();
+    let body = build_request_body(&static_only, &OpenAiCompat::openai());
+    assert_eq!(body["messages"][0]["content"], "stable");
+}
+
+#[test]
 fn test_current_profiled_models_send_codex_default_verbosity() {
     for id in ["gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"] {
         let model_config = ModelConfig::openai(id, id);

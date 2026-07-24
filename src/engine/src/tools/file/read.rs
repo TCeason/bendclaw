@@ -58,7 +58,7 @@ impl AgentTool for ReadFileTool {
     }
 
     fn prompt_guidelines(&self) -> Vec<&str> {
-        Vec::new()
+        vec!["Use read to examine files instead of cat or sed."]
     }
 
     fn prefer_over(&self) -> Option<(&str, &str)> {

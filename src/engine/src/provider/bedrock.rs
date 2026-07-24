@@ -19,6 +19,7 @@ use tokio::sync::mpsc;
 use tracing::debug;
 
 use super::error::*;
+use super::system_prompt::without_dynamic_boundary;
 use super::traits::*;
 use crate::types::*;
 
@@ -315,8 +316,9 @@ pub fn build_bedrock_body(config: &StreamConfig) -> serde_json::Value {
 
     let mut body = serde_json::json!({"messages": messages});
 
-    if !config.system_prompt.is_empty() {
-        body["system"] = serde_json::json!([{"text": config.system_prompt}]);
+    let system_prompt = without_dynamic_boundary(&config.system_prompt);
+    if !system_prompt.is_empty() {
+        body["system"] = serde_json::json!([{"text": system_prompt.as_ref()}]);
     }
 
     let mut inference_config = serde_json::json!({});

@@ -235,8 +235,11 @@ impl Agent {
     // -- configuration (fluent setters) --------------------------------------
 
     pub fn with_system_prompt(self: &Arc<Self>, prompt: impl Into<String>) -> Arc<Self> {
-        *self.system_prompt.write() = prompt.into();
-        self.system_prompt_sections.write().clear();
+        let prompt = prompt.into();
+        let mut current_prompt = self.system_prompt.write();
+        let mut sections = self.system_prompt_sections.write();
+        *current_prompt = prompt;
+        sections.clear();
         Arc::clone(self)
     }
 
@@ -248,21 +251,48 @@ impl Agent {
         text: String,
         sections: Vec<Section>,
     ) -> Arc<Self> {
-        *self.system_prompt.write() = text;
-        *self.system_prompt_sections.write() = sections;
+        let mut current_prompt = self.system_prompt.write();
+        let mut current_sections = self.system_prompt_sections.write();
+        *current_prompt = text;
+        *current_sections = sections;
         Arc::clone(self)
     }
 
+    /// Insert extra instructions where pi places `appendSystemPrompt`: after
+    /// guidelines and before project context and the working directory.
     pub fn append_system_prompt(self: &Arc<Self>, extra: &str) -> Arc<Self> {
-        let mut sp = self.system_prompt.write();
-        sp.push('\n');
-        sp.push_str(extra);
-        drop(sp);
-        // Track the appended chunk so /_dump still shows where it came from.
-        self.system_prompt_sections.write().push(Section {
+        if extra.is_empty() {
+            return Arc::clone(self);
+        }
+
+        let mut prompt = self.system_prompt.write();
+        let mut sections = self.system_prompt_sections.write();
+        if sections.is_empty() {
+            if !prompt.is_empty() {
+                prompt.push_str("\n\n");
+            }
+            prompt.push_str(extra);
+            return Arc::clone(self);
+        }
+
+        let insert_at = match sections.iter().position(|section| {
+            matches!(
+                section.name,
+                "project_context" | "environment" | "dynamic_boundary"
+            )
+        }) {
+            Some(index) => index,
+            None => sections.len(),
+        };
+        sections.insert(insert_at, Section {
             name: "append",
             text: extra.to_string(),
         });
+        *prompt = sections
+            .iter()
+            .map(|section| section.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
         Arc::clone(self)
     }
 

@@ -90,7 +90,8 @@ impl StreamConfig {
             return requested.max(1);
         }
 
-        let input_tokens = crate::context::estimate_tokens(&self.system_prompt)
+        let system_prompt = super::system_prompt::without_dynamic_boundary(&self.system_prompt);
+        let input_tokens = crate::context::estimate_tokens(&system_prompt)
             + crate::context::tool_definition_tokens(&self.tools)
             + self
                 .messages

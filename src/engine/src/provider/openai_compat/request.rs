@@ -3,6 +3,7 @@
 use crate::provider::route::CompatCaps;
 use crate::provider::route::MaxTokensField;
 use crate::provider::route::OpenAiCompat;
+use crate::provider::system_prompt::without_dynamic_boundary;
 use crate::provider::traits::StreamConfig;
 use crate::types::*;
 
@@ -29,10 +30,11 @@ pub fn build_request_body(config: &StreamConfig, compat: &OpenAiCompat) -> serde
         .unwrap_or(true);
 
     // System prompt
-    if !config.system_prompt.is_empty() {
+    let system_prompt = without_dynamic_boundary(&config.system_prompt);
+    if !system_prompt.is_empty() {
         messages.push(serde_json::json!({
             "role": "system",
-            "content": config.system_prompt,
+            "content": system_prompt.as_ref(),
         }));
     }
 

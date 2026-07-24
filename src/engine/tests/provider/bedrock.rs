@@ -4,6 +4,16 @@ use evotengine::types::*;
 use super::fixtures::stream_config::*;
 
 #[test]
+fn internal_system_prompt_boundary_is_not_sent() {
+    let config = StreamConfigBuilder::new()
+        .system_prompt("stable\n__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__\ndynamic")
+        .build();
+
+    let body = build_bedrock_body(&config);
+    assert_eq!(body["system"][0]["text"], "stable\n\ndynamic");
+}
+
+#[test]
 fn test_build_bedrock_body() {
     let config = StreamConfigBuilder::new()
         .model("anthropic.claude-3-sonnet-20240229-v1:0")

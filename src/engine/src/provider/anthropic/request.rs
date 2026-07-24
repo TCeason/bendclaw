@@ -1,9 +1,8 @@
 //! Anthropic request body building and content conversion.
 
+use crate::provider::system_prompt::split_dynamic;
 use crate::provider::traits::StreamConfig;
 use crate::types::*;
-
-const DYNAMIC_BOUNDARY: &str = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
 
 /// Build the Anthropic Messages API URL, avoiding a doubled `/v1` when the
 /// base already ends in `/v1`.
@@ -238,10 +237,7 @@ fn system_prompt_blocks(prompt: &str, cache_static: bool) -> Vec<serde_json::Val
         return Vec::new();
     }
 
-    let (static_part, dynamic_part) = match prompt.rsplit_once(DYNAMIC_BOUNDARY) {
-        Some((static_part, dynamic_part)) => (static_part.trim_end(), dynamic_part.trim_start()),
-        None => (prompt, ""),
-    };
+    let (static_part, dynamic_part) = split_dynamic(prompt);
 
     let mut blocks = Vec::new();
     if !static_part.is_empty() {

@@ -10,6 +10,7 @@ pub mod registry;
 pub mod route;
 pub mod stream_fallback;
 pub mod stream_http;
+mod system_prompt;
 pub mod traits;
 
 pub use anthropic::AnthropicProvider;
@@ -36,4 +37,5 @@ pub use route::OpenAiCompat;
 pub use route::RouteCapabilities;
 pub use route::RouteCapabilityOverrides;
 pub use route::ThinkingFormat;
+pub use system_prompt::SYSTEM_PROMPT_DYNAMIC_BOUNDARY;
 pub use traits::*;

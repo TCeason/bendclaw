@@ -3,6 +3,8 @@ use evot::agent::prompt::DynamicContext;
 use evot::agent::prompt::PromptMode;
 use evot::agent::prompt::Section;
 use evot::agent::prompt::SystemPrompt;
+use evot::agent::Agent;
+use evot::conf::Config;
 
 /// Default coding tool set (read, bash, edit, write), mirroring production.
 fn coding_tools() -> Vec<Box<dyn evot_engine::AgentTool>> {
@@ -26,26 +28,32 @@ fn names(sections: &[Section]) -> Vec<&'static str> {
     sections.iter().map(|s| s.name).collect()
 }
 
+type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
 #[test]
-fn base_prompt_contains_section_headers() {
+fn base_prompt_matches_pi_structure() {
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
     let prompt = base_prompt(&tmp.path().to_string_lossy());
-    assert!(prompt.contains("Using your tools:"));
+    assert!(prompt.starts_with(
+        "You are an expert coding assistant running in evot, a coding agent harness."
+    ));
+    assert!(prompt.contains("Available tools:"));
+    assert!(prompt.contains("Guidelines:"));
+    assert!(prompt.contains("Be concise in your responses"));
     assert!(prompt.contains("Current working directory:"));
-    assert!(prompt.contains("Current date:"));
-    assert!(!prompt.contains("Project Instructions"));
+    assert!(!prompt.contains("Current date:"));
+    assert!(!prompt.contains("<project_context>"));
 }
 
 #[test]
-fn base_prompt_contains_output_efficiency_constraints() {
+fn base_prompt_uses_pi_conciseness_guideline_only() {
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
     let prompt = base_prompt(&tmp.path().to_string_lossy());
 
-    assert!(prompt.contains("concise, direct, and proportional to the task"));
-    assert!(prompt.contains("Lead with the outcome, not a chronological account"));
-    assert!(prompt.contains("Summarize successful commands and tests by their result"));
-    assert!(prompt.contains("Do not add a generic offer to do more"));
-    assert!(!prompt.contains("never trim test output"));
+    assert!(prompt.contains("Be concise in your responses"));
+    assert!(!prompt.contains("concise, direct, and proportional to the task"));
+    assert!(!prompt.contains("Lead with the outcome, not a chronological account"));
+    assert!(!prompt.contains("Your responses render as GitHub-flavored markdown"));
 }
 
 #[test]
@@ -54,8 +62,14 @@ fn reads_single_context_file() {
     std::fs::write(tmp.path().join("EVOT.md"), "# My Project\nDo X.")
         .expect("failed to write file");
     let prompt = base_prompt(&tmp.path().to_string_lossy());
-    assert!(prompt.contains("Project Instructions"));
+    assert!(prompt.contains("<project_context>"));
+    assert!(prompt.contains("Project-specific instructions and guidelines:"));
+    assert!(prompt.contains(&format!(
+        "<project_instructions path=\"{}\">",
+        tmp.path().join("EVOT.md").display()
+    )));
     assert!(prompt.contains("My Project"));
+    assert!(prompt.contains("</project_context>"));
 }
 
 #[test]
@@ -73,27 +87,24 @@ fn skips_empty_context_files() {
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
     std::fs::write(tmp.path().join("EVOT.md"), "   ").expect("failed to write file");
     let prompt = base_prompt(&tmp.path().to_string_lossy());
-    assert!(!prompt.contains("Project Instructions"));
+    assert!(!prompt.contains("<project_context>"));
 }
 
 #[test]
 fn base_sections_are_ordered_static_then_dynamic_boundary() {
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
     let prompt = base_prompt(&tmp.path().to_string_lossy());
-    let guidelines_pos = prompt
-        .find("Using your tools:")
-        .expect("missing Using your tools:");
+    let guidelines_pos = prompt.find("Guidelines:").expect("missing Guidelines:");
     let cwd_pos = prompt
         .find("Current working directory:")
         .expect("missing Current working directory:");
     let boundary_pos = prompt
         .find("__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__")
         .expect("missing dynamic boundary");
-    let date_pos = prompt.find("Current date:").expect("missing date");
 
     assert!(guidelines_pos < cwd_pos, "guidelines should precede cwd");
     assert!(cwd_pos < boundary_pos, "cwd should precede boundary");
-    assert!(boundary_pos < date_pos, "boundary should precede date");
+    assert!(!prompt.contains("Current date:"));
 }
 
 #[test]
@@ -115,15 +126,66 @@ fn tool_set_drives_identity_list_and_guidelines() {
     assert!(!prompt.contains("Do not run a bash command when a dedicated tool exists"));
     assert!(!prompt.contains("fall back to bash only when necessary"));
 
-    // Per-tool mechanics still come from each tool's own guidelines.
-    assert!(
-        prompt.contains("To read or examine files, use `read` instead of cat, head, tail, or sed.")
-    );
-    assert!(prompt.contains("To edit files, use `edit` instead of sed or awk."));
-    assert!(prompt.contains(
-        "To create files, use `write` instead of cat with a heredoc or echo redirection."
-    ));
+    // Per-tool mechanics come from each tool's own guidelines, matching pi.
+    assert!(prompt.contains("Use read to examine files instead of cat or sed."));
+    assert!(prompt.contains("Use edit for precise changes"));
+    assert!(prompt.contains("Use write only for new files or complete rewrites."));
+    assert!(prompt.contains("Be concise in your responses"));
     assert!(prompt.contains("Show file paths clearly when working with files"));
+    assert!(!prompt.contains("To edit files, use `edit` instead of sed or awk."));
+}
+
+#[test]
+fn appended_instructions_precede_project_context_and_cwd() -> TestResult {
+    let tmp = tempfile::TempDir::new()?;
+    std::fs::write(tmp.path().join("EVOT.md"), "project rules")?;
+    let cwd = tmp.path().to_string_lossy();
+    let (text, sections) = SystemPrompt::base(&cwd, &coding_tools(), "");
+    let config = Config::new(tmp.path().join("config"));
+    let agent = Agent::new(&config, cwd.as_ref())?;
+    agent
+        .with_system_prompt_sections(text, sections)
+        .append_system_prompt("first appended rule");
+    let before_empty_append = agent.system_prompt();
+    agent.append_system_prompt("");
+    assert_eq!(agent.system_prompt(), before_empty_append);
+    agent.append_system_prompt("second appended rule");
+
+    let prompt = agent.system_prompt();
+    let first_append_pos = prompt
+        .find("first appended rule")
+        .ok_or_else(|| std::io::Error::other("missing first appended rule"))?;
+    let second_append_pos = prompt
+        .find("second appended rule")
+        .ok_or_else(|| std::io::Error::other("missing second appended rule"))?;
+    let context_pos = prompt
+        .find("<project_context>")
+        .ok_or_else(|| std::io::Error::other("missing project context"))?;
+    let cwd_pos = prompt
+        .find("Current working directory:")
+        .ok_or_else(|| std::io::Error::other("missing working directory"))?;
+
+    assert!(first_append_pos < second_append_pos);
+    assert!(second_append_pos < context_pos);
+    assert!(context_pos < cwd_pos);
+
+    agent
+        .with_system_prompt("")
+        .append_system_prompt("raw append");
+    assert_eq!(agent.system_prompt(), "raw append");
+    Ok(())
+}
+
+#[test]
+fn empty_tool_set_is_rendered_as_none() -> TestResult {
+    let tmp = tempfile::TempDir::new()?;
+    let tools: Vec<Box<dyn evot_engine::AgentTool>> = Vec::new();
+    let prompt = SystemPrompt::base(&tmp.path().to_string_lossy(), &tools, "").0;
+
+    assert!(prompt.contains("Available tools:\n(none)"));
+    assert!(prompt
+        .contains("In addition to the tools above, you may have access to other custom tools"));
+    Ok(())
 }
 
 #[test]
@@ -140,22 +202,14 @@ fn available_tools_list_uses_model_resolved_alias_names() {
     assert!(claude.contains("- Read: "), "expected Read alias: {claude}");
     assert!(claude.contains("- Grep: "), "expected Grep alias: {claude}");
     assert!(!claude.contains("- read: "), "base name leaked: {claude}");
-    assert!(
-        claude.contains("use `Read` instead of"),
-        "prefer line should use Read alias: {claude}"
-    );
 
     // Non-Claude models keep the base names.
     let other = SystemPrompt::base(&tmp.path().to_string_lossy(), &tools, "gpt-4o").0;
     assert!(other.contains("- read: "), "expected base name: {other}");
-    assert!(
-        other.contains("use `read` instead of"),
-        "prefer line should use base name: {other}"
-    );
 }
 
 #[test]
-fn dedicated_search_tools_flip_bash_framing() {
+fn dedicated_search_tools_suppress_bash_exploration_guideline() {
     use evot_engine::tools::BashTool;
     use evot_engine::tools::GrepTool;
     use evot_engine::tools::ReadFileTool;
@@ -167,9 +221,9 @@ fn dedicated_search_tools_flip_bash_framing() {
     ];
     let prompt = SystemPrompt::base(&tmp.path().to_string_lossy(), &tools, "").0;
 
-    assert!(prompt.contains("Do not run a bash command when a dedicated tool exists"));
-    assert!(prompt.contains("fall back to bash only when necessary"));
     assert!(!prompt.contains("Use bash for file operations like ls, rg, find"));
+    assert!(!prompt.contains("Do not run a bash command when a dedicated tool exists"));
+    assert!(!prompt.contains("fall back to bash only when necessary"));
 }
 
 fn ctx(mode: PromptMode) -> DynamicContext {
