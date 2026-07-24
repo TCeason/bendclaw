@@ -261,6 +261,7 @@ describe('log-shot ansi + render', () => {
   test('writeMarkdownShot writes full-turn HTML from history', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'evot-shot-out-'))
     try {
+      const progress: string[] = []
       const result = await writeMarkdownShot({
         historyLines: [
           { kind: 'user', id: 'u1' },
@@ -270,7 +271,9 @@ describe('log-shot ansi + render', () => {
         outDir: join(dir, 'shots'),
         png: false,
         open: false,
+        onProgress: stage => progress.push(stage),
       })
+      expect(progress).toEqual(['rendering_html'])
       expect(result.messageId).toBe('asst-10')
       expect(result.chunkCount).toBe(2)
       expect(existsSync(result.htmlPath)).toBe(true)

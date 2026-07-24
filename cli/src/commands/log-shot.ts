@@ -75,6 +75,12 @@ export interface ShotHeaderMeta {
   branch?: string
 }
 
+export type MarkdownShotProgress =
+  | 'rendering_html'
+  | 'starting_chrome'
+  | 'capturing_png'
+  | 'opening_html'
+
 export interface WriteMarkdownShotOptions extends ResolveShotSourceOptions {
   outDir?: string
   /** Terminal columns for wrap/table layout. Default SHOT_COLUMNS. */
@@ -85,6 +91,8 @@ export interface WriteMarkdownShotOptions extends ResolveShotSourceOptions {
   open?: boolean
   /** Extra header fields (model, thinking, session, cwd). */
   header?: ShotHeaderMeta
+  /** Reports visible export stages for interactive callers. */
+  onProgress?: (stage: MarkdownShotProgress) => void
 }
 
 export interface MarkdownShotResult {
@@ -528,6 +536,7 @@ export async function writeMarkdownShot(opts: WriteMarkdownShotOptions): Promise
   const base = `shot-${stamp}-${safeId}`
   const htmlPath = join(outDir, `${base}.html`)
   const columns = opts.columns ?? SHOT_COLUMNS
+  opts.onProgress?.('rendering_html')
   const html = buildShotHtml(source, { columns, header: opts.header })
   writeFileSync(htmlPath, html, { mode: 0o600 })
 
@@ -539,11 +548,17 @@ export async function writeMarkdownShot(opts: WriteMarkdownShotOptions): Promise
     const contentCols = Math.max(columns, ansiMaxColumns(ansi))
     const lineCount = Math.max(1, ansi.replace(/\n+$/, '').split('\n').length)
     const size = shotWindowSize(contentCols, lineCount)
-    const shot = await tryChromeScreenshot(htmlPath, join(outDir, `${base}.png`), size)
+    const shot = await tryChromeScreenshot(
+      htmlPath,
+      join(outDir, `${base}.png`),
+      size,
+      opts.onProgress,
+    )
     if (shot) pngPath = shot
   }
 
   if (opts.open) {
+    opts.onProgress?.('opening_html')
     await tryOpen(htmlPath)
   }
 
@@ -860,9 +875,11 @@ async function tryChromeScreenshot(
   htmlPath: string,
   pngPath: string,
   size: { width: number; height: number },
+  onProgress?: (stage: MarkdownShotProgress) => void,
 ): Promise<string | undefined> {
   const chrome = resolveChromeBinary()
   if (!chrome) return undefined
+  onProgress?.('starting_chrome')
   mkdirSync(dirname(pngPath), { recursive: true })
   const fileUrl = pathToFileUrl(htmlPath)
   const port = 9200 + Math.floor(Math.random() * 1000)
@@ -889,6 +906,7 @@ async function tryChromeScreenshot(
   try {
     const wsUrl = await waitForChromeWs(port, 8000)
     if (!wsUrl) return undefined
+    onProgress?.('capturing_png')
     const ok = await captureViaCdp(wsUrl, fileUrl, pngPath, size.width)
     return ok ? pngPath : undefined
   } catch {

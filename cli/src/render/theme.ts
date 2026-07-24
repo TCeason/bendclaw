@@ -28,6 +28,8 @@ export interface Theme {
   underline: Style
   link: Style
   codeInline: Style
+  mathInline: Style
+  mathBlock: Style
 
   // Headings (h1..h6)
   h1: Style
@@ -82,6 +84,8 @@ function darkTheme(): Theme {
     // references in the same semantic family as links without dominating
     // long prose on dark terminals.
     codeInline: style(s => chalk.hex('#b1b9f9')(s)),
+    mathInline: style(s => chalk.hex('#8abeb7')(s)),
+    mathBlock: style(s => chalk.hex('#8abeb7')(s)),
 
     // Headings carry evot's gold accent (matches the banner + pi's mdHeading).
     // h1 keeps the extra italic·underline emphasis; h2+ are accent-bold so
@@ -132,6 +136,8 @@ function lightTheme(): Theme {
     // Inline code colour mirrors claudecode's `permission` hex exactly:
     // rgb(87,105,247) = #5769f7 (medium blue).
     codeInline: style(s => chalk.hex('#5769f7')(s)),
+    mathInline: style(s => chalk.hex('#327878')(s)),
+    mathBlock: style(s => chalk.hex('#327878')(s)),
 
     // Darker gold than the dark-theme accent so headings stay legible on a
     // light background (the #f0c674 gold washes out on white). Same warm

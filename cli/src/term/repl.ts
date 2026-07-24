@@ -167,6 +167,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const editorUndo = new UndoStack<EditorState>()
   let historyState: HistoryState
   let isLoading = false
+  // Local foreground commands reuse the animated status row without pretending
+  // they are abortable agent streams or showing stale LLM usage.
+  let foregroundCommand: 'log-shot' | null = null
   let streamRef: QueryStream | null = null
   let compactionTask: CompactionTask | null = null
   let queuedCompactionSubmissions: QueuedCompactionSubmission[] = []
@@ -587,15 +590,16 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const spinnerText = formatSpinnerLine(
         spinnerForDisplay,
         Date.now(),
-        // Manual compaction reports no per-call usage of its own; showing the
-        // previous run's tokens here would misattribute them to compaction.
-        compactionTask
+        // Manual compaction and local commands report no per-call usage of their
+        // own; showing the previous run's tokens would misattribute them.
+        compactionTask || foregroundCommand
           ? undefined
           : spinnerStatsFromLastUsage(
               appState.currentRunStats.lastLlmUsage,
               liveOutputTokens,
               usagePending,
             ),
+        { interruptible: foregroundCommand === null },
       )
       spinnerBlock = {
         lines: wrapTextWithAnsi(spinnerText, renderer.termCols).map(text => ({ spans: [{ text }] })),
@@ -2369,12 +2373,30 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         commitSystem('sys-log-shot-target', '  /log shot exports the latest assistant turn; message ids are no longer supported.')
         return
       }
+      foregroundCommand = 'log-shot'
+      isLoading = true
+      spinnerState = setSpinnerPhase(createSpinnerState(), 'executing', 'log_shot_render')
+      startSpinner()
+      renderer.requestRender()
+      // Let the status row paint before markdown rendering starts synchronously.
+      await Bun.sleep(0)
       try {
         const { writeMarkdownShot } = await import('../commands/log-shot.js')
         const result = await writeMarkdownShot({
           historyLines: compactLines,
           columns: renderer.termCols,
           open: false,
+          onProgress: stage => {
+            const toolName = stage === 'starting_chrome'
+              ? 'log_shot_chrome'
+              : stage === 'capturing_png'
+                ? 'log_shot_capture'
+                : stage === 'opening_html'
+                  ? 'log_shot_open'
+                  : 'log_shot_render'
+            spinnerState = setSpinnerPhase(spinnerState, 'executing', toolName)
+            renderer.requestRender()
+          },
           header: {
             model: appState.model || agent.model,
             thinkingLevel: configInfo?.thinkingLevel,
@@ -2392,6 +2414,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         commitSystem('sys-log-shot', lines.join('\n'))
       } catch (err: any) {
         commitSystem('sys-log-err', chalk.red(`  Shot failed: ${err?.message ?? err}`))
+      } finally {
+        foregroundCommand = null
+        isLoading = false
+        stopSpinner()
+        renderer.requestRender()
       }
     } else if (query.startsWith('up')) {
       // /log up [session_id] — upload/share session

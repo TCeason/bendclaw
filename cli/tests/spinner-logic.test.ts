@@ -184,6 +184,20 @@ describe('formatSpinnerLine', () => {
     }
   })
 
+  test('maps log shot stages and can omit the interrupt hint', () => {
+    const cases: [string, string][] = [
+      ['log_shot_render', 'Rendering shot…'],
+      ['log_shot_chrome', 'Starting Chrome…'],
+      ['log_shot_capture', 'Capturing PNG…'],
+    ]
+    for (const [tool, label] of cases) {
+      const state = setSpinnerPhase(createSpinnerState(), 'executing', tool)
+      const line = stripAnsi(formatSpinnerLine(state, Date.now(), undefined, { interruptible: false }))
+      expect(line).toContain(label)
+      expect(line).not.toContain('esc to interrupt')
+    }
+  })
+
   test('contains slow label after threshold', () => {
     const now = Date.now()
     const waiting = { ...createSpinnerState(), phase: 'waiting' as const, phaseStartedAt: now - 9000 }

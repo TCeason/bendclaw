@@ -22,6 +22,10 @@ const SLOW_THRESHOLD_MS = 8000
 const SLOW_THRESHOLD_BY_TOOL_MS: Record<string, number> = {
   bash: 30_000,
   compact: 30_000,
+  log_shot_render: 30_000,
+  log_shot_chrome: 30_000,
+  log_shot_capture: 30_000,
+  log_shot_open: 30_000,
   ask_user: Number.POSITIVE_INFINITY,
   askuser: Number.POSITIVE_INFINITY,
 }
@@ -61,6 +65,10 @@ export function toolActionLabel(toolName: string): string {
     case 'compact_remote': return 'Compacting remote'
     case 'compact_local': return 'Compacting local'
     case 'compact_local_fallback': return 'Compacting local fallback'
+    case 'log_shot_render': return 'Rendering shot'
+    case 'log_shot_chrome': return 'Starting Chrome'
+    case 'log_shot_capture': return 'Capturing PNG'
+    case 'log_shot_open': return 'Opening shot'
     case 'ask_user': case 'askuser': return 'Waiting for you'
     default: return 'Working'
   }
@@ -151,7 +159,17 @@ export interface SpinnerStats {
   cacheWriteTokens?: number
 }
 
-export function formatSpinnerLine(state: SpinnerState, now: number, stats?: SpinnerStats): string {
+export interface SpinnerFormatOptions {
+  /** Show the keyboard interrupt hint. Defaults to true for agent/tool runs. */
+  interruptible?: boolean
+}
+
+export function formatSpinnerLine(
+  state: SpinnerState,
+  now: number,
+  stats?: SpinnerStats,
+  options: SpinnerFormatOptions = {},
+): string {
   const elapsed = now - state.phaseStartedAt
   const slow = isSlow(state, now)
   const char = SPINNER_FRAMES[state.frame]!
@@ -177,13 +195,14 @@ export function formatSpinnerLine(state: SpinnerState, now: number, stats?: Spin
 
   const status = humanDuration(elapsed)
   const tokenSuffix = formatSpinnerTokenSuffix(state, now, stats)
+  const interruptHint = options.interruptible === false ? '' : ' · esc to interrupt'
 
   if (slow) {
-    return `\x1b[31m${char}\x1b[0m \x1b[31m${label}\x1b[0m\x1b[2m (${status}${tokenSuffix}) · esc to interrupt\x1b[0m`
+    return `\x1b[31m${char}\x1b[0m \x1b[31m${label}\x1b[0m\x1b[2m (${status}${tokenSuffix})${interruptHint}\x1b[0m`
   }
 
   const glimmerLabel = glimmerText(label, state.glimmerPos)
-  return `\x1b[36m${char}\x1b[0m ${glimmerLabel}\x1b[2m (${status}${tokenSuffix}) · esc to interrupt\x1b[0m`
+  return `\x1b[36m${char}\x1b[0m ${glimmerLabel}\x1b[2m (${status}${tokenSuffix})${interruptHint}\x1b[0m`
 }
 
 function glimmerText(text: string, pos: number): string {

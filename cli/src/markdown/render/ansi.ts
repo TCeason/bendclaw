@@ -14,6 +14,8 @@ import {
 import { createHyperlink, isWarpTerminal, supportsHyperlinks, wrapHyperlink } from '../../render/hyperlink.js'
 import { linkifyIssueRefs } from '../../render/linkify.js'
 import { getTheme, type Theme } from '../../render/theme.js'
+import { renderLatexMath } from '../math/ansi.js'
+import type { MathToken } from '../math/marked.js'
 
 let highlighter: typeof import('cli-highlight') | null = null
 try {
@@ -485,6 +487,14 @@ export function formatToken(
       const closeFence = theme.codeBlockBorder.paint('```')
       return openFence + EOL + padCodeBlock(highlighted) + EOL + closeFence + EOL
     }
+    case 'math_block': {
+      const formula = renderLatexMath((token as unknown as MathToken).text)
+      return wrapDisplayTextWithIndent(theme.mathBlock.paint(formula), '  ', '  ') + EOL
+    }
+    case 'math_inline': {
+      const formula = renderLatexMath((token as unknown as MathToken).text)
+      return theme.mathInline.paint(formula)
+    }
     case 'codespan': {
       const raw = token.text as string
       const isFilePath = /^[~/][\w./_-]+$/.test(raw)
@@ -924,7 +934,7 @@ function numberToRoman(n: number): string {
 }
 
 const BLOCK_TYPES = new Set([
-  'paragraph', 'code', 'heading', 'list', 'blockquote', 'hr', 'table',
+  'paragraph', 'code', 'heading', 'list', 'blockquote', 'hr', 'table', 'math_block',
 ])
 
 // ---------------------------------------------------------------------------

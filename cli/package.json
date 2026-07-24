@@ -24,6 +24,7 @@
     "trace:renderer": "bun scripts/analyze-renderer-trace.ts"
   },
   "dependencies": {
+    "@unified-latex/unified-latex-util-parse": "^1.8.4",
     "chalk": "^5.6.2",
     "cli-highlight": "^2.1.11",
     "diff": "^9.0.0",

@@ -1,4 +1,5 @@
 import { marked, type Token, type Tokens } from 'marked'
+import { createMathMarkedExtension } from '../math/marked.js'
 
 let markedConfigured = false
 
@@ -6,15 +7,18 @@ function configureMarked(): void {
   if (markedConfigured) return
   markedConfigured = true
 
-  marked.use({
-    tokenizer: {
-      // Disable strikethrough parsing — the model often uses ~ for "approximate"
-      // (e.g., ~100) and rarely intends actual strikethrough formatting.
-      del() {
-        return undefined as unknown as Tokens.Del
+  marked.use(
+    createMathMarkedExtension(),
+    {
+      tokenizer: {
+        // Disable strikethrough parsing — the model often uses ~ for "approximate"
+        // (e.g., ~100) and rarely intends actual strikethrough formatting.
+        del() {
+          return undefined as unknown as Tokens.Del
+        },
       },
     },
-  })
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -26,7 +30,7 @@ function configureMarked(): void {
 // Covers the majority of short assistant responses that are plain sentences.
 // Ordered-list pattern requires `N. ` (digit + dot + space) to avoid
 // misinterpreting bare "2." as a list item.
-const MD_SYNTAX_RE = /[#*`|[>\-_~]|\n\n|^\d+\. |\n\d+\. /
+const MD_SYNTAX_RE = /[#*`|[>\-_~]|\$|\\(?:\(|\[)|\n\n|^\d+\. |\n\d+\. /
 
 function hasMarkdownSyntax(s: string): boolean {
   return MD_SYNTAX_RE.test(s)
