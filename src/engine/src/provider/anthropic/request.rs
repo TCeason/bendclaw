@@ -132,7 +132,8 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
         config.thinking_level,
         config.model_config.as_ref(),
     );
-    let adaptive = crate::provider::thinking::force_adaptive_thinking(config.model_config.as_ref());
+    let thinking_wire =
+        crate::provider::thinking::anthropic_thinking_wire(config.model_config.as_ref());
     let model_max = config
         .model_config
         .as_ref()
@@ -142,7 +143,7 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
     // Budget thinking expands an explicit visible-output cap first; the final
     // request is then clamped to remaining context, matching pi's ordering.
     let (requested_max_tokens, requested_thinking_budget) =
-        if thinking_level != ThinkingLevel::Off && !adaptive {
+        if thinking_level != ThinkingLevel::Off && thinking_wire.is_none() {
             crate::provider::thinking::adjust_max_tokens_for_thinking(
                 config.max_tokens,
                 model_max,
@@ -202,11 +203,18 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
     }
 
     if thinking_level != ThinkingLevel::Off {
-        if adaptive {
-            body["thinking"] = serde_json::json!({
-                "type": "adaptive",
-                "display": "summarized",
-            });
+        if let Some(wire) = thinking_wire {
+            body["thinking"] = match wire {
+                crate::provider::model::AnthropicThinkingWire::Adaptive => serde_json::json!({
+                    "type": "adaptive",
+                    "display": "summarized",
+                }),
+                // Anthropic-compatible endpoints (e.g. Kimi) reject or ignore
+                // the proprietary "adaptive" type; they expect "enabled".
+                crate::provider::model::AnthropicThinkingWire::Enabled => {
+                    serde_json::json!({ "type": "enabled" })
+                }
+            };
             if let Some(effort) = crate::provider::thinking::anthropic_effort(
                 thinking_level,
                 config.model_config.as_ref(),

@@ -15,6 +15,7 @@ pub use explore::SearchTool;
 pub use file::EditFileTool;
 pub use file::ReadFileTool;
 pub use file::WriteFileTool;
+pub use file::FILE_UNCHANGED_STUB;
 pub use guard::PathGuard;
 pub use naming::resolve_tool_refs;
 pub use skill::truncate_str;

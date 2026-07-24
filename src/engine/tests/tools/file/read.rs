@@ -168,3 +168,90 @@ async fn test_read_text_file_unchanged() {
 
     let _ = std::fs::remove_file(tmp);
 }
+
+#[tokio::test]
+async fn test_repeat_read_of_unchanged_file_returns_stub() {
+    let tmp = std::env::temp_dir().join("yoagent-test-unchanged-stub.txt");
+    let path = tmp.to_str().unwrap();
+    std::fs::write(&tmp, "alpha\nbeta\n").unwrap();
+
+    let tool = ReadFileTool::new();
+    let first = tool
+        .execute(serde_json::json!({"path": path}), ctx("read"))
+        .await
+        .unwrap();
+    let Content::Text { text } = &first.content[0] else {
+        panic!("expected text");
+    };
+    assert!(text.contains("alpha"));
+
+    // Same read again, file untouched: stub instead of content.
+    let second = tool
+        .execute(serde_json::json!({"path": path}), ctx("read"))
+        .await
+        .unwrap();
+    let Content::Text { text } = &second.content[0] else {
+        panic!("expected text");
+    };
+    assert_eq!(text, FILE_UNCHANGED_STUB);
+    assert_eq!(second.details["unchanged"], true);
+
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn test_repeat_read_after_modification_returns_content() {
+    let tmp = std::env::temp_dir().join("yoagent-test-unchanged-modified.txt");
+    let path = tmp.to_str().unwrap();
+    std::fs::write(&tmp, "before\n").unwrap();
+
+    let tool = ReadFileTool::new();
+    tool.execute(serde_json::json!({"path": path}), ctx("read"))
+        .await
+        .unwrap();
+
+    std::fs::write(&tmp, "after\n").unwrap();
+    let result = tool
+        .execute(serde_json::json!({"path": path}), ctx("read"))
+        .await
+        .unwrap();
+    let Content::Text { text } = &result.content[0] else {
+        panic!("expected text");
+    };
+    assert!(text.contains("after"));
+    assert_ne!(text, FILE_UNCHANGED_STUB);
+
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn test_repeat_read_with_different_range_returns_content() {
+    let tmp = std::env::temp_dir().join("yoagent-test-unchanged-range.txt");
+    let path = tmp.to_str().unwrap();
+    let content = (1..=10)
+        .map(|i| format!("line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&tmp, &content).unwrap();
+
+    let tool = ReadFileTool::new();
+    tool.execute(serde_json::json!({"path": path}), ctx("read"))
+        .await
+        .unwrap();
+
+    // Different offset/limit is a different request: full content, no stub.
+    let ranged = tool
+        .execute(
+            serde_json::json!({"path": path, "offset": 2, "limit": 3}),
+            ctx("read"),
+        )
+        .await
+        .unwrap();
+    let Content::Text { text } = &ranged.content[0] else {
+        panic!("expected text");
+    };
+    assert!(text.contains("line 2"));
+    assert_ne!(text, FILE_UNCHANGED_STUB);
+
+    let _ = std::fs::remove_file(tmp);
+}

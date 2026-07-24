@@ -9,4 +9,5 @@ pub mod write;
 
 pub use edit::EditFileTool;
 pub use read::ReadFileTool;
+pub use read::FILE_UNCHANGED_STUB;
 pub use write::WriteFileTool;

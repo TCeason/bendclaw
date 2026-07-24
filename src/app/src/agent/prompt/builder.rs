@@ -6,6 +6,13 @@ const PROJECT_CONTEXT_FILES: &[&str] = &["EVOT.md", "CLAUDE.md", "AGENTS.md"];
 
 const GUIDELINES_HEADER: &str = "Guidelines:";
 const BASH_EXPLORE_GUIDELINE: &str = "Use bash for file operations like ls, rg, find";
+/// Model-neutral parallel tool-call guidance. All major agent harnesses ship
+/// an equivalent instruction; without it models tend to issue one call per
+/// turn, inflating request count and wall-clock time.
+const PARALLEL_TOOL_CALLS_GUIDELINE: &str =
+    "You can call multiple tools in a single response. When calls are independent of each \
+     other, make them together in one response instead of one at a time — especially \
+     read-only exploration. Only run calls sequentially when one depends on another's result";
 const GUIDELINES_TRAILER: &[&str] = &[
     "Be concise in your responses",
     "Show file paths clearly when working with files",
@@ -133,6 +140,7 @@ impl SystemPrompt {
         for guideline in &self.tools_guidelines {
             add(guideline);
         }
+        add(PARALLEL_TOOL_CALLS_GUIDELINE);
         for guideline in GUIDELINES_TRAILER {
             add(guideline);
         }

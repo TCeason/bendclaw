@@ -23,6 +23,21 @@ pub enum Verbosity {
     High,
 }
 
+/// Wire encoding for effort-based thinking on the Anthropic protocol.
+///
+/// Anthropic-compatible endpoints do not all speak the same dialect: Claude
+/// accepts the proprietary `{"type":"adaptive"}` extension, while
+/// compatible third-party endpoints (e.g. Kimi) only accept
+/// `{"type":"enabled"}` and silently ignore unknown types — which would
+/// disable thinking entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AnthropicThinkingWire {
+    /// Claude: `{"type":"adaptive","display":"summarized"}` + `output_config.effort`.
+    Adaptive,
+    /// Compatible endpoints (Kimi): `{"type":"enabled"}` + `output_config.effort`.
+    Enabled,
+}
+
 /// Effective policy for one thinking level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ThinkingLevelPolicy<'a> {
@@ -42,15 +57,15 @@ enum EffortMapping {
 pub(super) struct ReasoningCapabilities {
     supported: bool,
     level_map: HashMap<ThinkingLevel, EffortMapping>,
-    /// Anthropic adaptive thinking (`thinking.type: adaptive`).
-    force_adaptive: bool,
+    /// Effort-based thinking wire encoding; `None` means budget-based.
+    effort_wire: Option<AnthropicThinkingWire>,
 }
 
 impl ReasoningCapabilities {
     pub(super) fn new(
         supported: bool,
         level_map: HashMap<ThinkingLevel, Option<String>>,
-        force_adaptive: bool,
+        effort_wire: Option<AnthropicThinkingWire>,
     ) -> Self {
         Self {
             supported,
@@ -64,7 +79,7 @@ impl ReasoningCapabilities {
                     (level, mapping)
                 })
                 .collect(),
-            force_adaptive,
+            effort_wire,
         }
     }
 
@@ -98,8 +113,8 @@ impl ReasoningCapabilities {
         self.supported = supported;
     }
 
-    pub(super) fn force_adaptive(&self) -> bool {
-        self.force_adaptive
+    pub(super) fn effort_wire(&self) -> Option<AnthropicThinkingWire> {
+        self.effort_wire
     }
 }
 

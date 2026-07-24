@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use super::super::capabilities::AnthropicThinkingWire;
 use super::super::capabilities::InputModality;
 use super::super::capabilities::ModelCapabilities;
 use super::super::capabilities::ReasoningCapabilities;
@@ -18,6 +19,9 @@ pub(super) struct ModelProfile {
     pub first_party_thinking_levels: ThinkingLevels,
     pub first_party_responses_thinking_levels: ThinkingLevels,
     pub adaptive_thinking: bool,
+    /// Wire encoding when `adaptive_thinking` is set. Defaults to the Claude
+    /// dialect; compatible endpoints (e.g. Kimi) override it.
+    pub thinking_wire: AnthropicThinkingWire,
     pub remote_compaction: bool,
     pub default_verbosity: Option<Verbosity>,
 }
@@ -31,6 +35,7 @@ pub(super) const BASE: ModelProfile = ModelProfile {
     first_party_thinking_levels: &[],
     first_party_responses_thinking_levels: &[],
     adaptive_thinking: false,
+    thinking_wire: AnthropicThinkingWire::Adaptive,
     remote_compaction: false,
     default_verbosity: None,
 };
@@ -48,7 +53,7 @@ impl ModelProfile {
             reasoning: ReasoningCapabilities::new(
                 self.reasoning,
                 levels_map(self.thinking_levels),
-                self.adaptive_thinking,
+                self.adaptive_thinking.then_some(self.thinking_wire),
             ),
             first_party_reasoning_levels: levels_map(self.first_party_thinking_levels),
             first_party_responses_reasoning_levels: levels_map(

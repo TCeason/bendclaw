@@ -50,7 +50,7 @@ pub(super) fn protocol_fallback(vision: bool) -> ModelCapabilities {
         } else {
             vec![InputModality::Text]
         },
-        reasoning: ReasoningCapabilities::new(true, HashMap::new(), false),
+        reasoning: ReasoningCapabilities::new(true, HashMap::new(), None),
         first_party_reasoning_levels: HashMap::new(),
         first_party_responses_reasoning_levels: HashMap::new(),
         default_verbosity: None,

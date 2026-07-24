@@ -189,7 +189,9 @@ impl ModelConfig {
         self.capabilities.reasoning.has_wire_value(value)
     }
 
-    pub(crate) fn force_adaptive_thinking(&self) -> bool {
-        self.capabilities.reasoning.force_adaptive()
+    /// Wire encoding for effort-based thinking on Anthropic transports;
+    /// `None` means budget-based thinking.
+    pub(crate) fn anthropic_thinking_wire(&self) -> Option<super::AnthropicThinkingWire> {
+        self.capabilities.reasoning.effort_wire()
     }
 }

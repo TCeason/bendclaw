@@ -57,6 +57,23 @@ fn base_prompt_uses_pi_conciseness_guideline_only() {
 }
 
 #[test]
+fn base_prompt_includes_parallel_tool_calls_guideline() {
+    let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let prompt = base_prompt(&tmp.path().to_string_lossy());
+
+    let parallel_pos = prompt
+        .find("You can call multiple tools in a single response")
+        .expect("missing parallel tool-calls guideline");
+    let concise_pos = prompt
+        .find("Be concise in your responses")
+        .expect("missing conciseness guideline");
+    assert!(
+        parallel_pos < concise_pos,
+        "parallel guideline should precede the trailer guidelines"
+    );
+}
+
+#[test]
 fn reads_single_context_file() {
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
     std::fs::write(tmp.path().join("EVOT.md"), "# My Project\nDo X.")

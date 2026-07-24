@@ -48,7 +48,26 @@ fn test_kimi_coding_request_uses_pi_catalog_limits() {
 
     let body = build_request_body(&config, false);
     assert_eq!(body["max_tokens"], 32_768);
-    assert_eq!(body["thinking"]["type"], "adaptive");
+    // Kimi's anthropic-compatible endpoint only understands `enabled`; the
+    // proprietary `adaptive` type is silently ignored and disables thinking.
+    assert_eq!(body["thinking"]["type"], "enabled");
+    assert!(body["thinking"].get("display").is_none());
+    assert!(body["thinking"].get("budget_tokens").is_none());
+    assert_eq!(body["output_config"]["effort"], "high");
+}
+
+#[test]
+fn test_kimi_k3_thinking_uses_enabled_wire_with_effort() {
+    let config = StreamConfigBuilder::anthropic()
+        .model("kimi-k3")
+        .model_config(ModelConfig::anthropic("kimi-k3", "Kimi K3"))
+        .thinking(ThinkingLevel::High)
+        .build();
+
+    let body = build_request_body(&config, false);
+    assert_eq!(body["thinking"]["type"], "enabled");
+    assert!(body["thinking"].get("budget_tokens").is_none());
+    // K3's catalog maps High to an explicit "high" wire value.
     assert_eq!(body["output_config"]["effort"], "high");
 }
 

@@ -1,5 +1,11 @@
 //! Read tool — read exact file contents.
 
+use std::collections::HashMap;
+use std::hash::Hash;
+use std::hash::Hasher;
+use std::path::PathBuf;
+use std::sync::Mutex;
+
 use async_trait::async_trait;
 
 use super::image::get_image_mime_type;
@@ -10,18 +16,34 @@ use crate::types::*;
 /// Max lines returned by a single Read call (matches industry standard).
 const MAX_READ_LINES: usize = 2000;
 /// Max bytes returned by a single Read call.
-const MAX_READ_BYTES: usize = 50 * 1024; // 50KB
+const MAX_READ_BYTES: usize = 100 * 1024; // 100KB
+/// Label used in truncation notices; keep in sync with MAX_READ_BYTES.
+const MAX_READ_BYTES_LABEL: &str = "100KB";
+
+/// Returned instead of file content when the same read would repeat an
+/// earlier, still-current result. Saves re-sending large unchanged files.
+pub const FILE_UNCHANGED_STUB: &str = "File unchanged since last read. The content from the \
+     earlier read result in this conversation is still current — refer to that instead of \
+     re-reading.";
+
+/// Identity of one read request: canonical path plus the requested range.
+type ReadKey = (PathBuf, Option<usize>, Option<usize>);
 
 /// Read a file's contents. Supports line range for large files.
 pub struct ReadFileTool {
     /// Max file size to read (prevents OOM)
     pub max_bytes: usize,
+    /// Fingerprints of previously returned reads, keyed by [`ReadKey`]. A
+    /// repeat read whose rendered output is byte-identical returns
+    /// [`FILE_UNCHANGED_STUB`] instead of the full content.
+    last_reads: Mutex<HashMap<ReadKey, u64>>,
 }
 
 impl Default for ReadFileTool {
     fn default() -> Self {
         Self {
             max_bytes: 1024 * 1024, // 1MB
+            last_reads: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -49,8 +71,9 @@ impl AgentTool for ReadFileTool {
     fn description(&self) -> &str {
         "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). \
          Images are sent as attachments. \
-         For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). \
-         Use offset/limit for large files. When you need the full file, continue with offset until complete."
+         Prefer reading the whole file by omitting offset/limit. \
+         For text files, output is truncated to 2000 lines or 100KB (whichever is hit first); \
+         use offset/limit only for very large files when you know which part you need."
     }
 
     fn prompt_snippet(&self) -> Option<&str> {
@@ -229,7 +252,7 @@ impl AgentTool for ReadFileTool {
             (None, None) => (0, total),
         };
 
-        // Apply truncation limits (2000 lines / 50KB) like pi does.
+        // Apply truncation limits (2000 lines / 100KB).
         let selected_lines = &lines[start..end];
         let (truncated_end, truncated_by) = truncate_selected(selected_lines, start, end, total);
 
@@ -261,6 +284,29 @@ impl AgentTool for ReadFileTool {
                 reason_str,
                 next_offset
             ));
+        }
+
+        // Unchanged repeat read: return a stub instead of re-sending content.
+        let read_key = (path.clone(), offset, limit);
+        let fingerprint = {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            output.hash(&mut hasher);
+            hasher.finish()
+        };
+        if let Ok(mut last_reads) = self.last_reads.lock() {
+            if last_reads.get(&read_key) == Some(&fingerprint) {
+                return Ok(ToolResult {
+                    content: vec![Content::Text {
+                        text: FILE_UNCHANGED_STUB.into(),
+                    }],
+                    details: serde_json::json!({
+                        "path": path_str,
+                        "unchanged": true,
+                    }),
+                    retention: Retention::Normal,
+                });
+            }
+            last_reads.insert(read_key, fingerprint);
         }
 
         Ok(ToolResult {
@@ -344,9 +390,9 @@ fn truncate_selected(
         if byte_count > MAX_READ_BYTES {
             let truncated_end = start + i;
             if truncated_end > start {
-                return (truncated_end, Some("50KB"));
+                return (truncated_end, Some(MAX_READ_BYTES_LABEL));
             }
-            return (start + 1, Some("50KB"));
+            return (start + 1, Some(MAX_READ_BYTES_LABEL));
         }
     }
 

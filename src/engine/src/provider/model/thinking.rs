@@ -201,9 +201,10 @@ pub fn thinking_off_disables(model: Option<&ModelConfig>) -> bool {
     model.map(ModelConfig::can_disable_thinking).unwrap_or(true)
 }
 
-/// Whether this model uses Anthropic adaptive thinking (`output_config.effort`).
-pub fn force_adaptive_thinking(model: Option<&ModelConfig>) -> bool {
-    model
-        .map(ModelConfig::force_adaptive_thinking)
-        .unwrap_or(false)
+/// Wire encoding for effort-based thinking on Anthropic transports.
+/// `None` (including absent model metadata) means budget-based thinking.
+pub(crate) fn anthropic_thinking_wire(
+    model: Option<&ModelConfig>,
+) -> Option<super::AnthropicThinkingWire> {
+    model.and_then(ModelConfig::anthropic_thinking_wire)
 }
