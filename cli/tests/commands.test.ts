@@ -89,7 +89,24 @@ describe('resolveCommand', () => {
     expect(isSlashCommand('/copy')).toBe(true)
   })
 
-  test('/c is ambiguous between /copy and /clear', () => {
+  test('resolves /clip with its only supported subcommand', () => {
+    expect(resolveCommand('/clip')).toEqual({ kind: 'resolved', name: '/clip', args: '' })
+    expect(resolveCommand('/clip all')).toEqual({ kind: 'resolved', name: '/clip', args: 'all' })
+    expect(isSlashCommand('/clip')).toBe(true)
+  })
+
+  test('resolves /share for upload and import targets', () => {
+    expect(resolveCommand('/share')).toEqual({ kind: 'resolved', name: '/share', args: '' })
+    expect(resolveCommand('/share abcdef01')).toEqual({ kind: 'resolved', name: '/share', args: 'abcdef01' })
+    expect(resolveCommand('/share https://tmpfiles.org/id/file#key')).toEqual({
+      kind: 'resolved',
+      name: '/share',
+      args: 'https://tmpfiles.org/id/file#key',
+    })
+    expect(isSlashCommand('/share')).toBe(true)
+  })
+
+  test('/c is ambiguous between /clip, /copy, /compact, and /clear', () => {
     const result = resolveCommand('/c')
     expect(result.kind).toBe('ambiguous')
     if (result.kind === 'ambiguous') {

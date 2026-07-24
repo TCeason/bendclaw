@@ -23,7 +23,7 @@ import { assistantMessageToOutputLines } from '../render/assistant.js'
 import { HistoryManager } from '../session/history.js'
 import { ScreenLog } from '../session/screen-log.js'
 import { RendererTrace } from '../session/renderer-trace.js'
-import { findLastAssistantMarkdown } from '../session/assistant-markdown.js'
+import { findLastAssistantMarkdown, findLastAssistantTurn } from '../session/assistant-markdown.js'
 import { isSlashCommand, resolveCommand, buildHardenPrompt } from '../commands/index.js'
 import { renderBanner } from './banner.js'
 import {
@@ -2073,11 +2073,20 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const subject = buildHardenPrompt(args)
       commitLines(buildUserMessage(text.trim()))
       runQuery(subject)
-    } else if (name === '/mem') {
-      // Bare = archive, with terms = vault search; both expanded server-side
-      // into normal prompts (see gateway command Memorize / MemorySearch).
-      commitLines(buildUserMessage(text.trim()))
-      runQuery(`/mem${args ? ' ' + args : ''}`)
+    } else if (name === '/clip') {
+      const sub = args.trim().toLowerCase()
+      if (sub === 'all') {
+        // /clip all is expanded server-side into the memory skill's session
+        // distillation prompt; bare /clip remains a zero-token local action.
+        commitLines(buildUserMessage(text.trim()))
+        runQuery('/clip all')
+      } else if (sub) {
+        commitSystem('sys-clip-err', '  Usage: /clip [all]')
+      } else {
+        await handleClipCommand()
+      }
+    } else if (name === '/share') {
+      await handleShareCommand(args)
     } else if (name === '/skill') {
       await handleSkillCommand(args)
     } else if (name === '/copy') {
@@ -2280,6 +2289,79 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
+  async function handleClipCommand() {
+    const last = findLastAssistantTurn(compactLines)
+    if (!last) {
+      commitSystem('sys-clip', '  No agent messages to clip yet.')
+      return
+    }
+    try {
+      const { clipMarkdown } = await import('../commands/clip.js')
+      const result = clipMarkdown(last.rawMarkdown, {
+        sessionId: sessionId ?? undefined,
+        cwd: agent.cwd,
+      })
+      commitSystem('sys-clip', `  Clipped: ${result.path}`)
+    } catch (err: any) {
+      commitSystem('sys-clip-err', chalk.red(`  Clip failed: ${err?.message ?? err}`))
+    }
+  }
+
+  async function handleShareCommand(args: string) {
+    const target = args.trim()
+    const { importSharedSession, isSharedSessionUrl, shareSession } = await import('../commands/share.js')
+
+    if (target && isSharedSessionUrl(target)) {
+      commitSystem('sys-share-import', '  downloading and importing...')
+      renderer.requestRender()
+      try {
+        const result = await importSharedSession(target)
+        commitSystem('sys-share-import-ok', `  imported session: ${result.sessionId}\n  resume with: /resume ${result.sessionId.slice(0, 8)}`)
+      } catch (err: any) {
+        commitSystem('sys-share-err', chalk.red(`  Import failed: ${err?.message ?? err}`))
+      }
+      return
+    }
+
+    let resolvedSid = sessionId
+    if (target) {
+      if (!/^[0-9a-f-]{1,36}$/i.test(target)) {
+        commitSystem('sys-share-err', '  Usage: /share [session-id | url#password]')
+        return
+      }
+      try {
+        const sessions = await agent.listSessions(0)
+        const resolved = resolveSessionByPrefix(sessions, target)
+        if (resolved.kind === 'none') {
+          commitSystem('sys-share-err', `  Session not found: ${target}`)
+          return
+        }
+        if (resolved.kind === 'ambiguous') {
+          commitSystem('sys-share-err', `  Ambiguous session id: ${target} (${resolved.matches.length} matches)`)
+          return
+        }
+        resolvedSid = resolved.session.session_id
+      } catch (err: any) {
+        commitSystem('sys-share-err', chalk.red(`  Failed to list sessions: ${err?.message ?? err}`))
+        return
+      }
+    }
+
+    if (!resolvedSid) {
+      commitSystem('sys-share-err', '  No active session to share.')
+      return
+    }
+
+    commitSystem('sys-share', `  packing session ${resolvedSid.slice(0, 8)}...`)
+    renderer.requestRender()
+    try {
+      const result = await shareSession(resolvedSid)
+      commitSystem('sys-share-url', `  uploaded. share this link:\n  ${result.url}\n  ⏳ link expires in 60 minutes`)
+    } catch (err: any) {
+      commitSystem('sys-share-err', chalk.red(`  Share failed: ${err?.message ?? err}`))
+    }
+  }
+
   async function handleSkillCommand(args: string) {
     const sub = args.trim()
     if (!sub || sub === 'list') {
@@ -2419,57 +2501,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         isLoading = false
         stopSpinner()
         renderer.requestRender()
-      }
-    } else if (query.startsWith('up')) {
-      // /log up [session_id] — upload/share session
-      const upArg = query.slice(2).trim()
-      let resolvedSid = upArg || sid
-      if (!resolvedSid) {
-        commitSystem('sys-log-err', '  No active session to upload.')
-        return
-      }
-      if (upArg && upArg.length < 36) {
-        try {
-          const sessions = await agent.listSessions(20)
-          const matches = sessions.filter(s => s.session_id.startsWith(upArg))
-          if (matches.length === 0) {
-            commitSystem('sys-log-err', `  Session not found: ${upArg}`)
-            return
-          }
-          if (matches.length > 1) {
-            commitSystem('sys-log-err', `  Ambiguous session id: ${upArg} (${matches.length} matches)`)
-            return
-          }
-          resolvedSid = matches[0]!.session_id
-        } catch (err: any) {
-          commitSystem('sys-log-err', chalk.red(`  Failed to list sessions: ${err?.message ?? err}`))
-          return
-        }
-      }
-      commitSystem('sys-log-up', `  packing session ${resolvedSid!.slice(0, 8)}...`)
-      renderer.requestRender()
-      try {
-        const { logPut } = await import('../commands/log-share.js')
-        const result = await logPut(resolvedSid!)
-        commitSystem('sys-log-url', `  uploaded. share this link:\n  ${result.url}\n  ⏳ link expires in 60 minutes`)
-      } catch (err: any) {
-        commitSystem('sys-log-err', chalk.red(`  Export failed: ${err?.message ?? err}`))
-      }
-    } else if (query.startsWith('dl ')) {
-      // /log dl <url#password>
-      const dlUrl = query.slice(3).trim()
-      if (!dlUrl) {
-        commitSystem('sys-log-err', '  Usage: /log dl <url#password>')
-        return
-      }
-      commitSystem('sys-log-dl', '  downloading and importing...')
-      renderer.requestRender()
-      try {
-        const { logGet } = await import('../commands/log-share.js')
-        const result = await logGet(dlUrl)
-        commitSystem('sys-log-dl-ok', `  imported session: ${result.sessionId}\n  resume with: /resume ${result.sessionId.slice(0, 8)}`)
-      } catch (err: any) {
-        commitSystem('sys-log-err', chalk.red(`  Import failed: ${err?.message ?? err}`))
       }
     } else if (!query) {
       const logPath = screenLog.filePath

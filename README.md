@@ -23,7 +23,9 @@
 
 ## 📢 News
 
-- **2026-07-22** [Memory] `/mem` — archive session knowledge to markdown; `/mem <terms>` and `/resume <query>` recall semantically.
+- **2026-07-24** [REPL] `/share` securely shares or imports complete sessions through one command.
+- **2026-07-24** [Memory] `/clip` saves the latest assistant reply verbatim; `/clip all` distills the whole session into the memory vault.
+- **2026-07-22** [Memory] Persistent markdown memory and semantic `/resume <query>` recall.
 - **2026-07-16** [REPL] Prompt queue — queue follow-ups and manage them with `Ctrl+B`.
 - **2026-07-09** [REPL] `/log shot` — export the last assistant markdown turn as an HTML/PNG snapshot matching the TUI.
 - **2026-07-03** [REPL] `/copy` — copy the last agent message's Markdown source to the clipboard.
@@ -151,7 +153,8 @@ evot -c              # continue latest session in cwd
 
 | Command | What it does |
 |---------|--------------|
-| `/mem` | Archive the session's knowledge to the memory vault (`~/.evotai/memory`). `/mem <terms>` searches it. Memory persists across sessions. |
+| `/clip` | Save the latest assistant reply verbatim to the memory vault (`~/.evotai/memory/clips`). `/clip all` distills the whole session into the vault. |
+| `/share [id \| url]` | Share the current or specified session through an encrypted expiring link; pass a shared URL to import it. |
 | `/resume <query>` | Find and resume a past session by meaning, not just id. |
 | `/harden` | Stress-test the previous plan or current changes — hunt edge cases and loopholes before you commit. |
 | `/skill` | Manage skills: `list`, `install <source>`, `remove <name>`. |

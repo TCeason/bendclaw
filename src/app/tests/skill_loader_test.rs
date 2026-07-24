@@ -191,7 +191,7 @@ fn builtin_memory_skill_loaded() -> Result<(), Box<dyn std::error::Error>> {
         None => return Err("builtin memory skill should be present".into()),
     };
     assert!(!memory.description.is_empty());
-    assert!(memory.description.contains("/mem"));
+    assert!(memory.description.contains("/clip all"));
     assert!(memory.instructions.contains("# Memory"));
     assert!(memory.instructions.contains(".evotai/memory"));
     assert!(memory.base_dir.as_os_str().is_empty());

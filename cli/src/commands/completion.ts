@@ -128,10 +128,12 @@ function getSubCommandHint(cmd: string, partial: string): string {
 }
 
 const SUB_COMMANDS: Record<string, string[]> = {
+  '/clip': ['all'],
+  '/share': ['<session-id>', '<url#password>'],
   '/help': COMMANDS.map(c => c.name.slice(1)),
   '/skill': ['install', 'list', 'remove'],
   '/env': ['set', 'del', 'load'],
-  '/log': ['up', 'dl', 'shot', 'query'],
+  '/log': ['shot', 'query'],
   '/resume': ['<id>', '<query>'],
   '/model': ['<name>'],
   '/harden': ['plan', 'changes', 'arch', '<subject>'],

@@ -121,17 +121,15 @@ impl QueryRequest {
     }
 }
 
-/// Expand prompt-rewriting commands (`/mem`, `/mem <terms>`) into normal
-/// prompts. Non-command input passes through unchanged.
+/// Expand `/clip all` into a normal memory-skill prompt. Non-command input
+/// passes through unchanged.
 fn expand_prompt_command(mut request: QueryRequest) -> QueryRequest {
-    use crate::gateway::command::memorize_prompt;
+    use crate::gateway::command::clip_session_prompt;
     use crate::gateway::command::parse_command;
-    use crate::gateway::command::recall_prompt;
     use crate::gateway::command::Command;
 
     let text = match parse_command(&request.input_text()) {
-        Some(Command::Memorize) => memorize_prompt(),
-        Some(Command::MemorySearch { query }) => recall_prompt(&query),
+        Some(Command::ClipSession) => clip_session_prompt(),
         _ => return request,
     };
     request.input = vec![evot_engine::Content::Text { text }];
@@ -660,8 +658,7 @@ impl Agent {
         if let Some(outcome) = self.maybe_handle_command(&request, &session).await? {
             return Ok(outcome);
         }
-        // Prompt-expanding commands (/mem) rewrite the input and continue as a
-        // normal run.
+        // `/clip all` rewrites the input and continues as a normal run.
         let request = expand_prompt_command(request);
 
         let run = self.start_run(request, session).await?;
@@ -721,9 +718,9 @@ impl Agent {
                     .await?;
                 Ok(Some(SubmitOutcome::Command(msg)))
             }
-            // Expanded into normal prompts by `expand_prompt_command` after
+            // Expanded into a normal prompt by `expand_prompt_command` after
             // this interception step; nothing to handle here.
-            Command::Memorize | Command::MemorySearch { .. } => Ok(None),
+            Command::ClipSession => Ok(None),
             // Semantic session search — one-shot LLM ranking, no agent run.
             Command::ResumeSearch { query } => {
                 let msg = self.handle_resume_search(&query).await?;

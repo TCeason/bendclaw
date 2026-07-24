@@ -19,7 +19,8 @@ export const COMMANDS: SlashCommand[] = [
   { name: '/harden', description: 'Stress-test the previous plan or current changes', usage: '/harden [plan | changes | arch | subject]', handler: 'builtin' },
   { name: '/skill', description: 'Manage skills', usage: '/skill [list | install <source> | remove <name>]', handler: 'builtin' },
   { name: '/copy', description: 'Copy last agent message (Markdown source) to clipboard', handler: 'builtin' },
-  { name: '/mem', description: 'Archive to memory vault, or search it', usage: '/mem [search terms]', handler: 'builtin' },
+  { name: '/clip', description: 'Clip last reply to the memory vault; all = distill session', usage: '/clip [all]', handler: 'builtin' },
+  { name: '/share', description: 'Share a session or import a shared session', usage: '/share [session-id | url#password]', handler: 'builtin' },
   { name: '/compact', description: 'Compact session context', usage: '/compact [instructions]', handler: 'builtin' },
   { name: '/clear', description: 'Clear session context', handler: 'builtin' },
 ]
@@ -30,7 +31,7 @@ export const HIDDEN_COMMANDS: SlashCommand[] = [
   { name: '/act', description: 'Return to normal action mode', handler: 'builtin' },
   { name: '/done', description: 'Exit log/plan mode', handler: 'builtin' },
   { name: '/env', description: 'Manage variables', usage: '/env [set K=V | del K | load FILE]', handler: 'builtin' },
-  { name: '/log', description: 'Analyze session log / share / shot last markdown', usage: '/log [up [id] | dl <url> | shot | query]', handler: 'builtin' },
+  { name: '/log', description: 'Show or analyze session logs; shot exports markdown', usage: '/log [shot | query]', handler: 'builtin' },
   { name: '/update', description: 'Update evot to latest version', handler: 'builtin' },
   { name: '/_dump', description: 'Dump system prompt + tools + skills as JSON', usage: '/_dump [path]', handler: 'builtin' },
 ]

@@ -119,6 +119,11 @@ describe('file path completion', () => {
 })
 
 describe('ghost hints', () => {
+  test('shows clip all subcommand', () => {
+    expect(getGhostHint('/clip ', 6)).toContain('all')
+    expect(getGhostHint('/clip a', 7)).toBe('ll')
+  })
+
   test('shows skill subcommands', () => {
     const hint = getGhostHint('/skill ', 7)
     expect(hint).toContain('install')

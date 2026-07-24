@@ -1,5 +1,5 @@
 /**
- * log-share — pack, encrypt, upload / download, decrypt, import session logs.
+ * share — pack, encrypt, upload / download, decrypt, and import sessions.
  *
  * Encryption format:
  *   EVOTLOG1 (8 B magic) | salt (16 B) | IV (12 B) | authTag (16 B) | AES-256-GCM ciphertext
@@ -10,7 +10,7 @@
 
 import { execFileSync } from 'child_process'
 import { createCipheriv, createDecipheriv, randomBytes, pbkdf2Sync } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, renameSync, rmSync } from 'fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, readdirSync, renameSync, rmSync } from 'fs'
 import https from 'https'
 import http from 'http'
 import { homedir, tmpdir } from 'os'
@@ -26,49 +26,55 @@ const PASSWORD_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
 // Public API
 // ---------------------------------------------------------------------------
 
-export interface PutResult {
+export interface ShareResult {
   url: string
 }
 
-export interface GetResult {
+export interface ImportResult {
   sessionId: string
+}
+
+export function isSharedSessionUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' || url.protocol === 'http:'
+  } catch {
+    return false
+  }
 }
 
 /**
  * Pack, encrypt, and upload a session's logs.
  */
-export async function logPut(sessionId: string): Promise<PutResult> {
+export async function shareSession(sessionId: string): Promise<ShareResult> {
   const files = collectFiles(sessionId)
   if (files.length === 0) {
     throw new Error(`No files found for session ${sessionId}`)
   }
 
-  // tar czf into a temp file
-  const tarPath = join(tmpdir(), `evot-export-${sessionId.slice(0, 8)}.tar.gz`)
-  try {
-    execFileSync('tar', ['czf', tarPath, ...files], { cwd: EVOTAI_DIR })
-  } catch (err: any) {
-    throw new Error(`tar failed: ${err?.message ?? err}`)
-  }
+  const tmpDir = mkdtempSync(join(tmpdir(), 'evot-share-'))
+  const tarPath = join(tmpDir, 'session.tar.gz')
+  const encrypted = (() => {
+    try {
+      try {
+        execFileSync('tar', ['czf', tarPath, ...files], { cwd: EVOTAI_DIR })
+      } catch (err: any) {
+        throw new Error(`tar failed: ${err?.message ?? err}`)
+      }
+      return encrypt(readFileSync(tarPath))
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })()
 
-  // Encrypt
-  const plaintext = readFileSync(tarPath)
-  const { payload, password } = encrypt(plaintext)
-
-  // Clean up tar
-  rmSync(tarPath, { force: true })
-
-  // Upload
-  const rawUrl = await upload(payload)
-  const url = `${rawUrl}#${password}`
-
-  return { url }
+  const rawUrl = await upload(encrypted.payload)
+  return { url: `${rawUrl}#${encrypted.password}` }
 }
 
 /**
  * Download, decrypt, and import a shared session.
  */
-export async function logGet(urlWithKey: string): Promise<GetResult> {
+export async function importSharedSession(urlWithKey: string): Promise<ImportResult> {
   const hashIdx = urlWithKey.lastIndexOf('#')
   if (hashIdx < 0) {
     throw new Error('URL must contain a #password fragment')
@@ -79,13 +85,7 @@ export async function logGet(urlWithKey: string): Promise<GetResult> {
     throw new Error('Password is empty')
   }
 
-  // Convert tmpfiles.org URL to download URL
-  const downloadUrl = toDownloadUrl(baseUrl)
-
-  // Download
-  const payload = await download(downloadUrl)
-
-  // Decrypt
+  const payload = await download(toDownloadUrl(baseUrl))
   let decrypted: Buffer
   try {
     decrypted = decrypt(payload, password)
@@ -93,27 +93,21 @@ export async function logGet(urlWithKey: string): Promise<GetResult> {
     throw new Error('Decryption failed — wrong password or corrupted file')
   }
 
-  // Extract to temp dir
-  const tmpDir = join(tmpdir(), `evot-import-${Date.now()}`)
-  mkdirSync(tmpDir, { recursive: true })
+  const tmpDir = mkdtempSync(join(tmpdir(), 'evot-import-'))
   const tarPath = join(tmpDir, 'export.tar.gz')
-  writeFileSync(tarPath, decrypted)
-
   try {
-    execFileSync('tar', ['xzf', tarPath], { cwd: tmpDir })
-  } catch (err: any) {
+    writeFileSync(tarPath, decrypted)
+    validateArchive(tarPath)
+    try {
+      execFileSync('tar', ['xzf', tarPath], { cwd: tmpDir })
+    } catch (err: any) {
+      throw new Error(`tar extract failed: ${err?.message ?? err}`)
+    }
+    rmSync(tarPath, { force: true })
+    return { sessionId: validateAndImport(tmpDir) }
+  } finally {
     rmSync(tmpDir, { recursive: true, force: true })
-    throw new Error(`tar extract failed: ${err?.message ?? err}`)
   }
-  rmSync(tarPath, { force: true })
-
-  // Validate and import
-  const sessionId = validateAndImport(tmpDir)
-
-  // Clean up
-  rmSync(tmpDir, { recursive: true, force: true })
-
-  return { sessionId }
 }
 
 // ---------------------------------------------------------------------------
@@ -138,10 +132,45 @@ function collectFiles(sessionId: string): string[] {
   return files
 }
 
+const UUID_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+// Strict lowercase: must stay in sync with the session-id extraction regex in
+// validateAndImport, or mixed-case members could pass the whitelist yet fail
+// (or skew) session-id attribution.
+const ALLOWED_FILE_PATTERN = new RegExp(
+  `^(sessions/${UUID_PATTERN}/(session\\.json|transcript\\.jsonl)|logs/${UUID_PATTERN}\\.(log|screen\\.log|markdown\\.log))$`,
+)
+const ALLOWED_DIRECTORY_PATTERN = new RegExp(`^(sessions|logs|sessions/${UUID_PATTERN})/$`)
+
+/** Validate member paths and reject links before extraction. */
+function validateArchive(tarPath: string): void {
+  let members: string[]
+  let verbose: string[]
+  try {
+    members = execFileSync('tar', ['tzf', tarPath], { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean)
+    verbose = execFileSync('tar', ['tvzf', tarPath], { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean)
+  } catch (err: any) {
+    throw new Error(`tar validation failed: ${err?.message ?? err}`)
+  }
+
+  if (members.length === 0) throw new Error('Archive is empty')
+  for (const raw of members) {
+    const member = raw.replace(/^\.\//, '')
+    if (
+      member.startsWith('/')
+      || member.split('/').includes('..')
+      || (!ALLOWED_FILE_PATTERN.test(member) && !ALLOWED_DIRECTORY_PATTERN.test(member))
+    ) {
+      throw new Error(`Rejected unsafe archive path: ${raw}`)
+    }
+  }
+  if (verbose.some(line => !/^[-d]/.test(line))) {
+    throw new Error('Archive contains unsupported entry types')
+  }
+}
+
 /** Validate extracted files and move them into the target dir (default ~/.evotai) */
 function validateAndImport(tmpDir: string, targetRoot?: string): string {
   const destRoot = targetRoot ?? EVOTAI_DIR
-  const allowedPattern = /^(sessions\/[0-9a-f-]+\/(session\.json|transcript\.jsonl)|logs\/[0-9a-f-]+\.(log|screen\.log|markdown\.log))$/
 
   // Enumerate all files
   const allFiles = listFilesRecursive(tmpDir)
@@ -153,11 +182,11 @@ function validateAndImport(tmpDir: string, targetRoot?: string): string {
       throw new Error(`Rejected unsafe path: ${rel}`)
     }
     const fullPath = join(tmpDir, rel)
-    const stat = statSync(fullPath)
+    const stat = lstatSync(fullPath)
     if (stat.isSymbolicLink()) {
       throw new Error(`Rejected symbolic link: ${rel}`)
     }
-    if (!allowedPattern.test(rel)) {
+    if (!ALLOWED_FILE_PATTERN.test(rel)) {
       throw new Error(`Unexpected file in archive: ${rel}`)
     }
 
@@ -209,8 +238,8 @@ function toDownloadUrl(url: string): string {
   // https://tmpfiles.org/<id>/file.bin → https://tmpfiles.org/dl/<id>/file.bin
   // The id was once purely numeric but tmpfiles.org now issues alphanumeric
   // ids (e.g. /wywHXeSghysu/). A numeric-only match left the URL unchanged, so
-  // /log dl fetched the HTML viewer page instead of the raw payload and
-  // decryption failed. Match any non-empty id segment, but don't double-insert
+  // /share would otherwise fetch the HTML viewer page instead of the raw
+  // payload and fail decryption. Match any non-empty id segment, but don't double-insert
   // /dl/ if it is already present.
   const m = url.match(/^(https?:\/\/tmpfiles\.org)\/([^/]+\/.+)$/)
   if (m && !m[2]!.startsWith('dl/')) {
@@ -270,7 +299,7 @@ function upload(data: Buffer): Promise<string> {
 // Test helpers — exported for unit tests only
 // ---------------------------------------------------------------------------
 
-export const _testing = { toDownloadUrl, encrypt, decrypt, validateAndImport, listFilesRecursive, generatePassword, collectFiles }
+export const _testing = { isSharedSessionUrl, toDownloadUrl, encrypt, decrypt, validateArchive, validateAndImport, listFilesRecursive, generatePassword, collectFiles }
 
 function generatePassword(): string {
   const bytes = randomBytes(PASSWORD_LENGTH)

@@ -1,6 +1,6 @@
 ---
 name: memory
-description: "Archive and recall knowledge across sessions in the memory vault (~/.evotai/memory). Activated by the /mem command (bare = archive, with terms = search), or when the user asks to remember/memorize/save something for later, or asks to recall past incidents, research, or prior findings."
+description: "Archive and recall knowledge across sessions in the memory vault (~/.evotai/memory). Activated by /clip all, when the user asks to remember or save durable knowledge, or when they ask to recall past incidents, research, or prior findings."
 ---
 
 # Memory
@@ -13,10 +13,12 @@ Use Read/Write/Edit and bash (ls/rg) on the vault directly.
 
 ## Layout
 
-```
+```text
 ~/.evotai/memory/
 ├── MEMORY.md            # index: one line per entry
-└── <slug>.md            # one entry per topic
+├── clips/               # verbatim assistant replies saved by /clip
+│   └── <date>-<slug>.md
+└── <slug>.md            # one distilled entry per topic
 ```
 
 Entry file format:
@@ -25,7 +27,7 @@ Entry file format:
 ---
 name: <slug>
 description: <one line, what this entry answers>
-type: <incident | research | feedback | user | project | reference>
+type: <incident | research | feedback | user | project | reference | clip>
 date: <YYYY-MM-DD, last updated>
 ---
 
@@ -36,37 +38,42 @@ date: <YYYY-MM-DD, last updated>
   `tailscale-node-migration`, `databend-spill-oom`.
 - `description`: single line; this is what recall searches match first — write
   it as the question the entry answers.
-- Keep one entry per topic. Merge follow-ups into the existing entry instead of
-  creating near-duplicates.
+- Keep one distilled entry per topic. Merge follow-ups into the existing entry
+  instead of creating near-duplicates.
+- Files under `clips/` contain verbatim assistant replies written directly by
+  the CLI. Do not rewrite or merge them during ordinary recall.
 
-## Recall — the /mem <terms> command, or on demand
+## Recall — on demand
 
-The user searches memory with `/mem <terms>`. Also recall on your own when the
-user references prior work ("last time", "didn't we hit this before", "what do
-we know about ...").
+Recall when the user references prior work ("last time", "didn't we hit this
+before", "what do we know about ...") or explicitly asks to search memory.
 
 1. Read `~/.evotai/memory/MEMORY.md` for the index. Match liberally: consider
-   synonyms, related terms, English/translated variants — not just the exact
-   words given.
-2. For deeper search: `rg -il '<keyword>' ~/.evotai/memory/` with several
-   alternative keywords, then read the candidate entries to judge relevance.
+   synonyms, related terms, English/translated variants — not just exact words.
+2. For deeper search, use `rg -il '<keyword>' ~/.evotai/memory/` with several
+   alternative keywords. Include the `clips/` subtree, then read candidates to
+   judge relevance.
 3. Report each matching entry as its **absolute .md path** with a one-line
-   description, so the user can open it directly:
-   `- /Users/<user>/.evotai/memory/<slug>.md — <description>`
+   description, so the user can open it directly. For example:
+   `- /Users/<user>/.evotai/memory/clips/<file>.md — <description>`
    Then briefly summarize the most relevant entry. If nothing matches, say so.
 4. Memory goes stale. Verify recalled facts against the current state (files,
    commands, live systems) before relying on them. If reality disagrees with a
-   memory, trust reality and update or delete the entry.
+   memory, trust reality and update or delete the distilled entry. Never modify
+   a verbatim clip merely because its contents are outdated.
 
-## Archive — the bare /mem command
+## Archive — `/clip all` or an explicit request
 
-The user archives with the bare `/mem` command: distill the durable knowledge
-from the current conversation into the vault.
+`/clip all` distills durable knowledge from the current conversation into the
+vault. The same workflow applies when the user explicitly asks to remember or
+archive durable knowledge.
 
-Distill — do not dump the transcript.
+Distill — do not dump the transcript. Bare `/clip` is different: the CLI saves
+the latest assistant reply verbatim under `clips/` without invoking this skill.
 
-1. Check `MEMORY.md` for an existing entry on the same topic. If one exists,
-   merge with Edit and bump `date`. Otherwise create a new file with Write.
+1. Check `MEMORY.md` for an existing distilled entry on the same topic. If one
+   exists, merge with Edit and bump `date`. Otherwise create a new file with
+   Write.
 2. Write the body for a future reader with zero context from this conversation.
 3. Update the index line in `MEMORY.md`:
    `- [<slug>](<slug>.md) — <description>`
@@ -111,22 +118,23 @@ keep it short.
 
 After a session where you solved a non-obvious problem (root cause was hard to
 find, fix is not discoverable from the code) or completed research the user
-will likely need again, offer once: "Want me to save this to memory? (/mem)".
-Don't archive silently and don't nag.
+will likely need again, offer once: "Want me to distill this session into
+memory? (`/clip all`)". Do not archive silently and do not nag.
 
-## What NOT to save
+## What NOT to save in distilled entries
 
 - Anything derivable from the codebase, git history, or project instruction
   files.
 - Ephemeral task state only useful in the current conversation.
 - Raw transcripts, long logs, full command outputs — distill to the lines that
-  matter.
+  matter. Verbatim clips created by bare `/clip` are intentionally exempt.
 - Secrets, tokens, passwords. Reference where a credential lives, never its
   value.
 
 ## Hygiene
 
-- Entry body ≤ ~150 lines. If it grows past that, split by topic.
-- When an entry is obsolete, delete the file and its index line.
-- If `MEMORY.md` and the files on disk disagree, the files win — rebuild the
-  index lines from the entries' frontmatter.
+- Distilled entry bodies should stay within ~150 lines. Split by topic when
+  necessary. Verbatim clips are exempt from this size guideline.
+- When a distilled entry is obsolete, delete the file and its index line.
+- If `MEMORY.md` and files on disk disagree, the files win — rebuild index lines
+  from frontmatter, including files under `clips/`.

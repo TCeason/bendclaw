@@ -24,36 +24,39 @@ fn parse_compact_with_optional_instructions() {
 }
 
 #[test]
-fn parse_mem_bare_is_memorize() {
-    assert!(matches!(parse_command("/mem"), Some(Command::Memorize)));
-    assert!(matches!(parse_command("  /mem  "), Some(Command::Memorize)));
-    assert!(matches!(parse_command("/MEM"), Some(Command::Memorize)));
-}
-
-#[test]
-fn parse_mem_with_terms_is_search() {
+fn parse_clip_all_is_clip_session() {
     assert!(matches!(
-        parse_command("/mem aa bb"),
-        Some(Command::MemorySearch { ref query }) if query == "aa bb"
+        parse_command("/clip all"),
+        Some(Command::ClipSession)
+    ));
+    assert!(matches!(
+        parse_command("  /clip all  "),
+        Some(Command::ClipSession)
+    ));
+    assert!(matches!(
+        parse_command("/CLIP ALL"),
+        Some(Command::ClipSession)
     ));
 }
 
 #[test]
-fn memorize_prompt_mentions_skill() {
-    use evot::gateway::command::memorize_prompt;
-    let prompt = memorize_prompt();
-    assert!(prompt.contains("memory"));
-    assert!(prompt.contains("archive"));
+fn parse_bare_or_invalid_clip_is_usage_error() {
+    assert!(matches!(
+        parse_command("/clip"),
+        Some(Command::UsageError(_))
+    ));
+    assert!(matches!(
+        parse_command("/clip custom-name"),
+        Some(Command::UsageError(_))
+    ));
 }
 
 #[test]
-fn recall_prompt_embeds_query_and_asks_for_paths() {
-    use evot::gateway::command::recall_prompt;
-    let prompt = recall_prompt("tailscale account");
+fn clip_session_prompt_mentions_skill() {
+    use evot::gateway::command::clip_session_prompt;
+    let prompt = clip_session_prompt();
     assert!(prompt.contains("memory"));
-    assert!(prompt.contains("tailscale account"));
-    assert!(prompt.contains(".md file path"));
-    assert!(prompt.contains("synonyms"));
+    assert!(prompt.contains("archive"));
 }
 
 #[test]

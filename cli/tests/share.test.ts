@@ -1,10 +1,28 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
-import { mkdirSync, writeFileSync, existsSync, rmSync } from 'fs'
+import { execFileSync } from 'child_process'
+import { mkdirSync, writeFileSync, existsSync, rmSync, symlinkSync } from 'fs'
 import { join } from 'path'
 import { tmpdir, homedir } from 'os'
-import { _testing } from '../src/commands/log-share.js'
+import { _testing } from '../src/commands/share.js'
 
-const { toDownloadUrl, encrypt, decrypt, validateAndImport, listFilesRecursive, generatePassword, collectFiles } = _testing
+const { isSharedSessionUrl, toDownloadUrl, encrypt, decrypt, validateArchive, validateAndImport, listFilesRecursive, generatePassword, collectFiles } = _testing
+
+// ---------------------------------------------------------------------------
+// shared URL detection
+// ---------------------------------------------------------------------------
+
+describe('isSharedSessionUrl', () => {
+  test('accepts HTTP and HTTPS shared-session URLs', () => {
+    expect(isSharedSessionUrl('https://tmpfiles.org/abc/evot-log.bin#password')).toBe(true)
+    expect(isSharedSessionUrl('http://tmpfiles.org/abc/evot-log.bin#password')).toBe(true)
+  })
+
+  test('rejects session ids and non-HTTP protocols', () => {
+    expect(isSharedSessionUrl('abcdef01')).toBe(false)
+    expect(isSharedSessionUrl('not-a-url')).toBe(false)
+    expect(isSharedSessionUrl('file:///tmp/evot-log.bin#password')).toBe(false)
+  })
+})
 
 // ---------------------------------------------------------------------------
 // toDownloadUrl
@@ -23,7 +41,7 @@ describe('toDownloadUrl', () => {
 
   test('inserts /dl/ for alphanumeric ids (tmpfiles.org current format)', () => {
     // tmpfiles.org switched from numeric to alphanumeric ids; the download
-    // variant must still be produced or /log dl fetches the HTML viewer page.
+    // variant must still be produced or /share fetches the HTML viewer page.
     expect(toDownloadUrl('https://tmpfiles.org/wywHXeSghysu/evot-log.bin'))
       .toBe('https://tmpfiles.org/dl/wywHXeSghysu/evot-log.bin')
   })
@@ -86,6 +104,63 @@ describe('encrypt / decrypt', () => {
   test('too small payload fails', () => {
     const tiny = Buffer.from('short')
     expect(() => decrypt(tiny, 'whatever')).toThrow('too small')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// archive validation before extraction
+// ---------------------------------------------------------------------------
+
+describe('validateArchive', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = join(tmpdir(), `evot-test-archive-${process.pid}-${Date.now()}-${Math.random()}`)
+    mkdirSync(tmpDir, { recursive: true })
+  })
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  test('accepts the expected session archive layout', () => {
+    const sid = 'abcdef01-2345-6789-abcd-ef0123456789'
+    mkdirSync(join(tmpDir, 'sessions', sid), { recursive: true })
+    mkdirSync(join(tmpDir, 'logs'), { recursive: true })
+    writeFileSync(join(tmpDir, 'sessions', sid, 'session.json'), '{}')
+    writeFileSync(join(tmpDir, 'logs', `${sid}.log`), 'log')
+    const archive = join(tmpDir, 'valid.tar.gz')
+    execFileSync('tar', ['czf', archive, `sessions/${sid}/session.json`, `logs/${sid}.log`], { cwd: tmpDir })
+
+    expect(() => validateArchive(archive)).not.toThrow()
+  })
+
+  test('rejects unexpected archive members', () => {
+    writeFileSync(join(tmpDir, 'unexpected.txt'), 'bad')
+    const archive = join(tmpDir, 'unexpected.tar.gz')
+    execFileSync('tar', ['czf', archive, 'unexpected.txt'], { cwd: tmpDir })
+
+    expect(() => validateArchive(archive)).toThrow('unsafe archive path')
+  })
+
+  test('rejects uppercase session ids to match extraction strictness', () => {
+    const upper = 'ABCDEF01-2345-6789-ABCD-EF0123456789'
+    mkdirSync(join(tmpDir, 'sessions', upper), { recursive: true })
+    writeFileSync(join(tmpDir, 'sessions', upper, 'session.json'), '{}')
+    const archive = join(tmpDir, 'upper.tar.gz')
+    execFileSync('tar', ['czf', archive, `sessions/${upper}/session.json`], { cwd: tmpDir })
+
+    expect(() => validateArchive(archive)).toThrow('unsafe archive path')
+  })
+
+  test('rejects symbolic links before extraction', () => {
+    const sid = 'abcdef01-2345-6789-abcd-ef0123456789'
+    mkdirSync(join(tmpDir, 'sessions', sid), { recursive: true })
+    symlinkSync('/tmp', join(tmpDir, 'sessions', sid, 'session.json'))
+    const archive = join(tmpDir, 'link.tar.gz')
+    execFileSync('tar', ['czf', archive, `sessions/${sid}/session.json`], { cwd: tmpDir })
+
+    expect(() => validateArchive(archive)).toThrow('unsupported entry types')
   })
 })
 
