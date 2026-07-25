@@ -9,8 +9,8 @@ use super::handle::RunHandle;
 use super::PromptQueue;
 use super::QueueDrainMode;
 use crate::context::ContextConfig;
-use crate::r#loop::agent_loop;
-use crate::r#loop::agent_loop_continue;
+use crate::r#loop::agent_loop_continue_with_state;
+use crate::r#loop::agent_loop_with_state;
 use crate::r#loop::AgentLoopConfig;
 use crate::types::*;
 
@@ -65,9 +65,12 @@ impl Agent {
         let config = self.build_config_with_queues(run_steering, run_follow_up);
 
         let handle = tokio::spawn(async move {
+            let mut compaction_state = config.initial_compaction_state.clone();
             let result = std::panic::AssertUnwindSafe(async {
-                let _new_messages =
-                    agent_loop(messages, &mut context, &config, tx.clone(), cancel).await;
+                let outcome =
+                    agent_loop_with_state(messages, &mut context, &config, tx.clone(), cancel)
+                        .await;
+                compaction_state = outcome.compaction_state;
             });
             if let Err(e) = futures::FutureExt::catch_unwind(result).await {
                 let msg = match e.downcast_ref::<&str>() {
@@ -86,7 +89,7 @@ impl Agent {
                 .ok();
                 tx.send(AgentEvent::AgentEnd { messages: vec![] }).ok();
             }
-            (context.tools, context.messages)
+            (context.tools, context.messages, compaction_state)
         });
 
         self.pending_completion = Some(handle);
@@ -144,9 +147,11 @@ impl Agent {
         let config = self.build_config_with_queues(run_steering, run_follow_up);
 
         let handle = tokio::spawn(async move {
+            let mut compaction_state = config.initial_compaction_state.clone();
             let result = std::panic::AssertUnwindSafe(async {
-                let _new_messages =
-                    agent_loop_continue(&mut context, &config, tx.clone(), cancel).await;
+                let outcome =
+                    agent_loop_continue_with_state(&mut context, &config, tx.clone(), cancel).await;
+                compaction_state = outcome.compaction_state;
             });
             if let Err(e) = futures::FutureExt::catch_unwind(result).await {
                 let msg = match e.downcast_ref::<&str>() {
@@ -165,7 +170,7 @@ impl Agent {
                 .ok();
                 tx.send(AgentEvent::AgentEnd { messages: vec![] }).ok();
             }
-            (context.tools, context.messages)
+            (context.tools, context.messages, compaction_state)
         });
 
         self.pending_completion = Some(handle);
@@ -175,9 +180,10 @@ impl Agent {
     pub async fn finish(&mut self) {
         if let Some(handle) = self.pending_completion.take() {
             match handle.await {
-                Ok((tools, messages)) => {
+                Ok((tools, messages, compaction_state)) => {
                     self.tools = tools;
                     self.messages = messages;
+                    self.compaction_state = compaction_state;
                 }
                 Err(e) => {
                     tracing::error!("Agent loop task failed: {}", e);

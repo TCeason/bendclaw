@@ -448,7 +448,7 @@ pub(super) async fn stream_assistant_response(
                 }],
                 stop_reason: StopReason::Error,
                 model: config.model.clone(),
-                provider: "unknown".into(),
+                provider: target_provider,
                 usage: Usage::default(),
                 timestamp: now_ms(),
                 error_message: Some(e.to_string()),

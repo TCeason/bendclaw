@@ -144,7 +144,7 @@ fn boundary_applies_per_message_not_to_the_whole_list() {
 }
 
 #[test]
-fn output_only_usage_is_not_a_context_anchor() {
+fn output_only_usage_is_a_context_anchor() {
     let tracker = ContextTracker::new();
     let large_history = "x".repeat(40_000);
     let mut output_only = assistant_with_input("synthetic", 0, 0);
@@ -154,11 +154,57 @@ fn output_only_usage_is_not_a_context_anchor() {
     }
     let messages = vec![user_msg(&large_history), output_only, user_msg("trailing")];
 
-    let estimate = tracker.estimate_context_tokens(&messages);
+    assert_eq!(tracker.estimate_context_tokens(&messages), 12);
+}
+
+#[test]
+fn nonzero_error_usage_is_not_a_context_anchor() {
+    let tracker = ContextTracker::new();
+    let large_history = "x".repeat(40_000);
+    let mut error = assistant_with_input("failed", 10, 0);
+    if let AgentMessage::Llm(Message::Assistant {
+        stop_reason,
+        error_message,
+        ..
+    }) = &mut error
+    {
+        *stop_reason = StopReason::Error;
+        *error_message = Some("overloaded".into());
+    }
+
+    let estimate = tracker.estimate_context_tokens(&[user_msg(&large_history), error]);
+    assert!(estimate > 9_000, "error usage must not anchor: {estimate}");
+}
+
+#[test]
+fn nonzero_aborted_usage_is_not_a_context_anchor() {
+    let tracker = ContextTracker::new();
+    let large_history = "x".repeat(40_000);
+    let mut aborted = assistant_with_input("cancelled", 10, 0);
+    if let AgentMessage::Llm(Message::Assistant { stop_reason, .. }) = &mut aborted {
+        *stop_reason = StopReason::Aborted;
+    }
+
+    let estimate = tracker.estimate_context_tokens(&[user_msg(&large_history), aborted]);
     assert!(
         estimate > 9_000,
-        "output-only usage must not collapse a large context estimate: {estimate}"
+        "aborted usage must not anchor: {estimate}"
     );
+}
+
+#[test]
+fn usage_older_than_its_prefix_is_not_a_context_anchor() {
+    let tracker = ContextTracker::new();
+    let large_history = AgentMessage::Llm(Message::User {
+        content: vec![Content::Text {
+            text: "x".repeat(40_000),
+        }],
+        timestamp: 100,
+    });
+    let stale = assistant_at("stale", 10, 0, 99);
+
+    let estimate = tracker.estimate_context_tokens(&[large_history, stale]);
+    assert!(estimate > 9_000, "stale usage must not anchor: {estimate}");
 }
 
 #[test]

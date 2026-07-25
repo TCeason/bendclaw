@@ -43,48 +43,62 @@ impl CompactionRequestShape<'_> {
     }
 }
 
-pub(super) struct PostCompactionInput<'a> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum CompactionCheckPhase {
+    BeforePrompt,
+    RunEnd,
+}
+
+pub(super) struct CompactionCheckInput<'a> {
     pub(super) assistant_message: &'a Message,
     pub(super) config: &'a AgentLoopConfig,
     pub(super) request_shape: CompactionRequestShape<'a>,
+    pub(super) phase: CompactionCheckPhase,
 }
 
-/// Run the post-response compaction policy for one assistant message.
-pub(super) async fn post_response_compaction(
+/// Apply pi's single response-driven compaction policy.
+///
+/// Run-end checks ignore aborted responses. Before a new explicit prompt, the
+/// same response is checked again with aborted usage included. Internal tool,
+/// steering, retry, and follow-up turns never invoke this function.
+pub(super) async fn check_compaction(
     controller: &mut Option<CompactionController>,
     tracker: &mut ContextTracker,
     messages: &mut Vec<AgentMessage>,
-    input: PostCompactionInput<'_>,
+    input: CompactionCheckInput<'_>,
     cancel: CancellationToken,
     tx: &mpsc::UnboundedSender<AgentEvent>,
 ) -> bool {
-    let PostCompactionInput {
+    let CompactionCheckInput {
         assistant_message,
         config,
         request_shape,
+        phase,
     } = input;
+    if phase == CompactionCheckPhase::RunEnd
+        && matches!(assistant_message, Message::Assistant {
+            stop_reason: StopReason::Aborted,
+            ..
+        })
+    {
+        return false;
+    }
+
     let ctrl = match controller.as_mut() {
         Some(ctrl) => ctrl,
-        None => {
-            emit_accepted_message(tx, assistant_message);
-            return false;
-        }
+        None => return false,
     };
-
     let usage = match usage_snapshot_from_message(assistant_message) {
         Some(usage) => usage,
-        None => {
-            emit_accepted_message(tx, assistant_message);
-            return false;
-        }
+        None => return false,
     };
-
     let current_model = ModelId {
-        provider: usage.model.provider.clone(),
+        provider: target_provider(config)
+            .unwrap_or(&usage.model.provider)
+            .to_string(),
         model: config.model.clone(),
     };
     let summarizer_ctx = request_shape.summarizer_context(config);
-
     let response = ctrl
         .after_response(
             messages,
@@ -95,19 +109,19 @@ pub(super) async fn post_response_compaction(
         )
         .await;
 
-    // A non-overflow provider error (e.g. "overloaded", 5xx) carries no usable
-    // token counts, so the trigger skips it. Fall back to a local estimate so a
-    // near-full session can still compact before the next attempt instead of
-    // staying stuck over budget. Mirrors pi-mono's `_checkCompaction` Case 2.
-    let response = if response.action == AfterResponseAction::Continue
+    // Error/all-zero responses do not provide a direct context size. Match pi
+    // by estimating only from the latest valid provider usage plus its trailing
+    // messages; without a real anchor there is no compaction decision.
+    let anchor_estimate = if response.action == AfterResponseAction::Continue
         && response.stats.is_none()
-        && is_non_overflow_error(assistant_message)
+        && !response.overflow_exhausted
+        && needs_usage_anchor_estimate(assistant_message)
     {
-        let estimated_tokens = tracker.estimate_context_tokens_for_model(
-            messages,
-            target_provider(config),
-            Some(&config.model),
-        );
+        tracker.estimate_context_tokens_from_anchor_for_model(messages, None, None)
+    } else {
+        None
+    };
+    let response = if let Some(estimated_tokens) = anchor_estimate {
         ctrl.compact_on_estimate(messages, estimated_tokens, Some(&summarizer_ctx), cancel)
             .await
     } else {
@@ -115,68 +129,8 @@ pub(super) async fn post_response_compaction(
     };
 
     let should_retry = response.action == AfterResponseAction::Retry;
-    if !should_retry {
-        emit_accepted_message(tx, assistant_message);
-    }
     emit_compaction_events(ctrl, tracker, messages, &response, tx);
-
-    if !should_retry {
-        if let Message::Assistant { stop_reason, .. } = assistant_message {
-            if *stop_reason != StopReason::Error && *stop_reason != StopReason::Aborted {
-                ctrl.on_success();
-            }
-        }
-    }
-
     should_retry
-}
-
-fn emit_accepted_message(tx: &mpsc::UnboundedSender<AgentEvent>, message: &Message) {
-    tx.send(AgentEvent::MessageEnd {
-        message: AgentMessage::Llm(message.clone()),
-    })
-    .ok();
-}
-
-/// Run the pre-prompt compaction policy before an LLM call.
-///
-/// Compacts once when the estimated context exceeds the trigger threshold, then
-/// always proceeds with the request. Mirrors pi's pre-prompt `_checkCompaction`:
-/// a context that is still oversized afterwards is sent anyway and resolved by
-/// the provider's overflow response, which the post-response path recovers from
-/// via compact-and-retry. Returns `false` only when cancelled.
-pub(super) async fn pre_prompt_compaction(
-    controller: &mut Option<CompactionController>,
-    tracker: &mut ContextTracker,
-    messages: &mut Vec<AgentMessage>,
-    config: &AgentLoopConfig,
-    request_shape: CompactionRequestShape<'_>,
-    cancel: CancellationToken,
-    tx: &mpsc::UnboundedSender<AgentEvent>,
-) -> bool {
-    let ctrl = match controller.as_mut() {
-        Some(ctrl) => ctrl,
-        None => return true,
-    };
-
-    let summarizer_ctx = request_shape.summarizer_context(config);
-    let estimated_tokens = tracker.estimate_context_tokens_for_model(
-        messages,
-        target_provider(config),
-        Some(&config.model),
-    );
-    let response = ctrl
-        .compact_on_estimate(
-            messages,
-            estimated_tokens,
-            Some(&summarizer_ctx),
-            cancel.clone(),
-        )
-        .await;
-
-    emit_compaction_events(ctrl, tracker, messages, &response, tx);
-
-    !cancel.is_cancelled()
 }
 
 /// Emit compaction lifecycle events and the overflow-exhausted notice.
@@ -214,9 +168,7 @@ fn emit_compaction_events(
             will_retry,
         })
         .ok();
-        if stats.before_tokens > stats.after_tokens {
-            tracker.record_compaction_done(ctrl.state().timestamp);
-        }
+        tracker.record_compaction_done(ctrl.state().timestamp);
     }
 
     if response.overflow_exhausted {
@@ -234,18 +186,21 @@ fn target_provider(config: &AgentLoopConfig) -> Option<&str> {
     config.model_config.as_ref().map(|model| model.provider())
 }
 
-/// Whether the response is a provider error that is *not* a context overflow.
-///
-/// Overflow errors are handled by the trigger's dedicated compact-and-retry
-/// path. Other errors (overloaded, 5xx, network) carry no usable usage, so the
-/// caller falls back to an estimate-based threshold compaction.
-fn is_non_overflow_error(message: &Message) -> bool {
+/// Whether pi would estimate this response from the latest real usage anchor.
+/// Overflow errors stay on the dedicated compact-and-retry path.
+fn needs_usage_anchor_estimate(message: &Message) -> bool {
     matches!(
         message,
-        Message::Assistant { stop_reason: StopReason::Error, error_message, .. }
-            if !error_message
-                .as_deref()
-                .is_some_and(crate::provider::error::is_context_overflow_message)
+        Message::Assistant {
+            stop_reason: StopReason::Error,
+            error_message,
+            ..
+        } if !error_message
+            .as_deref()
+            .is_some_and(crate::provider::error::is_context_overflow_message)
+    ) || matches!(
+        message,
+        Message::Assistant { usage, .. } if usage.context_tokens() == 0
     )
 }
 

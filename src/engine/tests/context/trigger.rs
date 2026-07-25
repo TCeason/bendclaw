@@ -63,30 +63,49 @@ fn skip_when_no_usage() {
 }
 
 #[test]
-fn skip_when_aborted() {
+fn aborted_usage_can_trigger_before_prompt_threshold() {
     let config = default_config();
     let input = TriggerInput {
-        usage: Some(make_usage(50_000, 1_000, StopReason::Aborted)),
+        usage: Some(make_usage(120_000, 1_000, StopReason::Aborted)),
         current_model: model_id(),
         last_compaction_ts: None,
         overflow_recovery_attempted: false,
     };
-    assert_eq!(evaluate(&input, &config), TriggerDecision::Skip);
+    assert_eq!(evaluate(&input, &config), TriggerDecision::Threshold {
+        context_tokens: 121_000
+    });
 }
 
 #[test]
-fn skip_when_model_mismatch() {
+fn model_mismatch_only_skips_overflow_detection() {
     let config = default_config();
-    let input = TriggerInput {
+    let current_model = ModelId {
+        provider: "openai".into(),
+        model: "gpt-4".into(),
+    };
+
+    // pi still uses a successful previous response's real usage for threshold
+    // compaction after a model switch.
+    let successful = TriggerInput {
         usage: Some(make_usage(120_000, 1_000, StopReason::Stop)),
-        current_model: ModelId {
-            provider: "openai".into(),
-            model: "gpt-4".into(),
-        },
+        current_model: current_model.clone(),
         last_compaction_ts: None,
         overflow_recovery_attempted: false,
     };
-    assert_eq!(evaluate(&input, &config), TriggerDecision::Skip);
+    assert_eq!(evaluate(&successful, &config), TriggerDecision::Threshold {
+        context_tokens: 121_000
+    });
+
+    // An overflow from the old model must not compact for the new model.
+    let mut overflow = make_usage(0, 0, StopReason::Error);
+    overflow.error_message = Some("Context overflow: request too large".into());
+    let stale_overflow = TriggerInput {
+        usage: Some(overflow),
+        current_model,
+        last_compaction_ts: None,
+        overflow_recovery_attempted: false,
+    };
+    assert_eq!(evaluate(&stale_overflow, &config), TriggerDecision::Skip);
 }
 
 #[test]
@@ -152,7 +171,7 @@ fn overflow_exhausted_when_already_attempted() {
 }
 
 #[test]
-fn successful_response_over_window_remains_accepted_after_retry() {
+fn successful_silent_overflow_remains_accepted_after_retry() {
     let config = default_config();
     let input = TriggerInput {
         usage: Some(make_usage(130_000, 1_000, StopReason::Stop)),
@@ -161,13 +180,14 @@ fn successful_response_over_window_remains_accepted_after_retry() {
         overflow_recovery_attempted: true,
     };
 
-    assert_eq!(evaluate(&input, &config), TriggerDecision::Threshold {
-        context_tokens: 131_000
+    assert_eq!(evaluate(&input, &config), TriggerDecision::Overflow {
+        context_tokens: 131_000,
+        will_retry: false,
     });
 }
 
 #[test]
-fn successful_response_over_window_triggers_threshold_compaction() {
+fn successful_silent_overflow_compacts_without_retry() {
     let config = default_config();
     let input = TriggerInput {
         usage: Some(make_usage(130_000, 1_000, StopReason::Stop)),
@@ -176,13 +196,14 @@ fn successful_response_over_window_triggers_threshold_compaction() {
         overflow_recovery_attempted: false,
     };
 
-    assert_eq!(evaluate(&input, &config), TriggerDecision::Threshold {
-        context_tokens: 131_000
+    assert_eq!(evaluate(&input, &config), TriggerDecision::Overflow {
+        context_tokens: 131_000,
+        will_retry: false,
     });
 }
 
 #[test]
-fn length_stop_with_partial_output_over_window_is_overflow() {
+fn length_stop_with_partial_output_over_window_is_threshold() {
     let config = default_config();
     let input = TriggerInput {
         usage: Some(make_usage(127_900, 200, StopReason::Length)),
@@ -191,8 +212,24 @@ fn length_stop_with_partial_output_over_window_is_overflow() {
         overflow_recovery_attempted: false,
     };
 
-    assert_eq!(evaluate(&input, &config), TriggerDecision::Overflow {
+    assert_eq!(evaluate(&input, &config), TriggerDecision::Threshold {
         context_tokens: 128_100
+    });
+}
+
+#[test]
+fn length_stop_with_zero_output_at_window_is_retryable_overflow() {
+    let config = default_config();
+    let input = TriggerInput {
+        usage: Some(make_usage(127_000, 0, StopReason::Length)),
+        current_model: model_id(),
+        last_compaction_ts: None,
+        overflow_recovery_attempted: false,
+    };
+
+    assert_eq!(evaluate(&input, &config), TriggerDecision::Overflow {
+        context_tokens: 127_000,
+        will_retry: true,
     });
 }
 

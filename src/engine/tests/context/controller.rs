@@ -188,6 +188,54 @@ async fn controller_compacts_on_threshold() {
 }
 
 #[tokio::test]
+async fn controller_keeps_successful_silent_overflow_and_does_not_retry() {
+    let config = config_small();
+    let mut ctrl = CompactionController::new(config);
+
+    let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];
+    for _ in 0..20 {
+        messages.push(user_msg(&big_text(300)));
+        messages.push(assistant_msg(&big_text(300)));
+    }
+    messages.push(user_msg("recent"));
+    messages.push(assistant_msg("completed answer"));
+
+    let usage = UsageSnapshot {
+        input: 10_100,
+        cache_read: 0,
+        cache_write: 0,
+        output: 100,
+        total_tokens: 10_200,
+        model: model_id(),
+        timestamp: 1000,
+        stop_reason: StopReason::Stop,
+        error_message: None,
+    };
+
+    let response = ctrl
+        .after_response(
+            &mut messages,
+            &usage,
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+
+    assert_eq!(response.action, AfterResponseAction::Continue);
+    assert_eq!(
+        response.reason,
+        Some(evotengine::context::CompactReason::Overflow)
+    );
+    assert!(response.stats.is_some());
+    assert!(messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::Llm(Message::Assistant { content, .. })
+            if content.iter().any(|block| matches!(block, Content::Text { text } if text == "completed answer"))
+    )));
+}
+
+#[tokio::test]
 async fn controller_retries_on_overflow() {
     let config = config_small();
     let mut ctrl = CompactionController::new(config);
@@ -222,6 +270,73 @@ async fn controller_retries_on_overflow() {
     assert_eq!(response.action, AfterResponseAction::Retry);
     // Error message should have been popped
     assert!(messages.len() < original_count);
+}
+
+#[tokio::test]
+async fn controller_does_not_retry_when_overflow_cannot_be_compacted() {
+    let mut ctrl = CompactionController::new(config_small());
+    let mut messages = vec![user_msg("recent"), assistant_msg("overflow")];
+    let usage = UsageSnapshot {
+        input: 0,
+        cache_read: 0,
+        cache_write: 0,
+        output: 0,
+        total_tokens: 0,
+        model: model_id(),
+        timestamp: 1000,
+        stop_reason: StopReason::Error,
+        error_message: Some("prompt is too long: 50000 tokens > 10000 maximum".into()),
+    };
+
+    let response = ctrl
+        .after_response(
+            &mut messages,
+            &usage,
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+
+    assert_eq!(response.action, AfterResponseAction::Continue);
+    assert!(response.stats.is_none());
+    assert!(!response.overflow_exhausted);
+}
+
+#[tokio::test]
+async fn restored_state_suppresses_pre_compaction_overflow() {
+    let seeded = evotengine::CompactionState {
+        timestamp: 1000,
+        generation: 1,
+        ..Default::default()
+    };
+    let mut ctrl = CompactionController::new(config_small()).with_state(seeded);
+    let mut messages = vec![user_msg("recent"), assistant_msg("stale overflow")];
+    let stale_usage = UsageSnapshot {
+        input: 0,
+        cache_read: 0,
+        cache_write: 0,
+        output: 0,
+        total_tokens: 0,
+        model: model_id(),
+        timestamp: 1000,
+        stop_reason: StopReason::Error,
+        error_message: Some("prompt is too long: 50000 tokens > 10000 maximum".into()),
+    };
+
+    let response = ctrl
+        .after_response(
+            &mut messages,
+            &stale_usage,
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+
+    assert_eq!(response.action, AfterResponseAction::Continue);
+    assert!(response.stats.is_none());
+    assert_eq!(messages.len(), 2);
 }
 
 #[tokio::test]

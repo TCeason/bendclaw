@@ -26,16 +26,6 @@ pub fn evaluate(input: &TriggerInput, config: &CompactionConfig) -> TriggerDecis
         None => return TriggerDecision::Skip,
     };
 
-    // Skip aborted responses — no valid usage data.
-    if usage.stop_reason == StopReason::Aborted {
-        return TriggerDecision::Skip;
-    }
-
-    // Model mismatch — usage from a different model (user switched models).
-    if usage.model != input.current_model {
-        return TriggerDecision::Skip;
-    }
-
     // Stale usage — this response predates the last compaction.
     // Skip the check if timestamp is 0 (clock unavailable).
     if let Some(last_ts) = input.last_compaction_ts {
@@ -44,51 +34,56 @@ pub fn evaluate(input: &TriggerInput, config: &CompactionConfig) -> TriggerDecis
         }
     }
 
-    // Case 1: Overflow error — compact and retry.
+    let context_tokens = calculate_context_tokens(usage);
+    let same_model = usage.model == input.current_model;
+
+    // Case 1: Explicit overflow errors from the current model compact and retry.
+    // An old model's error must not force compaction after a model switch.
     if usage.stop_reason == StopReason::Error {
-        if let Some(ref err) = usage.error_message {
-            if is_context_overflow(err) {
-                let context_tokens = calculate_context_tokens(usage);
-                if input.overflow_recovery_attempted {
-                    return TriggerDecision::OverflowExhausted { context_tokens };
-                }
-                return TriggerDecision::Overflow { context_tokens };
+        if same_model
+            && usage
+                .error_message
+                .as_deref()
+                .is_some_and(is_context_overflow)
+        {
+            if input.overflow_recovery_attempted {
+                return TriggerDecision::OverflowExhausted { context_tokens };
             }
+            return TriggerDecision::Overflow {
+                context_tokens,
+                will_retry: true,
+            };
         }
-        // Non-overflow errors: still check threshold via estimation.
-        // Error responses may not have valid usage, so skip.
+        // Non-overflow errors use the caller's anchored estimate fallback.
         return TriggerDecision::Skip;
     }
 
-    // Case 2: A successful response must never be discarded solely because the
-    // reported usage exceeds our configured window. Providers can accept a
-    // larger effective window, and usage accounting may include cache tokens in
-    // a way that does not match the local catalog. Preserve the completed answer
-    // and compact it as a threshold event before the next turn.
-    let context_tokens = calculate_context_tokens(usage);
-    if usage.stop_reason == StopReason::Stop && context_tokens > config.context_window {
-        return TriggerDecision::Threshold { context_tokens };
+    // Case 2: Successful silent overflow. pi detects this from input tokens,
+    // not total usage. The completed answer is retained and compaction does not
+    // retry from an assistant message.
+    if same_model
+        && usage.stop_reason == StopReason::Stop
+        && usage.input + usage.cache_read > config.context_window
+    {
+        return TriggerDecision::Overflow {
+            context_tokens,
+            will_retry: false,
+        };
     }
 
-    // Case 3: Length-stop overflow. Some providers report a short, non-zero
-    // partial response when input plus output fills their total token budget.
-    // Treat any length stop beyond our configured window as overflow; requiring
-    // output=0 misses Codex Responses `response.incomplete` events.
-    if usage.stop_reason == StopReason::Length && context_tokens > config.context_window {
-        if input.overflow_recovery_attempted {
-            return TriggerDecision::OverflowExhausted { context_tokens };
-        }
-        return TriggerDecision::Overflow { context_tokens };
-    }
-
-    // A provider that clamps exactly to the window may still return no output.
-    if usage.stop_reason == StopReason::Length && usage.output == 0 {
+    // Case 3: Length-stop silent overflow. Providers such as MiMo may truncate
+    // input to the window and return no output. Partial output is not an
+    // overflow signal; it falls through to ordinary threshold compaction.
+    if same_model && usage.stop_reason == StopReason::Length && usage.output == 0 {
         let input_tokens = usage.input + usage.cache_read;
         if input_tokens >= config.context_window * 99 / 100 {
             if input.overflow_recovery_attempted {
                 return TriggerDecision::OverflowExhausted { context_tokens };
             }
-            return TriggerDecision::Overflow { context_tokens };
+            return TriggerDecision::Overflow {
+                context_tokens,
+                will_retry: true,
+            };
         }
     }
 

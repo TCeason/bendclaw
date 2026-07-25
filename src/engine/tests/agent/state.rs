@@ -152,6 +152,74 @@ async fn test_with_messages_builder() {
 }
 
 #[tokio::test]
+async fn test_compaction_state_persists_across_submits() {
+    let high_usage = || Usage {
+        input: 900,
+        output: 10,
+        total_tokens: 910,
+        ..Default::default()
+    };
+    let provider = MockProvider::new(vec![
+        MockResponse::TextWithUsage {
+            text: "first answer".into(),
+            usage: high_usage(),
+        },
+        MockResponse::Text("first summary".into()),
+        MockResponse::TextWithUsage {
+            text: "second answer".into(),
+            usage: high_usage(),
+        },
+        MockResponse::Text("second summary".into()),
+    ]);
+    let prior_messages = (0..20)
+        .map(|index| {
+            AgentMessage::Llm(Message::user(format!(
+                "history {index} {}",
+                "x".repeat(200)
+            )))
+        })
+        .collect();
+    let mut agent = Agent::new(provider)
+        .with_system_prompt("test")
+        .with_model("mock")
+        .with_api_key("test")
+        .with_messages(prior_messages)
+        .with_context_config(evotengine::context::ContextConfig {
+            max_context_tokens: 1_000,
+            system_prompt_tokens: 0,
+            reserve_tokens: Some(125),
+            keep_recent_tokens: Some(100),
+        });
+
+    let (_first_handle, mut first_rx) = agent.submit_text("first prompt").await;
+    let mut first_generation = None;
+    while let Some(event) = first_rx.recv().await {
+        if let AgentEvent::ContextCompactionEnd { state, .. } = event {
+            first_generation = Some(state.generation);
+        }
+    }
+    agent.finish().await;
+    // Provider responses use millisecond timestamps. Ensure the next response is
+    // strictly newer than the persisted compaction boundary, matching a real
+    // network round trip and pi's `timestamp <= boundary` stale check.
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+    let (_second_handle, mut second_rx) = agent
+        .submit_text(format!("second prompt {}", "y".repeat(1_000)))
+        .await;
+    let mut second_generation = None;
+    while let Some(event) = second_rx.recv().await {
+        if let AgentEvent::ContextCompactionEnd { state, .. } = event {
+            second_generation = Some(state.generation);
+        }
+    }
+    agent.finish().await;
+
+    assert_eq!(first_generation, Some(1));
+    assert_eq!(second_generation, Some(2));
+}
+
+#[tokio::test]
 async fn test_save_and_restore_messages() {
     let provider = MockProvider::text("Hello!");
     let mut agent = Agent::new(provider)

@@ -123,6 +123,7 @@ pub(crate) fn is_transient_provider_error_type(error_type: &str) -> bool {
 ///
 /// Each entry documents the provider whose error wording it matches.
 const OVERFLOW_PHRASES: &[&str] = &[
+    "context overflow",                             // Stable ProviderError marker
     "prompt is too long",                           // Anthropic (token overflow)
     "request_too_large",                            // Anthropic (HTTP 413 byte-size)
     "request too large",                            // Anthropic / Cerebras variant
@@ -181,7 +182,13 @@ pub fn is_context_overflow_message(message: &str) -> bool {
 }
 
 fn is_context_overflow(status: u16, message: &str) -> bool {
-    if (status == 400 || status == 413) && message.trim().is_empty() {
+    // HTTP 413 is the protocol-level request-size signal. Proxies may replace
+    // the provider body with a generic safe error, so requiring an overflow
+    // phrase here loses the only reliable semantic marker before compaction.
+    if status == 413 {
+        return true;
+    }
+    if status == 400 && message.trim().is_empty() {
         return true;
     }
     is_context_overflow_message(message)

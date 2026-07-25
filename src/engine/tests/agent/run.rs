@@ -1637,6 +1637,95 @@ async fn test_compaction_not_emitted_without_context_config() {
 }
 
 #[tokio::test]
+async fn test_aborted_usage_compacts_only_before_next_explicit_prompt() {
+    use evotengine::context::ContextConfig;
+
+    let provider = MockProvider::new(vec![
+        MockResponse::TextWithUsageAndStop {
+            text: "aborted response".into(),
+            usage: Usage {
+                input: 900,
+                output: 10,
+                total_tokens: 910,
+                ..Default::default()
+            },
+            stop_reason: StopReason::Aborted,
+        },
+        // Consumed by the compaction summarizer before the second prompt.
+        MockResponse::Text("summary".into()),
+        MockResponse::Text("second answer".into()),
+    ]);
+    let mut config = make_config(provider);
+    config.context_config = Some(ContextConfig {
+        max_context_tokens: 1_000,
+        system_prompt_tokens: 0,
+        reserve_tokens: Some(125),
+        keep_recent_tokens: Some(200),
+    });
+
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: (0..20)
+            .map(|index| {
+                AgentMessage::Llm(Message::user(format!(
+                    "history {index} {}",
+                    "x".repeat(200)
+                )))
+            })
+            .collect(),
+        tools: vec![],
+        cwd: std::path::PathBuf::new(),
+        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+        prompt_cache_key: None,
+    };
+
+    let (first_tx, first_rx) = mpsc::unbounded_channel();
+    agent_loop(
+        vec![AgentMessage::Llm(Message::user("first prompt"))],
+        &mut context,
+        &config,
+        first_tx,
+        CancellationToken::new(),
+    )
+    .await;
+    let first_events = collect_events(first_rx);
+    assert!(first_events
+        .iter()
+        .all(|event| !matches!(event, AgentEvent::ContextCompactionEnd { .. })));
+
+    let (second_tx, second_rx) = mpsc::unbounded_channel();
+    agent_loop(
+        vec![AgentMessage::Llm(Message::user("second prompt"))],
+        &mut context,
+        &config,
+        second_tx,
+        CancellationToken::new(),
+    )
+    .await;
+    let second_events = collect_events(second_rx);
+    let compact_index = second_events
+        .iter()
+        .position(|event| matches!(event, AgentEvent::ContextCompactionEnd { .. }))
+        .expect("aborted usage should compact before the next explicit prompt");
+    let prompt_index = second_events
+        .iter()
+        .position(|event| matches!(
+            event,
+            AgentEvent::MessageStart {
+                message: AgentMessage::Llm(Message::User { content, .. }),
+            } if content.iter().any(|block| matches!(block, Content::Text { text } if text == "second prompt"))
+        ))
+        .expect("second prompt should be emitted");
+    assert!(compact_index < prompt_index);
+    assert!(second_events.iter().any(|event| matches!(
+        event,
+        AgentEvent::MessageEnd {
+            message: AgentMessage::Llm(Message::Assistant { content, .. }),
+        } if content.iter().any(|block| matches!(block, Content::Text { text } if text == "second answer"))
+    )));
+}
+
+#[tokio::test]
 async fn test_compaction_after_tool_use_waits_for_tool_results() {
     use std::collections::HashSet;
     use std::sync::atomic::AtomicUsize;
@@ -1694,7 +1783,7 @@ async fn test_compaction_after_tool_use_waits_for_tool_results() {
                         output: 20,
                         ..Default::default()
                     },
-                    timestamp: 1,
+                    timestamp: evotengine::now_ms() + 60_000,
                     error_message: None,
                     response_id: None,
                 }
@@ -1778,7 +1867,7 @@ async fn test_compaction_after_tool_use_waits_for_tool_results() {
                 ..
             }
         )),
-        "preflight threshold compaction must never claim overflow retry"
+        "run-end threshold compaction must never claim overflow retry"
     );
 
     let captured_requests = requests.lock().clone();
@@ -1816,7 +1905,7 @@ async fn test_compaction_after_tool_use_waits_for_tool_results() {
 }
 
 #[tokio::test]
-async fn test_non_overflow_error_compacts_on_estimate() {
+async fn test_non_overflow_error_compacts_from_usage_anchor() {
     use evotengine::context::ContextConfig;
 
     // Provider whose agent call fails with a non-overflow "overloaded" error
@@ -1900,8 +1989,25 @@ async fn test_non_overflow_error_compacts_on_estimate() {
         keep_recent_tokens: Some(200),
     });
 
-    // Keep history plus prompt below the ~875 preflight threshold. The terminal
-    // error response above then pushes the post-response estimate over budget.
+    // The previous successful response is the real usage anchor. It remains
+    // below the threshold at prompt time; the new prompt and terminal error are
+    // estimated as trailing messages and push the final context over budget.
+    let usage_anchor = AgentMessage::Llm(Message::Assistant {
+        content: vec![Content::Text {
+            text: "previous answer".into(),
+        }],
+        stop_reason: StopReason::Stop,
+        model: "mock".into(),
+        provider: "mock".into(),
+        usage: Usage {
+            input: 700,
+            total_tokens: 700,
+            ..Default::default()
+        },
+        timestamp: evotengine::now_ms() + 60_000,
+        error_message: None,
+        response_id: None,
+    });
     let mut context = AgentContext {
         system_prompt: "test".into(),
         messages: vec![
@@ -1909,6 +2015,7 @@ async fn test_non_overflow_error_compacts_on_estimate() {
             AgentMessage::Llm(Message::user("x".repeat(500))),
             AgentMessage::Llm(Message::user("x".repeat(500))),
             AgentMessage::Llm(Message::user("x".repeat(500))),
+            usage_anchor,
         ],
         tools: vec![],
         cwd: std::path::PathBuf::new(),
@@ -1926,8 +2033,8 @@ async fn test_non_overflow_error_compacts_on_estimate() {
     agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
     let events = collect_events(rx);
 
-    // The preflight estimate remains below threshold; this compaction is the
-    // post-response non-overflow error fallback.
+    // The previous assistant remains below threshold at prompt time; this
+    // compaction comes from the final error plus its anchored trailing estimate.
     assert!(
         events.iter().any(|e| matches!(e, AgentEvent::Error { .. })),
         "expected an error event"
@@ -1941,7 +2048,7 @@ async fn test_non_overflow_error_compacts_on_estimate() {
 }
 
 #[tokio::test]
-async fn test_overflow_retry_never_completes_abandoned_partial_response() {
+async fn test_overflow_retry_removes_failed_response_from_active_context() {
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
 
@@ -1955,15 +2062,22 @@ async fn test_overflow_retry_never_completes_abandoned_partial_response() {
     impl StreamProvider for LengthOverflowThenSuccess {
         async fn stream(
             &self,
-            _config: StreamConfig,
+            config: StreamConfig,
             tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
             _cancel: tokio_util::sync::CancellationToken,
         ) -> Result<StreamOutcome, ProviderError> {
-            let call = self.calls.fetch_add(1, Ordering::SeqCst);
-            let text = if call == 0 {
-                "abandoned partial"
+            let is_summary = config
+                .system_prompt
+                .starts_with("You are a context summarization");
+            let call = if is_summary {
+                None
             } else {
-                "recovered answer"
+                Some(self.calls.fetch_add(1, Ordering::SeqCst))
+            };
+            let text = match call {
+                None => "compacted history",
+                Some(0) => "abandoned partial",
+                Some(_) => "recovered answer",
             };
             let _ = tx.send(StreamEvent::Start);
             let _ = tx.send(StreamEvent::TextDelta {
@@ -1972,18 +2086,18 @@ async fn test_overflow_retry_never_completes_abandoned_partial_response() {
             });
             let message = Message::Assistant {
                 content: vec![Content::Text { text: text.into() }],
-                stop_reason: if call == 0 {
+                stop_reason: if call == Some(0) {
                     StopReason::Length
                 } else {
                     StopReason::Stop
                 },
                 model: "mock".into(),
                 provider: "mock".into(),
-                usage: if call == 0 {
+                usage: if call == Some(0) {
                     Usage {
                         input: 1_100,
-                        output: 20,
-                        total_tokens: 1_120,
+                        output: 0,
+                        total_tokens: 1_100,
                         ..Default::default()
                     }
                 } else {
@@ -1994,8 +2108,8 @@ async fn test_overflow_retry_never_completes_abandoned_partial_response() {
                         ..Default::default()
                     }
                 },
-                timestamp: call as u64 + 1,
-                error_message: if call == 0 {
+                timestamp: evotengine::now_ms() + 60_000,
+                error_message: if call == Some(0) {
                     Some("response incomplete: max_output_tokens".into())
                 } else {
                     None
@@ -2068,7 +2182,10 @@ async fn test_overflow_retry_never_completes_abandoned_partial_response() {
             _ => None,
         })
         .collect();
-    assert_eq!(completed_assistant_texts, vec!["recovered answer"]);
+    assert_eq!(completed_assistant_texts, vec![
+        "abandoned partial",
+        "recovered answer"
+    ]);
     assert!(new_messages.iter().all(|message| !matches!(
         message,
         AgentMessage::Llm(Message::Assistant { content, .. })
@@ -2082,7 +2199,7 @@ async fn test_overflow_retry_never_completes_abandoned_partial_response() {
 }
 
 #[tokio::test]
-async fn test_model_switch_compacts_before_clamp_can_fall_to_one() {
+async fn test_model_switch_sends_first_request_without_precompaction() {
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
 
@@ -2209,9 +2326,158 @@ async fn test_model_switch_compacts_before_clamp_can_fall_to_one() {
 
     assert!(events
         .iter()
-        .any(|event| matches!(event, AgentEvent::ContextCompactionEnd { .. })));
-    assert!(provider.calls.load(Ordering::SeqCst) >= 2);
-    assert_eq!(provider.main_budgets.lock().as_slice(), &[500]);
+        .all(|event| !matches!(event, AgentEvent::ContextCompactionEnd { .. })));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    // The provider boundary still applies pi-compatible output clamping. The
+    // important behavior is that the request is sent before any compaction.
+    assert_eq!(provider.main_budgets.lock().as_slice(), &[1]);
+}
+
+#[tokio::test]
+async fn test_sanitized_413_compacts_and_retries_once() {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    use evotengine::context::ContextConfig;
+
+    struct RequestTooLargeThenSuccess {
+        calls: AtomicUsize,
+        request_chars: parking_lot::Mutex<Vec<usize>>,
+    }
+
+    #[async_trait::async_trait]
+    impl StreamProvider for RequestTooLargeThenSuccess {
+        async fn stream(
+            &self,
+            config: StreamConfig,
+            tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+            _cancel: tokio_util::sync::CancellationToken,
+        ) -> Result<StreamOutcome, ProviderError> {
+            let is_summary = config
+                .system_prompt
+                .starts_with("You are a context summarization");
+            let call = if is_summary {
+                None
+            } else {
+                Some(self.calls.fetch_add(1, Ordering::SeqCst))
+            };
+            let chars = config
+                .messages
+                .iter()
+                .map(|message| match message {
+                    Message::User { content, .. }
+                    | Message::Assistant { content, .. }
+                    | Message::ToolResult { content, .. } => content
+                        .iter()
+                        .map(|block| match block {
+                            Content::Text { text } => text.len(),
+                            _ => 0,
+                        })
+                        .sum::<usize>(),
+                })
+                .sum();
+            if call.is_some() {
+                self.request_chars.lock().push(chars);
+            }
+
+            if call == Some(0) {
+                return Err(ProviderError::classify(
+                    413,
+                    r#"HTTP 413: {"type":"error","error":{"type":"api_error","message":"Upstream request failed."}}"#,
+                    None,
+                ));
+            }
+
+            let text = if is_summary {
+                "compacted history"
+            } else {
+                "recovered after compaction"
+            };
+            let message = Message::Assistant {
+                content: vec![Content::Text { text: text.into() }],
+                stop_reason: StopReason::Stop,
+                model: config.model,
+                provider: "openai".into(),
+                usage: Usage::default(),
+                timestamp: evotengine::now_ms() + 60_000,
+                error_message: None,
+                response_id: None,
+            };
+            let _ = tx.send(StreamEvent::Start);
+            let _ = tx.send(StreamEvent::TextDelta {
+                content_index: 0,
+                delta: text.into(),
+            });
+            let _ = tx.send(StreamEvent::Done {
+                message: message.clone(),
+            });
+            Ok(StreamOutcome::complete(message))
+        }
+    }
+
+    let provider = std::sync::Arc::new(RequestTooLargeThenSuccess {
+        calls: AtomicUsize::new(0),
+        request_chars: parking_lot::Mutex::new(Vec::new()),
+    });
+    let mut config = make_config(MockProvider::text("unused"));
+    config.provider = provider.clone();
+    config.retry_policy = evotengine::RetryPolicy::disabled();
+    config.context_config = Some(ContextConfig {
+        max_context_tokens: 2_000,
+        system_prompt_tokens: 0,
+        reserve_tokens: Some(250),
+        keep_recent_tokens: Some(300),
+    });
+
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: (0..12)
+            .map(|index| {
+                AgentMessage::Llm(Message::user(format!(
+                    "old history {index} {}",
+                    "x".repeat(1_000)
+                )))
+            })
+            .collect(),
+        tools: vec![],
+        cwd: std::path::PathBuf::new(),
+        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+        prompt_cache_key: None,
+    };
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    let new_messages = agent_loop(
+        vec![AgentMessage::Llm(Message::user("continue"))],
+        &mut context,
+        &config,
+        tx,
+        CancellationToken::new(),
+    )
+    .await;
+    let events = collect_events(rx);
+
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    let request_chars = provider.request_chars.lock();
+    assert_eq!(request_chars.len(), 2);
+    assert!(
+        request_chars[1] < request_chars[0],
+        "retry payload should shrink after compaction: {request_chars:?}"
+    );
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::ContextCompactionEnd {
+            reason: evotengine::context::CompactReason::Overflow,
+            will_retry: true,
+            ..
+        })));
+    assert!(events
+        .iter()
+        .all(|event| !matches!(event, AgentEvent::LlmCallRetry { .. })));
+    assert!(new_messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::Llm(Message::Assistant { content, .. })
+            if content.iter().any(|block| matches!(block, Content::Text { text } if text == "recovered after compaction"))
+    )));
 }
 
 /// A context that cannot be compacted below the window is still sent: the
@@ -2382,7 +2648,7 @@ async fn test_failed_summarizer_still_sends_the_main_request() {
 }
 
 #[tokio::test]
-async fn test_preflight_no_progress_defers_to_provider() {
+async fn test_no_usage_anchor_defers_to_provider() {
     use evotengine::context::ContextConfig;
 
     let output = TestHarness::new()

@@ -36,6 +36,7 @@ impl CompactionController {
 
     /// Seed cross-compaction state (e.g. restored from a persisted session).
     pub fn with_state(mut self, state: CompactionState) -> Self {
+        self.last_compaction_ts = (state.timestamp > 0).then_some(state.timestamp);
         self.state = state;
         self
     }
@@ -56,9 +57,16 @@ impl CompactionController {
         &self.config
     }
 
-    /// Call after an accepted, non-error, non-aborted assistant response to
-    /// reset the overflow flag.
-    pub fn on_success(&mut self) {
+    /// Start a new user turn. Overflow recovery is limited per user turn, so a
+    /// newly accepted user message resets the compact-and-retry allowance.
+    pub fn on_user_message(&mut self) {
+        self.overflow_recovery_attempted = false;
+    }
+
+    /// Call when an assistant response other than an error completes. This
+    /// mirrors pi's `message_end` lifecycle: stop, length, tool-use, and aborted
+    /// responses all clear the previous compact-and-retry attempt immediately.
+    pub fn on_non_error_response(&mut self) {
         self.overflow_recovery_attempted = false;
     }
 
@@ -83,25 +91,37 @@ impl CompactionController {
         match trigger::evaluate(&trigger_input, &self.config) {
             TriggerDecision::Skip => CompactionResponse::skip(),
 
-            TriggerDecision::Overflow { context_tokens } => {
-                self.overflow_recovery_attempted = true;
-                // Remove the error assistant message before compacting.
-                if let Some(last) = messages.last() {
-                    if matches!(
-                        last,
-                        AgentMessage::Llm(crate::types::Message::Assistant { .. })
-                    ) {
-                        messages.pop();
-                    }
+            TriggerDecision::Overflow {
+                context_tokens,
+                will_retry,
+            } => {
+                if will_retry
+                    && matches!(
+                        messages.last(),
+                        Some(AgentMessage::Llm(crate::types::Message::Assistant { .. }))
+                    )
+                {
+                    messages.pop();
                 }
-                // Overflow still tries provider-native compaction first. If it
-                // fails, use the deterministic emergency summary so recovery
-                // stays fast and cannot fail on a second model call.
+
+                // Match pi: overflow uses the normal compaction pipeline. The
+                // provider request is retried only after compaction completed;
+                // cancellation, summarizer failure, or no plan leaves the turn
+                // terminal instead of resending the same oversized context.
                 let stats = self
-                    .run_compaction(messages, summarizer_ctx, false, cancel)
+                    .run_compaction(messages, summarizer_ctx, true, cancel)
                     .await;
+                let retry_after_compaction = will_retry && stats.is_some();
+                if retry_after_compaction {
+                    self.overflow_recovery_attempted = true;
+                }
+
                 CompactionResponse {
-                    action: AfterResponseAction::Retry,
+                    action: if retry_after_compaction {
+                        AfterResponseAction::Retry
+                    } else {
+                        AfterResponseAction::Continue
+                    },
                     stats,
                     reason: Some(CompactReason::Overflow),
                     context_tokens: Some(context_tokens),
@@ -137,14 +157,10 @@ impl CompactionController {
         }
     }
 
-    /// Estimate-based threshold compaction.
-    ///
-    /// Used when no reliable provider usage is available — either before the
-    /// first prompt of a near-full resumed session, or after a non-overflow
-    /// provider error whose response carries no usable token counts. Mirrors
-    /// pi-mono's `_checkCompaction` error-estimate path: compact on the
-    /// threshold using the caller-supplied estimate. Overflow detection is not
-    /// attempted here because it requires real usage.
+    /// Threshold compaction from the latest real usage anchor plus trailing
+    /// messages. Used for error and all-zero responses, matching pi's
+    /// `_checkCompaction` fallback. Overflow detection still requires the
+    /// response's direct signal and is handled by `after_response`.
     pub async fn compact_on_estimate(
         &mut self,
         messages: &mut Vec<AgentMessage>,
@@ -234,7 +250,7 @@ impl CompactionController {
 
         *messages = outcome.messages;
         self.state = outcome.state;
-        self.last_compaction_ts = Some(now_ms());
+        self.last_compaction_ts = Some(self.state.timestamp);
         notify_compaction_phase(&self.observer, CompactionPhase::Complete);
 
         Some(outcome.stats)
@@ -280,8 +296,4 @@ impl CompactionResponse {
             overflow_exhausted: false,
         }
     }
-}
-
-fn now_ms() -> u64 {
-    crate::context::now_ms()
 }

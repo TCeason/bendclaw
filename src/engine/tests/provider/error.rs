@@ -57,11 +57,22 @@ fn classify_groq_overflow() {
 }
 
 #[test]
-fn classify_empty_body_overflow() {
-    let err = ProviderError::classify(413, "", None);
-    assert!(err.is_context_overflow());
-    let err = ProviderError::classify(400, "  ", None);
-    assert!(err.is_context_overflow());
+fn classify_request_size_overflow() {
+    let empty = ProviderError::classify(413, "", None);
+    assert!(empty.is_context_overflow());
+
+    // Regression: llmproxy deliberately replaces provider details with this
+    // safe body. HTTP status remains the only request-size signal.
+    let sanitized = ProviderError::classify(
+        413,
+        r#"HTTP 413: {"type":"error","error":{"type":"api_error","message":"Upstream request failed."}}"#,
+        None,
+    );
+    assert!(sanitized.is_context_overflow());
+    assert!(is_context_overflow_message(&sanitized.to_string()));
+
+    let empty_400 = ProviderError::classify(400, "  ", None);
+    assert!(empty_400.is_context_overflow());
 }
 
 #[test]

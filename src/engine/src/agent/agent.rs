@@ -70,7 +70,13 @@ pub struct Agent {
 
     // Pending completion from a spawned agent loop
     #[allow(clippy::type_complexity)]
-    pub(super) pending_completion: Option<JoinHandle<(Vec<Box<dyn AgentTool>>, Vec<AgentMessage>)>>,
+    pub(super) pending_completion: Option<
+        JoinHandle<(
+            Vec<Box<dyn AgentTool>>,
+            Vec<AgentMessage>,
+            Option<crate::context::CompactionState>,
+        )>,
+    >,
 }
 
 impl Agent {
@@ -311,11 +317,12 @@ impl Agent {
         }
         if let Some(handle) = self.pending_completion.take() {
             // Await the cancelled task to recover tools; ignore panic
-            if let Ok((tools, _messages)) = handle.await {
+            if let Ok((tools, _messages, _compaction_state)) = handle.await {
                 self.tools = tools;
             }
         }
         self.messages.clear();
+        self.compaction_state = None;
         self.clear_all_queues();
         self.is_streaming = false;
         self.cancel = None;

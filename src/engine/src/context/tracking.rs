@@ -80,13 +80,26 @@ impl ContextTracker {
         target_provider: Option<&str>,
         target_model: Option<&str>,
     ) -> usize {
-        if let Some((baseline, idx)) =
-            latest_provider_anchor(messages, target_provider, target_model, self.compacted_at)
-        {
-            let trailing: usize = messages[idx + 1..].iter().map(message_tokens).sum();
-            return baseline + trailing;
-        }
-        total_tokens(messages).saturating_add(self.system_tool_overhead_tokens)
+        self.estimate_context_tokens_from_anchor_for_model(messages, target_provider, target_model)
+            .unwrap_or_else(|| {
+                total_tokens(messages).saturating_add(self.system_tool_overhead_tokens)
+            })
+    }
+
+    /// Estimate from a real provider usage anchor, or return `None` when no
+    /// valid post-compaction response exists. Compaction checks use this form to
+    /// match pi: zero-usage/error responses may fall back to prior usage, but
+    /// must not trigger from a full-history local estimate alone.
+    pub fn estimate_context_tokens_from_anchor_for_model(
+        &self,
+        messages: &[AgentMessage],
+        target_provider: Option<&str>,
+        target_model: Option<&str>,
+    ) -> Option<usize> {
+        let (baseline, idx) =
+            latest_provider_anchor(messages, target_provider, target_model, self.compacted_at)?;
+        let trailing: usize = messages[idx + 1..].iter().map(message_tokens).sum();
+        Some(baseline + trailing)
     }
 
     /// Build a budget snapshot from the current tracker state and config.
@@ -133,32 +146,49 @@ fn latest_provider_anchor(
     target_model: Option<&str>,
     compacted_at: Option<u64>,
 ) -> Option<(usize, usize)> {
-    messages.iter().enumerate().rev().find_map(|(idx, msg)| {
-        let AgentMessage::Llm(Message::Assistant {
+    let mut latest_prefix_timestamp = 0;
+    let mut latest_anchor = None;
+
+    for (idx, message) in messages.iter().enumerate() {
+        let Some(message) = message.as_llm() else {
+            continue;
+        };
+        let timestamp = message_timestamp(message);
+        if let Message::Assistant {
             usage,
             provider,
             model,
-            timestamp,
+            stop_reason,
             ..
-        }) = msg
-        else {
-            return None;
-        };
-        if target_provider.is_some_and(|target| provider != target)
-            || target_model.is_some_and(|target| model != target)
+        } = message
         {
-            return None;
+            let usage_applies_to_prefix = timestamp >= latest_prefix_timestamp;
+            let matches_target = target_provider.is_none_or(|target| provider == target)
+                && target_model.is_none_or(|target| model == target);
+            let is_after_compaction = compacted_at.is_none_or(|boundary| timestamp > boundary);
+            let anchor = usage.context_tokens() as usize;
+            if usage_applies_to_prefix
+                && matches_target
+                && is_after_compaction
+                && *stop_reason != StopReason::Aborted
+                && *stop_reason != StopReason::Error
+                && anchor > 0
+            {
+                latest_anchor = Some((anchor, idx));
+            }
         }
-        if compacted_at.is_some_and(|boundary| *timestamp <= boundary) {
-            return None;
-        }
-        let anchor = usage.context_tokens() as usize;
-        has_input_signal(usage).then_some((anchor, idx))
-    })
+        latest_prefix_timestamp = latest_prefix_timestamp.max(timestamp);
+    }
+
+    latest_anchor
 }
 
-fn has_input_signal(usage: &Usage) -> bool {
-    usage.input > 0 || usage.cache_read > 0 || usage.cache_write > 0
+fn message_timestamp(message: &Message) -> u64 {
+    match message {
+        Message::User { timestamp, .. }
+        | Message::Assistant { timestamp, .. }
+        | Message::ToolResult { timestamp, .. } => *timestamp,
+    }
 }
 
 impl Default for ContextTracker {
