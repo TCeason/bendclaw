@@ -22,19 +22,22 @@ use crate::types::*;
 /// across all models. A cheap byte approximation only sizes the small trailing
 /// delta since that response, and serves as a floor before the first response.
 pub struct ContextTracker {
-    /// Set after a compaction rewrites the messages: the trailing assistant
-    /// usage then reflects the pre-compaction (larger) context, so it must not
-    /// be used as an anchor until a fresh provider response arrives. This is
-    /// transient run state — correctly absent on resume, where the resolved
-    /// context view already exposes a valid post-compaction anchor.
-    baseline_stale: bool,
+    /// Timestamp of the latest compaction, when one happened in this run.
+    ///
+    /// Assistant messages at or before this point carry usage describing the
+    /// pre-compaction (larger) context, so they cannot anchor the estimate.
+    /// Newer responses can, which keeps provider-accurate counts available
+    /// immediately after a compaction. Mirrors pi's compaction-boundary check.
+    /// This is transient run state — correctly absent on resume, where the
+    /// resolved context view already exposes a valid post-compaction anchor.
+    compacted_at: Option<u64>,
     system_tool_overhead_tokens: usize,
 }
 
 impl ContextTracker {
     pub fn new() -> Self {
         Self {
-            baseline_stale: false,
+            compacted_at: None,
             system_tool_overhead_tokens: 0,
         }
     }
@@ -49,24 +52,10 @@ impl ContextTracker {
         self.system_tool_overhead_tokens
     }
 
-    /// Re-enable the provider anchor once a fresh response with real usage
-    /// lands after a compaction. Responses without a provider input signal
-    /// (e.g. empty, error, or output-only synthetic responses) are ignored so
-    /// the stale pre-compaction anchor stays suppressed until a genuine
-    /// context measurement arrives.
-    pub fn record_response(&mut self, usage: &Usage) {
-        if has_input_signal(usage) {
-            self.baseline_stale = false;
-        }
-    }
-
-    /// Suppress the provider anchor after compaction.
-    ///
-    /// The trailing assistant usage now reflects pre-compaction context size.
-    /// Until the next real response, `estimate_context_tokens` falls back to the
-    /// byte approximation over the (already shrunk) message list.
-    pub fn record_compaction_done(&mut self) {
-        self.baseline_stale = true;
+    /// Record the compaction boundary. Assistant usage from at or before this
+    /// timestamp is stale and cannot anchor the estimate.
+    pub fn record_compaction_done(&mut self, compacted_at: u64) {
+        self.compacted_at = Some(compacted_at);
     }
 
     /// Measure current context size: provider anchor + byte estimate of the
@@ -91,13 +80,11 @@ impl ContextTracker {
         target_provider: Option<&str>,
         target_model: Option<&str>,
     ) -> usize {
-        if !self.baseline_stale {
-            if let Some((baseline, idx)) =
-                latest_provider_anchor(messages, target_provider, target_model)
-            {
-                let trailing: usize = messages[idx + 1..].iter().map(message_tokens).sum();
-                return baseline + trailing;
-            }
+        if let Some((baseline, idx)) =
+            latest_provider_anchor(messages, target_provider, target_model, self.compacted_at)
+        {
+            let trailing: usize = messages[idx + 1..].iter().map(message_tokens).sum();
+            return baseline + trailing;
         }
         total_tokens(messages).saturating_add(self.system_tool_overhead_tokens)
     }
@@ -133,19 +120,25 @@ impl ContextTracker {
     }
 }
 
-/// The most recent assistant `usage` in the list, as (anchor_tokens, index).
+/// Latest assistant usage that can anchor a context estimate, as
+/// `(context_tokens, index)`.
 ///
-/// Uses provider total usage, falling back to normalized usage buckets.
+/// Uses provider total usage, falling back to normalized usage buckets. Rejects
+/// responses from a different provider/model (their counts do not describe this
+/// model's serialization) and responses at or before the compaction boundary
+/// (their counts describe the pre-compaction context).
 fn latest_provider_anchor(
     messages: &[AgentMessage],
     target_provider: Option<&str>,
     target_model: Option<&str>,
+    compacted_at: Option<u64>,
 ) -> Option<(usize, usize)> {
     messages.iter().enumerate().rev().find_map(|(idx, msg)| {
         let AgentMessage::Llm(Message::Assistant {
             usage,
             provider,
             model,
+            timestamp,
             ..
         }) = msg
         else {
@@ -154,6 +147,9 @@ fn latest_provider_anchor(
         if target_provider.is_some_and(|target| provider != target)
             || target_model.is_some_and(|target| model != target)
         {
+            return None;
+        }
+        if compacted_at.is_some_and(|boundary| *timestamp <= boundary) {
             return None;
         }
         let anchor = usage.context_tokens() as usize;
@@ -207,6 +203,14 @@ pub struct ContextConfig {
     pub keep_recent: usize,
     /// Minimum first messages to always keep
     pub keep_first: usize,
+    /// Output headroom reserved before compaction triggers. `None` uses
+    /// [`crate::context::DEFAULT_RESERVE_TOKENS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reserve_tokens: Option<usize>,
+    /// Token budget for the retained tail. `None` uses
+    /// [`crate::context::DEFAULT_KEEP_RECENT_TOKENS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_recent_tokens: Option<usize>,
 }
 
 impl Default for ContextConfig {
@@ -216,6 +220,8 @@ impl Default for ContextConfig {
             system_prompt_tokens: 4_000,
             keep_recent: 10,
             keep_first: 2,
+            reserve_tokens: None,
+            keep_recent_tokens: None,
         }
     }
 }

@@ -30,6 +30,8 @@ pub use compaction::SummarizerInput;
 pub use compaction::SummarizerMode;
 pub use compaction::TriggerDecision;
 pub use compaction::UsageSnapshot;
+pub use compaction::DEFAULT_KEEP_RECENT_TOKENS;
+pub use compaction::DEFAULT_RESERVE_TOKENS;
 pub use compaction::DEFAULT_SUMMARY_RESERVE_TOKENS;
 pub use history::transform_messages_for_model;
 pub use image_resize::resize_image;

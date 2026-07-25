@@ -1738,6 +1738,8 @@ async fn test_compaction_after_tool_use_waits_for_tool_results() {
         system_prompt_tokens: 0,
         keep_recent: 1,
         keep_first: 1,
+        reserve_tokens: Some(125),
+        keep_recent_tokens: Some(200),
     });
 
     let mut prior_messages = Vec::new();
@@ -1900,6 +1902,8 @@ async fn test_non_overflow_error_compacts_on_estimate() {
         system_prompt_tokens: 0,
         keep_recent: 1,
         keep_first: 1,
+        reserve_tokens: Some(125),
+        keep_recent_tokens: Some(200),
     });
 
     // Keep history plus prompt below the ~875 preflight threshold. The terminal
@@ -2021,6 +2025,8 @@ async fn test_overflow_retry_never_completes_abandoned_partial_response() {
         system_prompt_tokens: 0,
         keep_recent: 1,
         keep_first: 1,
+        reserve_tokens: Some(125),
+        keep_recent_tokens: Some(200),
     });
 
     let mut context = AgentContext {
@@ -2165,6 +2171,8 @@ async fn test_model_switch_compacts_before_clamp_can_fall_to_one() {
         system_prompt_tokens: 0,
         keep_recent: 1,
         keep_first: 1,
+        reserve_tokens: Some(1250),
+        keep_recent_tokens: Some(2000),
     });
 
     let old_assistant = AgentMessage::Llm(Message::Assistant {
@@ -2216,42 +2224,98 @@ async fn test_model_switch_compacts_before_clamp_can_fall_to_one() {
     assert_eq!(provider.main_budgets.lock().as_slice(), &[500]);
 }
 
+/// A context that cannot be compacted below the window is still sent: the
+/// provider is the authority on whether it fits, and an overflow response is
+/// recovered by the post-response compact-and-retry path. Mirrors pi, which
+/// checks compaction once before a prompt and never refuses locally.
 #[tokio::test]
-async fn test_preflight_does_not_send_request_at_exact_window_limit() {
+async fn test_uncompactable_context_is_still_sent_to_the_provider() {
     use evotengine::context::ContextConfig;
 
     // Local estimate: prior user = 3956/4 + 4 = 993, current user =
     // 8/4 + 4 = 6, system prompt = 4/4 = 1, totaling exactly 1000.
     // Both messages are pinned by keep_first=2, so compaction cannot progress.
     let output = TestHarness::new()
-        .responses(vec![MockResponse::Text("must not be sent".into())])
+        .responses(vec![MockResponse::Text("sent anyway".into())])
         .prior_messages(vec![AgentMessage::Llm(Message::user("x".repeat(3_956)))])
         .context_config(ContextConfig {
             max_context_tokens: 1_000,
             system_prompt_tokens: 0,
             keep_recent: 1,
             keep_first: 2,
+            reserve_tokens: Some(125),
+            keep_recent_tokens: Some(200),
         })
         .run("continue")
         .await;
 
-    assert!(output.events.iter().any(|event| matches!(
-        event,
-        AgentEvent::Error { error } if error.message.contains("request was not sent")
-    )));
     assert!(output
         .events
         .iter()
-        .all(|event| !matches!(event, AgentEvent::LlmCallStart { .. })));
-    assert!(output.messages.iter().all(|message| !matches!(
+        .any(|event| matches!(event, AgentEvent::LlmCallStart { .. })));
+    assert!(output.events.iter().all(|event| !matches!(
+        event,
+        AgentEvent::Error { error } if error.message.contains("request was not sent")
+    )));
+    assert!(output.messages.iter().any(|message| matches!(
         message,
         AgentMessage::Llm(Message::Assistant { content, .. })
-            if content.iter().any(|block| matches!(block, Content::Text { text } if text == "must not be sent"))
+            if content.iter().any(|block| matches!(block, Content::Text { text } if text == "sent anyway"))
     )));
 }
 
+/// A large-window model must not compact just because its history is a large
+/// absolute number. With a fixed 16k reserve, a 272k-window model still has ~256k
+/// of headroom, so a 120k context is nowhere near the threshold. The previous
+/// window/8 reserve plus window/5 retention made big-window models compact far
+/// too eagerly and then fail to shrink below the window.
 #[tokio::test]
-async fn test_preflight_failure_does_not_send_over_window_request() {
+async fn test_large_window_model_does_not_compact_mid_window() {
+    use evotengine::context::ContextConfig;
+
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("answer".into())])
+        .prior_messages(vec![
+            AgentMessage::Llm(Message::user("history")),
+            AgentMessage::Llm(Message::Assistant {
+                content: vec![Content::Text {
+                    text: "prior answer".into(),
+                }],
+                stop_reason: StopReason::Stop,
+                model: "test-model".into(),
+                provider: "test".into(),
+                usage: Usage {
+                    input: 120_000,
+                    output: 2_000,
+                    total_tokens: 122_000,
+                    ..Default::default()
+                },
+                timestamp: 1,
+                error_message: None,
+                response_id: None,
+            }),
+        ])
+        .context_config(ContextConfig::from_context_window(272_000))
+        .run("next")
+        .await;
+
+    assert!(
+        output
+            .events
+            .iter()
+            .all(|event| !matches!(event, AgentEvent::ContextCompactionEnd { .. })),
+        "a 122k context in a 272k window is well under the threshold"
+    );
+    assert!(output
+        .events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::LlmCallStart { .. })));
+}
+
+/// A summarizer that cannot produce a summary must not strand the run: the
+/// main request still goes out. Compaction is best-effort, not a gate.
+#[tokio::test]
+async fn test_failed_summarizer_still_sends_the_main_request() {
     use evotengine::context::ContextConfig;
 
     struct FailingSummarizerProvider {
@@ -2274,7 +2338,7 @@ async fn test_preflight_failure_does_not_send_over_window_request() {
             }
             self.main_calls
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Err(ProviderError::Api("main request must not run".into()))
+            Err(ProviderError::Api("main request ran".into()))
         }
     }
 
@@ -2283,11 +2347,14 @@ async fn test_preflight_failure_does_not_send_over_window_request() {
     });
     let mut config = make_config(MockProvider::text("unused"));
     config.provider = provider.clone();
+    config.retry_policy = evotengine::RetryPolicy::disabled();
     config.context_config = Some(ContextConfig {
         max_context_tokens: 1_000,
         system_prompt_tokens: 0,
         keep_recent: 1,
         keep_first: 1,
+        reserve_tokens: Some(125),
+        keep_recent_tokens: Some(200),
     });
     let mut context = AgentContext {
         system_prompt: "test".into(),
@@ -2313,20 +2380,18 @@ async fn test_preflight_failure_does_not_send_over_window_request() {
     .await;
     let events = collect_events(rx);
 
-    assert_eq!(
+    assert!(
         provider
             .main_calls
-            .load(std::sync::atomic::Ordering::SeqCst),
-        0
+            .load(std::sync::atomic::Ordering::SeqCst)
+            >= 1,
+        "a failed summary must not prevent the main request"
     );
-    assert!(events.iter().any(|event| matches!(
+    assert!(events.iter().all(|event| !matches!(
         event,
         AgentEvent::Error { error }
             if error.message.contains("request was not sent")
     )));
-    assert!(events
-        .iter()
-        .all(|event| !matches!(event, AgentEvent::LlmCallStart { .. })));
 }
 
 #[tokio::test]
@@ -2344,6 +2409,8 @@ async fn test_preflight_no_progress_defers_to_provider() {
             system_prompt_tokens: 0,
             keep_recent: 10,
             keep_first: 2,
+            reserve_tokens: Some(137),
+            keep_recent_tokens: Some(220),
         })
         .run("continue")
         .await;
@@ -2389,6 +2456,8 @@ async fn test_llm_call_start_carries_budget_and_window() {
             system_prompt_tokens: 10_000,
             keep_recent: 10,
             keep_first: 2,
+            reserve_tokens: Some(12500),
+            keep_recent_tokens: Some(20000),
         })
         .retry_policy(evotengine::RetryPolicy::disabled())
         .run("hi")

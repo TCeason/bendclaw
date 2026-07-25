@@ -60,13 +60,21 @@ pub struct CompactionConfig {
     pub summary_max_chars: usize,
 }
 
+/// Tokens reserved for output + system prompt + tool defs. Fixed rather than a
+/// share of the window, mirroring pi's `DEFAULT_COMPACTION_SETTINGS`: the
+/// reserve covers a response, not a fraction of history, so scaling it with the
+/// window over-reserves on large-context models.
+pub const DEFAULT_RESERVE_TOKENS: usize = 16_384;
+/// Token budget for the retained tail. Also fixed, for the same reason.
+pub const DEFAULT_KEEP_RECENT_TOKENS: usize = 20_000;
+
 impl CompactionConfig {
     /// Derive config from a context config (uses max_context_tokens as the window).
     pub fn from_context_window(context_window: usize) -> Self {
         Self {
             context_window,
-            reserve_tokens: context_window / 8, // ~12.5% reserve
-            keep_recent_tokens: context_window / 5,
+            reserve_tokens: DEFAULT_RESERVE_TOKENS,
+            keep_recent_tokens: DEFAULT_KEEP_RECENT_TOKENS,
             keep_recent_min: 6,
             keep_first: 2,
             summarizer_mode: SummarizerMode::default(),
@@ -81,10 +89,15 @@ impl CompactionConfig {
         // ContextConfig.max_context_tokens is the full context window.
         // Output headroom is reserved here via reserve_tokens (single source
         // of headroom), so trigger threshold = window - reserve_tokens.
-        let context_window = ctx.max_context_tokens;
-        let mut cfg = Self::from_context_window(context_window);
+        let mut cfg = Self::from_context_window(ctx.max_context_tokens);
         cfg.keep_first = ctx.keep_first;
         cfg.keep_recent_min = ctx.keep_recent;
+        if let Some(reserve) = ctx.reserve_tokens {
+            cfg.reserve_tokens = reserve;
+        }
+        if let Some(keep_recent) = ctx.keep_recent_tokens {
+            cfg.keep_recent_tokens = keep_recent;
+        }
         cfg
     }
 

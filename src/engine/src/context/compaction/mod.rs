@@ -23,6 +23,8 @@ pub mod types;
 
 pub use config::truncate_summary;
 pub use config::CompactionConfig;
+pub use config::DEFAULT_KEEP_RECENT_TOKENS;
+pub use config::DEFAULT_RESERVE_TOKENS;
 pub use controller::CompactionController;
 pub use controller::CompactionResponse;
 pub use summarizer::mode::DEFAULT_SUMMARY_RESERVE_TOKENS;

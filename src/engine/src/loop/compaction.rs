@@ -20,9 +20,6 @@ const OVERFLOW_EXHAUSTED_MESSAGE: &str =
     "Context overflow recovery failed after one compact-and-retry attempt. \
      Try reducing context or switching to a larger-context model.";
 
-const PREFLIGHT_CONTEXT_MESSAGE: &str =
-    "Context remains at or above the model window after compaction. The request was not sent because it would leave no usable output budget. Reduce context or switch to a larger-context model.";
-
 pub(super) struct CompactionRequestShape<'a> {
     pub(super) system_prompt: &'a str,
     pub(super) tools: &'a [crate::provider::ToolDefinition],
@@ -141,12 +138,13 @@ fn emit_accepted_message(tx: &mpsc::UnboundedSender<AgentEvent>, message: &Messa
     .ok();
 }
 
-/// Run the pre-prompt compaction policy before the first LLM call of a run.
+/// Run the pre-prompt compaction policy before an LLM call.
 ///
-/// Proactively compacts when the estimated context already exceeds the trigger
-/// threshold (e.g. resuming a near-full session, or after the user aborted a
-/// large turn). This avoids sending an oversized request that would only be
-/// recovered reactively via overflow handling.
+/// Compacts once when the estimated context exceeds the trigger threshold, then
+/// always proceeds with the request. Mirrors pi's pre-prompt `_checkCompaction`:
+/// a context that is still oversized afterwards is sent anyway and resolved by
+/// the provider's overflow response, which the post-response path recovers from
+/// via compact-and-retry. Returns `false` only when cancelled.
 pub(super) async fn pre_prompt_compaction(
     controller: &mut Option<CompactionController>,
     tracker: &mut ContextTracker,
@@ -162,55 +160,23 @@ pub(super) async fn pre_prompt_compaction(
     };
 
     let summarizer_ctx = request_shape.summarizer_context(config);
-
-    loop {
-        let estimated_tokens = tracker.estimate_context_tokens_for_model(
+    let estimated_tokens = tracker.estimate_context_tokens_for_model(
+        messages,
+        target_provider(config),
+        Some(&config.model),
+    );
+    let response = ctrl
+        .compact_on_estimate(
             messages,
-            target_provider(config),
-            Some(&config.model),
-        );
-        let response = ctrl
-            .compact_on_estimate(
-                messages,
-                estimated_tokens,
-                Some(&summarizer_ctx),
-                cancel.clone(),
-            )
-            .await;
+            estimated_tokens,
+            Some(&summarizer_ctx),
+            cancel.clone(),
+        )
+        .await;
 
-        emit_compaction_events(ctrl, tracker, messages, &response, tx);
+    emit_compaction_events(ctrl, tracker, messages, &response, tx);
 
-        if cancel.is_cancelled() {
-            return false;
-        }
-
-        let remaining = tracker.estimate_context_tokens_for_model(
-            messages,
-            target_provider(config),
-            Some(&config.model),
-        );
-        if remaining <= ctrl.config().trigger_threshold() {
-            return true;
-        }
-        if response.stats.is_none() || remaining >= estimated_tokens {
-            // Keep pi's permissive behavior for threshold-only estimates: a
-            // model-specific tokenizer or stale catalog may be conservative.
-            // Once the estimate reaches the full window, however, forwarding
-            // would clamp output to one token. Stop locally instead of turning
-            // a failed compaction into a successful empty provider response.
-            if remaining >= ctrl.config().context_window {
-                tx.send(AgentEvent::Error {
-                    error: AgentErrorInfo {
-                        kind: AgentErrorKind::Runtime,
-                        message: PREFLIGHT_CONTEXT_MESSAGE.to_string(),
-                    },
-                })
-                .ok();
-                return false;
-            }
-            return true;
-        }
-    }
+    !cancel.is_cancelled()
 }
 
 /// Emit compaction lifecycle events and the overflow-exhausted notice.
@@ -249,7 +215,7 @@ fn emit_compaction_events(
         })
         .ok();
         if stats.before_tokens > stats.after_tokens {
-            tracker.record_compaction_done();
+            tracker.record_compaction_done(ctrl.state().timestamp);
         }
     }
 

@@ -1,3 +1,5 @@
+#[path = "context/config.rs"]
+mod config;
 #[path = "context/controller.rs"]
 mod controller;
 #[path = "context/dsl.rs"]

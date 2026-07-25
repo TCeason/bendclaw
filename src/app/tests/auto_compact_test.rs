@@ -136,7 +136,22 @@ async fn auto_compaction_persists_structured_compact_item() -> TestResult {
         .await?
         .ok_or_else(|| std::io::Error::other("missing resumed session"))?;
     let (resumed_engine_context, resumed_state, _) = resumed.context_snapshot().await;
-    assert_eq!(resumed_engine_context, expected_engine_context);
+    // Compaction happens before the request is sent, so the resumed context is
+    // the persisted post-compaction snapshot plus the turn that followed it.
+    assert_eq!(
+        &resumed_engine_context[..expected_engine_context.len()],
+        expected_engine_context.as_slice()
+    );
+    assert!(matches!(
+        resumed_engine_context.last(),
+        Some(evot_engine::AgentMessage::Llm(
+            evot_engine::Message::Assistant { content, .. }
+        )) if content.iter().any(|block| matches!(
+            block,
+            evot_engine::Content::Text { text }
+                if text == "assistant response after pre-prompt compaction"
+        ))
+    ));
     assert_eq!(
         resumed_state.and_then(|state| state.last_summary),
         Some("AUTO SUMMARY FROM LLM".to_string())

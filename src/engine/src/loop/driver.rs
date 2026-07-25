@@ -294,16 +294,10 @@ async fn run_loop(
             context.messages.push(agent_msg.clone());
             new_messages.push(agent_msg.clone());
 
-            // Clear the post-compaction stale flag once a real response lands,
-            // re-enabling the provider anchor (which is read from the message
-            // list itself, so no token count needs to be stored here).
-            if let Message::Assistant { ref usage, .. } = message {
-                context_tracker.record_response(usage);
-            }
-
-            // Extract tool calls before compaction. A tool-use assistant message
-            // must stay adjacent to its tool results; compacting before results
-            // are appended creates orphaned pairs that provider APIs reject.
+            // Tool calls are extracted before compaction. A tool-use assistant
+            // message must stay adjacent to its tool results; compacting before
+            // results are appended creates orphaned pairs that provider APIs
+            // reject.
             let tool_calls: Vec<_> = match &message {
                 Message::Assistant { content, .. } => content
                     .iter()

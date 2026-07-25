@@ -17,6 +17,10 @@ fn user_msg(text: &str) -> AgentMessage {
 }
 
 fn assistant_with_input(text: &str, input: u64, cache_read: u64) -> AgentMessage {
+    assistant_at(text, input, cache_read, 0)
+}
+
+fn assistant_at(text: &str, input: u64, cache_read: u64, timestamp: u64) -> AgentMessage {
     AgentMessage::Llm(Message::Assistant {
         content: vec![Content::Text {
             text: text.to_string(),
@@ -32,7 +36,7 @@ fn assistant_with_input(text: &str, input: u64, cache_read: u64) -> AgentMessage
             total_tokens: input + cache_read + 50,
             reasoning_output: 0,
         },
-        timestamp: 0,
+        timestamp,
         error_message: None,
         response_id: None,
     })
@@ -86,54 +90,57 @@ fn falls_back_to_byte_estimate_without_anchor() {
     assert!(estimate > 0 && estimate < 1_000);
 }
 
-/// After compaction, the trailing assistant usage reflects the pre-compaction
-/// (larger) context and must be suppressed until a fresh response lands.
+/// Assistant usage recorded at or before the compaction boundary describes the
+/// pre-compaction (larger) context and must not anchor the estimate.
 #[test]
-fn suppresses_stale_anchor_after_compaction() {
+fn suppresses_stale_anchor_from_before_compaction() {
     let mut tracker = ContextTracker::new();
     // Pre-compaction response measured a huge context.
     let messages = vec![
         user_msg("q"),
-        assistant_with_input("big-context answer", 150_000, 0),
+        assistant_at("big-context answer", 150_000, 0, 100),
     ];
 
-    tracker.record_compaction_done();
-    // Compaction shrank the list; the stale 150k anchor must not be used.
+    tracker.record_compaction_done(100);
     let after_compaction = tracker.estimate_context_tokens(&messages);
     assert!(
         after_compaction < 1_000,
         "stale anchor should be suppressed, got {after_compaction}"
     );
-
-    // A genuine new response re-enables anchoring.
-    tracker.record_response(&Usage {
-        input: 40_000,
-        output: 10,
-        cache_read: 0,
-        cache_write: 0,
-        total_tokens: 40_010,
-        reasoning_output: 0,
-    });
-    let fresh = vec![
-        user_msg("q"),
-        assistant_with_input("post-compaction answer", 40_000, 0),
-    ];
-    assert_eq!(tracker.estimate_context_tokens(&fresh), 40_050);
 }
 
-/// An empty or error response carries no usable usage and must not clear the
-/// post-compaction suppression — otherwise the stale anchor would resurface.
+/// A response that landed after the boundary is a valid measurement of the
+/// compacted context, so it anchors immediately — no extra round trip needed.
 #[test]
-fn empty_response_does_not_reenable_stale_anchor() {
+fn anchors_on_response_after_compaction_boundary() {
     let mut tracker = ContextTracker::new();
-    tracker.record_compaction_done();
-    tracker.record_response(&Usage::default()); // empty: input/cache all zero
+    tracker.record_compaction_done(100);
 
-    let messages = vec![user_msg("q"), assistant_with_input("stale", 150_000, 0)];
+    let messages = vec![
+        user_msg("q"),
+        assistant_at("post-compaction answer", 40_000, 0, 101),
+    ];
+    assert_eq!(tracker.estimate_context_tokens(&messages), 40_050);
+}
+
+/// The newest response wins, but only past the boundary: a stale pre-compaction
+/// message later in the list must not resurface as the anchor.
+#[test]
+fn boundary_applies_per_message_not_to_the_whole_list() {
+    let mut tracker = ContextTracker::new();
+    tracker.record_compaction_done(100);
+
+    let messages = vec![
+        user_msg("q"),
+        assistant_at("fresh", 40_000, 0, 101),
+        user_msg("next"),
+        assistant_at("stale replay", 150_000, 0, 50),
+    ];
+    // The trailing message predates the boundary, so the 40k anchor is used.
     let estimate = tracker.estimate_context_tokens(&messages);
     assert!(
-        estimate < 1_000,
-        "empty response must not revive the stale anchor, got {estimate}"
+        (40_050..41_000).contains(&estimate),
+        "expected the post-boundary anchor, got {estimate}"
     );
 }
 
@@ -153,20 +160,6 @@ fn output_only_usage_is_not_a_context_anchor() {
         estimate > 9_000,
         "output-only usage must not collapse a large context estimate: {estimate}"
     );
-}
-
-#[test]
-fn output_only_response_does_not_reenable_stale_anchor() {
-    let mut tracker = ContextTracker::new();
-    tracker.record_compaction_done();
-    tracker.record_response(&Usage {
-        output: 10,
-        total_tokens: 10,
-        ..Default::default()
-    });
-    let messages = vec![user_msg("q"), assistant_with_input("stale", 150_000, 0)];
-
-    assert!(tracker.estimate_context_tokens(&messages) < 1_000);
 }
 
 #[test]
