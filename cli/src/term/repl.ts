@@ -111,6 +111,7 @@ import type { ContentBlock } from '../native/index.js'
 import { tryStartServer, type ServerState } from './app/server.js'
 import {
   RESUME_SELECTOR_TITLE,
+  COMPACT_SUMMARY_PREFIX,
   formatSessionItems,
   formatSessionWithTextItems,
   isResumeSelectorTitle,
@@ -909,7 +910,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (!sessionId) return
     const transcript = await agent.loadContextTranscript(sessionId)
     const messages = transcriptToMessages(transcript as any).filter(message =>
-      !(message.role === 'user' && message.text.startsWith('The conversation history before this point was compacted into the following summary:')),
+      !(message.role === 'user' && message.text.startsWith(COMPACT_SUMMARY_PREFIX)),
     )
     const { shown, hidden } = selectResumeMessages(messages)
 
@@ -2641,6 +2642,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         agent.deleteSession(action.sessionId).then(ok => {
           if (ok) {
             commitSystem('sys-del', `  Deleted session ${action.label}`)
+            // Also surface it on the overlay: resuming another session clears
+            // the screen, which would otherwise wipe the only confirmation.
+            if (overlay.kind === 'selector' && isResumeSelectorTitle(overlay.state.title)) {
+              overlay = {
+                kind: 'selector',
+                state: { ...overlay.state, subtitle: `Deleted ${action.label}` },
+              }
+              renderer.requestRender()
+            }
           }
         })
         renderer.requestRender()

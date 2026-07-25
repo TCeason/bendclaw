@@ -2,7 +2,26 @@ import { padRight, relativeTime } from '../../render/format.js'
 import type { SessionMeta, SessionWithText } from '../../native/index.js'
 import type { SelectorItem } from '../selector.js'
 
-export const RESUME_SELECTOR_TITLE = 'Resume session  (Ctrl+D delete)'
+export const RESUME_SELECTOR_TITLE = 'Resume session  (Ctrl+D delete · twice)'
+
+/**
+ * Stem of the synthetic user message compaction injects ahead of a summary.
+ * Shorter than the 40-character head budget used by session titles, so it also
+ * matches titles an earlier release derived from that message before the
+ * backend stopped doing so.
+ */
+export const COMPACT_SUMMARY_PREFIX = 'The conversation history before this'
+
+/**
+ * Display title for a session. Sessions compacted by an earlier release carry a
+ * title built from the compaction summary boilerplate, which renders the resume
+ * list as a wall of identical rows. Those read as `(compacted)` until the next
+ * save recomputes them from real user turns.
+ */
+export function sanitizeSessionTitle(title?: string | null): string {
+  if (title && title.startsWith(COMPACT_SUMMARY_PREFIX)) return '(compacted)'
+  return title || '(untitled)'
+}
 
 export type SessionPrefixResolution =
   | { kind: 'matched'; session: SessionMeta }
@@ -57,7 +76,7 @@ export function isResumeSelectorTitle(title: string): boolean {
 
 function formatSessionItem(s: SessionMeta, otherCwd: boolean, searchText: string): SelectorItem {
   const source = padRight(s.source || '', 6)
-  const title = padRight(s.title || '(untitled)', 65)
+  const title = padRight(sanitizeSessionTitle(s.title), 65)
   const turns = padRight(s.turns ? `[${s.turns} turns]` : '', 12)
   const time = relativeTime(s.updated_at)
   const cwd = otherCwd ? `  ${shortenSessionCwd(s.cwd)}` : ''

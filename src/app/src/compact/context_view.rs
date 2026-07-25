@@ -4,8 +4,20 @@ use crate::types::TranscriptItem;
 const SUMMARY_PREFIX: &str =
     "The conversation history before this point was compacted into the following summary:\n\n";
 
+/// Stem of [`SUMMARY_PREFIX`], deliberately shorter than the 40-character head
+/// budget used by session titles. Matching on the stem therefore recognizes
+/// both a live summary message and a title that an earlier release already
+/// truncated mid-prefix (`"The conversation history before this poi.."`).
+const SUMMARY_STEM: &str = "The conversation history before this";
+
 pub fn compact_summary_text(summary: &str) -> String {
     format!("{SUMMARY_PREFIX}{summary}")
+}
+
+/// Whether the text is synthetic context inserted by compaction rather than an
+/// actual user prompt (or a session title previously derived from one).
+pub fn is_compact_summary_text(text: &str) -> bool {
+    text.starts_with(SUMMARY_STEM)
 }
 
 pub fn compact_summary_item(summary: &str) -> TranscriptItem {

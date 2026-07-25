@@ -432,6 +432,133 @@ async fn session_title_comes_from_first_user_message() -> TestResult {
 }
 
 #[tokio::test]
+async fn session_title_skips_compact_summary_user_message() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+
+    let session = Session::new(
+        "sess-title-compact".into(),
+        "/tmp".into(),
+        "claude-sonnet".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    // Seed a real first turn so the session already has a good title.
+    session
+        .write_items(vec![TranscriptItem::User {
+            text: "debug the flaky auth integration test".into(),
+            content: vec![],
+        }])
+        .await?;
+    session.save().await?;
+
+    // After compaction the context view starts with a synthetic summary user
+    // message. Title rebuild must skip it and keep tracking real user turns.
+    let summary_item =
+        evot::compact::context_view::compact_summary_item("auth suite was flaky on CI");
+    let real_user = TranscriptItem::User {
+        text: "re-run the suite after the fix".into(),
+        content: vec![],
+    };
+    write_test_compact(&session, "auth suite was flaky on CI", vec![
+        summary_item,
+        real_user,
+    ])
+    .await?;
+    session.save().await?;
+
+    let loaded = Session::open("sess-title-compact", storage.clone())
+        .await?
+        .ok_or_else(|| missing_error("missing compacted session"))?;
+    let title = loaded
+        .meta()
+        .await
+        .title
+        .ok_or_else(|| missing_error("missing session title"))?;
+
+    assert!(
+        !title.starts_with("The conversation history before this point"),
+        "title leaked compact summary prefix: {title}"
+    );
+    assert_eq!(title, "re-run the suite after the fix");
+    Ok(())
+}
+
+#[tokio::test]
+async fn save_clears_a_previously_polluted_title() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+
+    let session = Session::new(
+        "sess-title-heal".into(),
+        "/tmp".into(),
+        "claude-sonnet".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    // Simulate what an older release persisted: a title derived from the
+    // compaction summary boilerplate.
+    session
+        .update_meta(|meta| {
+            meta.title = Some("The conversation history before this poi.. … 继续".to_string());
+            Ok(())
+        })
+        .await?;
+
+    // Compact down to a context that holds only the synthetic summary item, so
+    // no real user turn is available to rebuild a title from.
+    write_test_compact(&session, "everything so far", vec![
+        evot::compact::context_view::compact_summary_item("everything so far"),
+    ])
+    .await?;
+    session.save().await?;
+
+    let loaded = Session::open("sess-title-heal", storage.clone())
+        .await?
+        .ok_or_else(|| missing_error("missing session"))?;
+    assert_eq!(loaded.meta().await.title, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn save_keeps_a_clean_title_when_context_has_no_user_turn() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+
+    let session = Session::new(
+        "sess-title-keep".into(),
+        "/tmp".into(),
+        "claude-sonnet".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    session
+        .update_meta(|meta| {
+            meta.title = Some("investigate the flaky resume test".to_string());
+            Ok(())
+        })
+        .await?;
+
+    write_test_compact(&session, "everything so far", vec![
+        evot::compact::context_view::compact_summary_item("everything so far"),
+    ])
+    .await?;
+    session.save().await?;
+
+    let loaded = Session::open("sess-title-keep", storage.clone())
+        .await?
+        .ok_or_else(|| missing_error("missing session"))?;
+    assert_eq!(
+        loaded.meta().await.title.as_deref(),
+        Some("investigate the flaky resume test")
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn save_and_load_meta() -> TestResult {
     let dir = TempDir::new()?;
     let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;

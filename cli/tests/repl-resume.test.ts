@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import {
   RESUME_SELECTOR_TITLE,
+  COMPACT_SUMMARY_PREFIX,
   formatSessionItems,
   formatSessionWithTextItems,
   isResumeSelectorTitle,
   isSessionIdPrefix,
   resolveSessionByPrefix,
+  sanitizeSessionTitle,
 } from '../src/term/app/resume.js'
 import type { SessionMeta, SessionWithText } from '../src/native/index.js'
 
@@ -77,8 +79,25 @@ describe('repl resume helpers', () => {
   })
 
   test('resume title shows the portable Ctrl+D delete shortcut', () => {
-    expect(RESUME_SELECTOR_TITLE).toBe('Resume session  (Ctrl+D delete)')
+    expect(RESUME_SELECTOR_TITLE).toBe('Resume session  (Ctrl+D delete · twice)')
     expect(isResumeSelectorTitle(RESUME_SELECTOR_TITLE)).toBe(true)
     expect(isResumeSelectorTitle('Select model')).toBe(false)
+  })
+
+  test('sanitizeSessionTitle hides compaction boilerplate titles', () => {
+    // Full message form, as persisted by an older release.
+    expect(sanitizeSessionTitle(
+      'The conversation history before this point was compacted into the following summary:\n\nstuff',
+    )).toBe('(compacted)')
+    // Title already truncated mid-prefix by the 40-char head budget.
+    expect(sanitizeSessionTitle('The conversation history before this poi.. … 继续')).toBe('(compacted)')
+    expect(COMPACT_SUMMARY_PREFIX).toBe('The conversation history before this')
+  })
+
+  test('sanitizeSessionTitle passes through real titles and fills empties', () => {
+    expect(sanitizeSessionTitle('fix the resume selector')).toBe('fix the resume selector')
+    expect(sanitizeSessionTitle('')).toBe('(untitled)')
+    expect(sanitizeSessionTitle(undefined)).toBe('(untitled)')
+    expect(sanitizeSessionTitle(null)).toBe('(untitled)')
   })
 })

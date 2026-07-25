@@ -424,9 +424,22 @@ impl Session {
         let transcript = self.state.lock().await.transcript.clone();
         let mut meta = self.meta.write().await;
         // Build title from first + last user messages so the resume list
-        // shows both the original topic and the most recent activity.
-        if let Some(title) = build_title(&transcript) {
-            meta.title = Some(title);
+        // shows both the original topic and the most recent activity. When the
+        // active context holds no real user turn, an already-polluted title is
+        // cleared instead of being kept forever: compaction used to derive it
+        // from its own synthetic summary message, which made every compacted
+        // session look identical in the resume list.
+        match build_title(&transcript) {
+            Some(title) => meta.title = Some(title),
+            None => {
+                let polluted = meta
+                    .title
+                    .as_deref()
+                    .is_some_and(crate::compact::context_view::is_compact_summary_text);
+                if polluted {
+                    meta.title = None;
+                }
+            }
         }
         // Extract latest context window usage from compaction stats.
         if let Some((tokens, budget)) = last_context_usage(&transcript) {
@@ -549,10 +562,18 @@ fn compact_seed_from_entries(entries: &[TranscriptEntry]) -> Option<evot_engine:
 }
 
 fn build_title(items: &[TranscriptItem]) -> Option<String> {
+    // Compaction injects a synthetic first User item whose text is the summary
+    // wrapper. Including it rewrites the resume-list title to the boilerplate
+    // prefix ("The conversation history before this point..."), making the
+    // session look "gone" after compact. Skip those synthetic prompts so the
+    // title keeps tracking real user turns.
     let user_texts: Vec<String> = items
         .iter()
         .filter_map(|item| {
             if let TranscriptItem::User { text, .. } = item {
+                if crate::compact::context_view::is_compact_summary_text(text) {
+                    return None;
+                }
                 let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
                 if !normalized.is_empty() {
                     return Some(normalized);

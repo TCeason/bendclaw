@@ -21,19 +21,28 @@ export type SelectorControlAction =
   | { kind: 'queue-remove'; entry: ManagedQueuedPrompt; state: SelectorState }
   | { kind: 'none' }
 
+const RESUME_DELETE_CONFIRM = 'Press Ctrl+D / Del again to delete'
+
+/** Drop an armed delete so a stray confirming keypress cannot delete a session. */
+function disarmDelete(state: SelectorState): SelectorState {
+  if (state.pendingDeleteId === undefined) return state
+  const subtitle = state.subtitle === RESUME_DELETE_CONFIRM ? undefined : state.subtitle
+  return { ...state, pendingDeleteId: undefined, subtitle }
+}
+
 export function handleSelectorControl(state: SelectorState, event: KeyEvent): SelectorControlAction {
   switch (event.type) {
     case 'up':
-      return { kind: 'update', state: selectorUp(state) }
+      return { kind: 'update', state: selectorUp(disarmDelete(state)) }
     case 'down':
-      return { kind: 'update', state: selectorDown(state) }
+      return { kind: 'update', state: selectorDown(disarmDelete(state)) }
     case 'char':
       if (isQueueSelectorTitle(state.title)) return { kind: 'none' }
-      return { kind: 'update', state: selectorType(state, event.char) }
+      return { kind: 'update', state: selectorType(disarmDelete(state), event.char) }
     case 'backspace':
-      return { kind: 'update', state: selectorBackspace(state) }
+      return { kind: 'update', state: selectorBackspace(disarmDelete(state)) }
     case 'enter':
-      return selectAction(state)
+      return selectAction(disarmDelete(state))
     case 'escape':
       return { kind: 'close' }
     case 'delete':
@@ -75,10 +84,22 @@ function deleteAction(state: SelectorState): SelectorControlAction {
   }
 
   if (!isResumeSelectorTitle(state.title)) return { kind: 'none' }
+
+  // Deleting a session is irreversible, so the first press only arms it and a
+  // second press confirms. The armed id must still be the focused row: an async
+  // list refresh (listSessionsWithText) can reorder rows between the two
+  // presses, and matching on index alone would delete the wrong session.
+  if (state.pendingDeleteId === target.id) {
+    return {
+      kind: 'delete-session',
+      sessionId: target.id,
+      label: target.label,
+      state: selectorRemoveItem({ ...state, subtitle: undefined }, state.focusIndex),
+    }
+  }
+
   return {
-    kind: 'delete-session',
-    sessionId: target.id,
-    label: target.label,
-    state: selectorRemoveItem(state, state.focusIndex),
+    kind: 'update',
+    state: { ...state, pendingDeleteId: target.id, subtitle: RESUME_DELETE_CONFIRM },
   }
 }

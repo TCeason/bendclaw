@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { handleSelectorControl } from '../src/term/app/selector-control.js'
 import { RESUME_SELECTOR_TITLE } from '../src/term/app/resume.js'
-import { createSelectorState, type SelectorItem } from '../src/term/selector.js'
+import { createSelectorState, selectorExpandItems, type SelectorItem } from '../src/term/selector.js'
 
 const char = (value: string) => ({ type: 'char' as const, char: value })
 const key = (type: 'up' | 'down' | 'backspace' | 'enter' | 'escape' | 'delete') => ({ type })
@@ -55,21 +55,68 @@ describe('repl selector control', () => {
     expect(handleSelectorControl(state, key('enter'))).toEqual({ kind: 'select-model', spec: 'anthropic:claude' })
   })
 
-  test('delete removes resume session item', () => {
+  test('delete requires a second press before removing resume session', () => {
     const state = createSelectorState(RESUME_SELECTOR_TITLE, items)
-    const action = handleSelectorControl(state, key('delete'))
-    expect(action.kind).toBe('delete-session')
-    if (action.kind === 'delete-session') {
-      expect(action.sessionId).toBe('session-one')
-      expect(action.label).toBe('one')
-      expect(action.state.items.map(i => i.label)).toEqual(['two'])
+    const first = handleSelectorControl(state, key('delete'))
+    expect(first.kind).toBe('update')
+    if (first.kind !== 'update') return
+    expect(first.state.pendingDeleteId).toBe('session-one')
+    expect(first.state.subtitle).toBe('Press Ctrl+D / Del again to delete')
+    expect(first.state.items.map(i => i.label)).toEqual(['one', 'two'])
+
+    const second = handleSelectorControl(first.state, key('delete'))
+    expect(second.kind).toBe('delete-session')
+    if (second.kind === 'delete-session') {
+      expect(second.sessionId).toBe('session-one')
+      expect(second.label).toBe('one')
+      expect(second.state.items.map(i => i.label)).toEqual(['two'])
+      expect(second.state.pendingDeleteId).toBeUndefined()
+      expect(second.state.subtitle).toBeUndefined()
     }
   })
 
-  test('ctrl-d removes resume session item', () => {
+  test('ctrl-d requires a second press before removing resume session', () => {
     const state = createSelectorState(RESUME_SELECTOR_TITLE, items)
-    const action = handleSelectorControl(state, { type: 'ctrl', key: 'd' })
-    expect(action.kind).toBe('delete-session')
+    const first = handleSelectorControl(state, { type: 'ctrl', key: 'd' })
+    expect(first.kind).toBe('update')
+    if (first.kind !== 'update') return
+
+    const second = handleSelectorControl(first.state, { type: 'ctrl', key: 'd' })
+    expect(second.kind).toBe('delete-session')
+  })
+
+  test('navigation after arming resume delete cancels the confirmation', () => {
+    const state = createSelectorState(RESUME_SELECTOR_TITLE, items)
+    const armed = handleSelectorControl(state, key('delete'))
+    expect(armed.kind).toBe('update')
+    if (armed.kind !== 'update') return
+
+    const moved = handleSelectorControl(armed.state, key('down'))
+    expect(moved.kind).toBe('update')
+    if (moved.kind === 'update') {
+      expect(moved.state.pendingDeleteId).toBeUndefined()
+      expect(moved.state.subtitle).toBeUndefined()
+      expect(moved.state.focusIndex).toBe(1)
+    }
+  })
+
+  test('async list refresh between presses cannot delete a different session', () => {
+    const armed = handleSelectorControl(createSelectorState(RESUME_SELECTOR_TITLE, items), key('delete'))
+    expect(armed.kind).toBe('update')
+    if (armed.kind !== 'update') return
+    expect(armed.state.pendingDeleteId).toBe('session-one')
+
+    // listSessionsWithText resolving reorders the pool: focus now points at a
+    // different session than the one the user armed.
+    const reordered = selectorExpandItems(armed.state, [
+      { label: 'two', id: 'session-two', detail: 'second' },
+      { label: 'one', id: 'session-one', detail: 'first' },
+    ])
+    expect(reordered.pendingDeleteId).toBeUndefined()
+
+    const next = handleSelectorControl(reordered, key('delete'))
+    expect(next.kind).toBe('update')
+    if (next.kind === 'update') expect(next.state.pendingDeleteId).toBe('session-two')
   })
 
   test('non resume delete is ignored', () => {

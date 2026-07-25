@@ -33,6 +33,10 @@ export interface SelectorState {
   presentation?: 'model'
   /** Wraps up/down navigation between the first and last focusable items. */
   circularNavigation?: boolean
+  /** Session id armed for deletion, awaiting a confirming second keypress.
+   *  Keyed by id rather than index so an async list refresh or reorder cannot
+   *  redirect the confirmation onto a different session. */
+  pendingDeleteId?: string
   query: string
 }
 
@@ -128,7 +132,9 @@ export function selectorBackspace(state: SelectorState): SelectorState {
 }
 
 export function selectorExpandItems(state: SelectorState, allItems: SelectorItem[]): SelectorState {
-  const updated = { ...state, allItems }
+  // Replacing the pool can reorder or drop rows, so any armed delete is
+  // dropped: the confirming keypress must never land on a different session.
+  const updated = { ...state, allItems, pendingDeleteId: undefined, subtitle: undefined }
   return state.query ? applyFilter(updated, state.query) : { ...updated, items: allItems }
 }
 
@@ -142,13 +148,15 @@ export function selectorRemoveItem(state: SelectorState, index: number): Selecto
   if (!target || target.header) return state
   const key = target.id ?? target.label
   const allItems = pruneEmptyGroups(state.allItems.filter(item => (item.id ?? item.label) !== key))
-  if (state.query) return applyFilter({ ...state, allItems }, state.query)
+  // Removal consumes the armed delete; a later keypress must re-arm.
+  const cleared = { ...state, pendingDeleteId: undefined }
+  if (cleared.query) return applyFilter({ ...cleared, allItems }, cleared.query)
 
   const items = allItems
   let focusIndex = Math.min(index, Math.max(0, items.length - 1))
   while (focusIndex < items.length && items[focusIndex]?.focusable === false) focusIndex++
   if (focusIndex >= items.length) focusIndex = lastFocusable(items)
-  return { ...state, items, allItems, focusIndex, scrollOffset: ensureVisible(state.scrollOffset, focusIndex, items.length) }
+  return { ...cleared, items, allItems, focusIndex, scrollOffset: ensureVisible(cleared.scrollOffset, focusIndex, items.length) }
 }
 
 function pruneEmptyGroups(items: SelectorItem[]): SelectorItem[] {
@@ -274,6 +282,8 @@ function modelFuzzyScore(query: string, item: SelectorItem): number | null {
 }
 
 function applyFilter(state: SelectorState, query: string): SelectorState {
+  // Filtering reorders and hides rows, so an armed delete is always dropped.
+  state = { ...state, pendingDeleteId: undefined }
   if (!query) {
     const focusIndex = firstFocusable(state.allItems)
     return { ...state, query, items: state.allItems, focusIndex, scrollOffset: ensureVisible(0, focusIndex, state.allItems.length) }
