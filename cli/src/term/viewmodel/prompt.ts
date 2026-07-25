@@ -160,58 +160,111 @@ function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
   const contextPercent = input.contextWindow > 0
     ? input.contextTokens / input.contextWindow * 100
     : 0
-
-  const segments: FooterSegment[] = [
-    { priority: 100, spans: [dim(`${mode}${cwd}`)] },
+  const layouts: FooterLayout[] = [
+    { dashboard: true, context: 'full', provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
+    { dashboard: false, context: 'full', provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
+    { dashboard: false, context: 'compact', provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
+    { dashboard: false, context: 'compact', provider: false, branch: true, thinking: true, model: true, truncateCwd: false },
+    { dashboard: false, context: 'compact', provider: false, branch: false, thinking: true, model: true, truncateCwd: false },
+    { dashboard: false, context: 'hidden', provider: false, branch: false, thinking: true, model: true, truncateCwd: true },
+    { dashboard: false, context: 'hidden', provider: false, branch: false, thinking: false, model: true, truncateCwd: true },
+    { dashboard: false, context: 'hidden', provider: false, branch: false, thinking: false, model: false, truncateCwd: true },
   ]
-  if (input.gitBranch) segments.push({ priority: 90, spans: [dim(` (${input.gitBranch})`)] })
-  if (contextPercent > 0) {
-    const context = ` context: ${contextPercent.toFixed(1)}% (${formatContextTokens(input.contextTokens)}/${formatContextTokens(input.contextWindow)})`
-    const span = contextPercent > 90
-      ? colored(context, 'red')
-      : contextPercent > 70
-        ? colored(context, 'yellow')
-        : dim(context)
-    segments.push({ priority: 80, spans: [span] })
-  }
-  if (input.model) segments.push({ priority: 70, spans: [dim(` ${input.model}`)] })
-  if (input.provider) segments.push({ priority: 65, spans: [dim(`@${input.provider}`)] })
-  if (input.thinkingLevel) {
-    const thinking = input.thinkingLevel === 'off' ? 'thinking off' : input.thinkingLevel
-    segments.push({ priority: 60, spans: [dim(` • ${thinking}`)] })
+
+  for (const layout of layouts) {
+    const candidate = buildFooterCandidate(input, mode, cwd, contextPercent, layout, columns)
+    if (footerCandidateWidth(candidate) <= columns) return block([renderFooterCandidate(candidate, columns)])
   }
 
-  if (input.dashboardUrl) {
-    segments.push({
-      priority: 40,
-      spans: [
-        { text: ' dashboard ', hex: '#7fae7f' },
-        { text: input.dashboardUrl, hex: '#7fae7f', link: input.dashboardUrl },
-      ],
-    })
-  }
+  return block([line(dim(truncateTailToWidth(`${mode}${cwd}`, columns)))])
+}
 
-  while (footerWidth(segments) > columns && segments.length > 1) {
-    let removeIndex = 1
-    for (let index = 2; index < segments.length; index++) {
-      if (segments[index]!.priority < segments[removeIndex]!.priority) removeIndex = index
+type FooterContextDetail = 'full' | 'compact' | 'hidden'
+
+interface FooterLayout {
+  dashboard: boolean
+  context: FooterContextDetail
+  provider: boolean
+  branch: boolean
+  thinking: boolean
+  model: boolean
+  truncateCwd: boolean
+}
+
+interface FooterCandidate {
+  left: StyledSpan[]
+  dashboard: StyledSpan[] | null
+}
+
+function buildFooterCandidate(
+  input: PromptVMInput,
+  mode: string,
+  cwd: string,
+  contextPercent: number,
+  layout: FooterLayout,
+  columns: number,
+): FooterCandidate {
+  const dashboard = layout.dashboard && input.dashboardUrl
+    ? [
+        { text: 'dashboard ', hex: '#7fae7f' } satisfies StyledSpan,
+        { text: input.dashboardUrl, hex: '#7fae7f', link: input.dashboardUrl } satisfies StyledSpan,
+      ]
+    : null
+
+  const buildLeft = (location: string): StyledSpan[] => {
+    const groups: StyledSpan[][] = [[dim(location)]]
+    if (layout.model && input.model) {
+      const identity: StyledSpan[] = [dim(input.model)]
+      if (layout.provider && input.provider) identity.push(dim(`@${input.provider}`))
+      if (layout.thinking && input.thinkingLevel) {
+        const thinking = input.thinkingLevel === 'off' ? 'thinking off' : input.thinkingLevel
+        identity.push(dim(` • ${thinking}`))
+      }
+      groups.push(identity)
     }
-    segments.splice(removeIndex, 1)
+    if (layout.context !== 'hidden' && contextPercent > 0) {
+      const warning = contextPercent > 90 ? ' ⚠' : ''
+      const detail = layout.context === 'full'
+        ? ` (${formatContextTokens(input.contextTokens)}/${formatContextTokens(input.contextWindow)})`
+        : ''
+      const text = `context: ${contextPercent.toFixed(1)}%${detail}${warning}`
+      groups.push([
+        contextPercent > 90
+          ? colored(text, 'red')
+          : contextPercent > 70
+            ? colored(text, 'yellow')
+            : dim(text),
+      ])
+    }
+    return groups.flatMap((group, index) => index === 0 ? group : [dim(' │ '), ...group])
   }
 
-  if (footerWidth(segments) > columns) {
-    return block([line(dim(truncateTailToWidth(`${mode}${cwd}`, columns)))])
-  }
-  return block([line(...segments.flatMap(segment => segment.spans))])
+  const branch = layout.branch && input.gitBranch ? ` (${input.gitBranch})` : ''
+  const fullLocation = `${mode}${cwd}${branch}`
+  let left = buildLeft(fullLocation)
+  let candidate = { left, dashboard }
+  if (!layout.truncateCwd || footerCandidateWidth(candidate) <= columns) return candidate
+
+  const fixedWidth = footerCandidateWidth(candidate) - stringWidth(fullLocation)
+  const availableLocationWidth = Math.max(1, columns - fixedWidth)
+  left = buildLeft(truncateTailToWidth(`${mode}${cwd}`, availableLocationWidth))
+  candidate = { left, dashboard }
+  return candidate
 }
 
-interface FooterSegment {
-  priority: number
-  spans: StyledSpan[]
+function footerCandidateWidth(candidate: FooterCandidate): number {
+  const left = spansWidth(candidate.left)
+  return candidate.dashboard ? left + 2 + spansWidth(candidate.dashboard) : left
 }
 
-function footerWidth(segments: FooterSegment[]): number {
-  return stringWidth(segments.flatMap(segment => segment.spans).map(span => span.text).join(''))
+function renderFooterCandidate(candidate: FooterCandidate, columns: number): StyledLine {
+  if (!candidate.dashboard) return line(...candidate.left)
+  const padding = columns - spansWidth(candidate.left) - spansWidth(candidate.dashboard)
+  return line(...candidate.left, plain(' '.repeat(Math.max(2, padding))), ...candidate.dashboard)
+}
+
+function spansWidth(spans: StyledSpan[]): number {
+  return stringWidth(spans.map(span => span.text).join(''))
 }
 
 function compactCwd(cwd: string): string {

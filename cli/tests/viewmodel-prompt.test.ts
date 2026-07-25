@@ -171,6 +171,17 @@ describe('prompt footer', () => {
     expect(plain).not.toContain('cache')
   })
 
+  test('right-aligns the dashboard link', () => {
+    const columns = 120
+    const footer = blocksToLines(buildPromptFooterBlocks(defaultInput({
+      columns,
+      dashboardUrl: 'http://127.0.0.1:8082',
+    }))).map(stripAnsi)[0]!
+
+    expect(stringWidth(footer)).toBe(columns)
+    expect(footer).toEndWith('dashboard http://127.0.0.1:8082')
+  })
+
   test('matches the full context footer format from the terminal', () => {
     const home = process.env.HOME || process.env.USERPROFILE || '/tmp/home'
     const footer = blocksToLines(buildPromptFooterBlocks(defaultInput({
@@ -184,23 +195,45 @@ describe('prompt footer', () => {
       contextWindow: 272000,
     }))).map(stripAnsi)[0]!
 
-    expect(footer).toBe('~/github/evotai/evot (main) context: 38.9% (105.8k/272.0k) gpt-5.6-sol@anthropic • high')
+    expect(footer).toBe('~/github/evotai/evot (main) │ gpt-5.6-sol@anthropic • high │ context: 38.9% (105.8k/272.0k)')
   })
 
-  test('drops low-priority segments as width narrows', () => {
-    const plain = renderPlain(defaultInput({
-      columns: 45,
+  test('degrades footer details in priority order as width narrows', () => {
+    const footerAt = (columns: number) => blocksToLines(buildPromptFooterBlocks(defaultInput({
+      columns,
+      model: 'gpt-5.6-sol',
       provider: 'anthropic',
-      thinkingLevel: 'xhigh',
-      dashboardUrl: 'http://127.0.0.1:8788',
-      contextTokens: 86400,
-      contextWindow: 320000,
-    }))
-    const footer = plain.split('\n').at(-2)!
-    expect(footer).toContain('/Users/test/project')
-    expect(footer).not.toContain('context:')
-    expect(footer).not.toContain('dashboard')
-    expect(stringWidth(footer)).toBeLessThanOrEqual(45)
+      thinkingLevel: 'max',
+      dashboardUrl: 'http://127.0.0.1:8082',
+      contextTokens: 105800,
+      contextWindow: 272000,
+    }))).map(stripAnsi)[0]!
+
+    const withoutDashboard = footerAt(120)
+    expect(withoutDashboard).not.toContain('dashboard')
+    expect(withoutDashboard).toContain('context: 38.9% (105.8k/272.0k)')
+
+    const compactContext = footerAt(80)
+    expect(compactContext).toContain('gpt-5.6-sol@anthropic • max')
+    expect(compactContext).toContain('context: 38.9%')
+    expect(compactContext).not.toContain('105.8k')
+
+    const withoutProvider = footerAt(70)
+    expect(withoutProvider).toContain('gpt-5.6-sol • max')
+    expect(withoutProvider).not.toContain('@anthropic')
+    expect(withoutProvider).toContain('(main)')
+
+    const withoutBranch = footerAt(60)
+    expect(withoutBranch).not.toContain('(main)')
+    expect(withoutBranch).toContain('context: 38.9%')
+
+    const withoutContext = footerAt(50)
+    expect(withoutContext).toContain('gpt-5.6-sol • max')
+    expect(withoutContext).not.toContain('context:')
+
+    for (const columns of [120, 80, 70, 60, 50, 30, 20]) {
+      expect(stringWidth(footerAt(columns))).toBeLessThanOrEqual(columns)
+    }
   })
 
   test('truncates a wide CJK cwd only after optional segments are gone', () => {
