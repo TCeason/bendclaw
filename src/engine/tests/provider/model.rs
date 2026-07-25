@@ -161,6 +161,7 @@ fn date_suffixed_anthropic_ids_match_family_capabilities() {
     for (bare, dated) in [
         ("claude-opus-4-6", "claude-opus-4-6-20251101"),
         ("claude-opus-4-8", "anthropic/claude-opus-4-8-20260115"),
+        ("claude-opus-5", "anthropic/claude-opus-5-20260301"),
         ("claude-sonnet-4-6", "claude-sonnet-4-6-20251201"),
         ("claude-sonnet-5", "claude-sonnet-5-20260101"),
     ] {
@@ -366,6 +367,13 @@ fn thinking_levels_follow_model_and_route_contracts() {
     assert_eq!(opus_4_8.supported_thinking_levels(), vec![
         Off, Minimal, Low, Medium, High, Xhigh, Max
     ]);
+
+    let opus_5 = ModelConfig::anthropic("claude-opus-5", "Opus 5");
+    assert_eq!(opus_5.supported_thinking_levels(), vec![
+        Off, Minimal, Low, Medium, High, Xhigh, Max
+    ]);
+    assert_eq!(opus_5.context_window(), 1_000_000);
+    assert_eq!(opus_5.max_tokens(), 128_000);
 
     let gpt_5_5 = ModelConfig::openai("gpt-5.5", "GPT-5.5");
     assert_eq!(gpt_5_5.supported_thinking_levels(), vec![

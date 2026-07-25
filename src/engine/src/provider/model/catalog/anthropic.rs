@@ -38,6 +38,7 @@ const MODERN: ModelProfile = ModelProfile {
 #[rustfmt::skip]
 const PROFILES: &[(&str, ModelProfile)] = &[
     ("claude-fable-5",    ModelProfile { context_window: 1_000_000, max_tokens: 128_000, thinking_levels: FABLE_LEVELS, adaptive_thinking: true, ..BASE }),
+    ("claude-opus-5",     ADAPTIVE_XHIGH),
     ("claude-opus-4-8",   ADAPTIVE_XHIGH),
     ("claude-opus-4-7",   ADAPTIVE_XHIGH),
     ("claude-opus-4-6",   ADAPTIVE_MAX_ONLY),
