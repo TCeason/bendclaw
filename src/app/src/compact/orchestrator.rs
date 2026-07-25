@@ -14,8 +14,9 @@ use crate::types::TranscriptItem;
 
 #[derive(Debug, Clone)]
 pub struct CompactSettings {
+    /// Token budget for the retained tail — the sole retention condition,
+    /// matching pi's `keepRecentTokens`.
     pub keep_recent_tokens: usize,
-    pub keep_recent_min_messages: usize,
     /// The active model's context window in tokens. Drives the shrink/reclaim
     /// transforms applied to the retained tail and the post-compaction fit
     /// check. `0` disables both (window unknown).
@@ -25,8 +26,7 @@ pub struct CompactSettings {
 impl Default for CompactSettings {
     fn default() -> Self {
         Self {
-            keep_recent_tokens: 20_000,
-            keep_recent_min_messages: 6,
+            keep_recent_tokens: evot_engine::context::DEFAULT_KEEP_RECENT_TOKENS,
             context_window: 0,
         }
     }
@@ -157,7 +157,6 @@ pub async fn compact_session_with_status(
         &compact_entries,
         None,
         request.settings.keep_recent_tokens,
-        request.settings.keep_recent_min_messages,
     ) {
         Some(plan) => plan,
         None => {
@@ -276,9 +275,10 @@ pub async fn compact_session_with_status(
         }
     }
 
-    let summary = if let Some(summary) = summary_override {
+    let summary = if let Some(mut summary) = summary_override {
         notify_phase(&observer, ManualCompactionPhase::Local);
         compaction_method = Some(CompactionMethod::Local);
+        append_turn_context(&mut summary, &compact_entries, &plan);
         summary
     } else if remote_result.is_some() {
         // Remote state is authoritative for compatible future turns. Keep a
@@ -574,12 +574,7 @@ fn build_summary(
         append_entry_summary(&mut out, entry);
     }
 
-    if let Some(prefix) = &plan.turn_prefix {
-        out.push_str("\n## Turn Context (split turn)\n");
-        for entry in &entries[prefix.clone()] {
-            append_entry_summary(&mut out, entry);
-        }
-    }
+    append_turn_context(&mut out, entries, plan);
 
     if !plan.file_ops.modified().is_empty() || !plan.file_ops.read_only().is_empty() {
         out.push_str("\n## Files\n");
@@ -605,6 +600,24 @@ fn build_summary(
 
     out.push_str("\n## Next Steps\nContinue from the retained recent messages below this summary.");
     out
+}
+
+/// Preserve the evicted prefix of a split turn alongside the history summary.
+/// This matches pi's merged summary shape while remaining deterministic for
+/// explicit overrides and fallback summaries.
+fn append_turn_context(
+    summary: &mut String,
+    entries: &[evot_engine::CompactEntry],
+    plan: &evot_engine::SessionCompactPlan,
+) {
+    let Some(prefix) = &plan.turn_prefix else {
+        return;
+    };
+
+    summary.push_str("\n\n---\n\n**Turn Context (split turn):**\n\n");
+    for entry in &entries[prefix.clone()] {
+        append_entry_summary(summary, entry);
+    }
 }
 
 fn append_entry_summary(out: &mut String, entry: &evot_engine::CompactEntry) {

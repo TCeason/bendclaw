@@ -89,8 +89,6 @@ fn config_small() -> CompactionConfig {
         context_window: 10_000,
         reserve_tokens: 2_000,
         keep_recent_tokens: 1_000,
-        keep_recent_min: 2,
-        keep_first: 2,
         summarizer_mode: SummarizerMode::default(),
         summary_max_chars: 4000,
     }

@@ -71,8 +71,6 @@ fn config_small() -> CompactionConfig {
         context_window: 10_000,
         reserve_tokens: 2_000,
         keep_recent_tokens: 1_000,
-        keep_recent_min: 2,
-        keep_first: 2,
         summarizer_mode: SummarizerMode::default(),
         summary_max_chars: 4000,
     }
@@ -112,11 +110,12 @@ async fn executor_reduces_message_count() {
 }
 
 #[tokio::test]
-async fn executor_preserves_pinned_head() {
+async fn executor_summarizes_the_oldest_history_instead_of_pinning_it() {
     let config = config_small();
-    let first_user = user_msg("first user message");
-    let first_assistant = assistant_msg("first assistant message");
-    let mut messages = vec![first_user.clone(), first_assistant.clone()];
+    let mut messages = vec![
+        user_msg("first user message"),
+        assistant_msg("first assistant message"),
+    ];
     for _ in 0..20 {
         messages.push(user_msg(&big_text(300)));
         messages.push(assistant_msg(&big_text(300)));
@@ -125,33 +124,26 @@ async fn executor_preserves_pinned_head() {
     messages.push(assistant_msg("recent answer"));
 
     let plan = planned(&messages, &config);
-    let cancel = CancellationToken::new();
-    let outcome = executor::execute(messages, &plan, &config, None, None, true, cancel).await;
+    assert_eq!(plan.evict_zone.start, 0);
+    let outcome = executor::execute(
+        messages,
+        &plan,
+        &config,
+        None,
+        None,
+        true,
+        CancellationToken::new(),
+    )
+    .await;
 
-    // First two messages should be preserved
-    let first_text = match &outcome.messages[0] {
-        AgentMessage::Llm(Message::User { content, .. }) => content
-            .iter()
-            .filter_map(|c| match c {
-                Content::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<String>(),
-        _ => String::new(),
-    };
-    assert_eq!(first_text, "first user message");
-
-    let second_text = match &outcome.messages[1] {
-        AgentMessage::Llm(Message::Assistant { content, .. }) => content
-            .iter()
-            .filter_map(|c| match c {
-                Content::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<String>(),
-        _ => String::new(),
-    };
-    assert_eq!(second_text, "first assistant message");
+    let summary = outcome.stats.summary.as_deref().unwrap_or_default();
+    assert!(summary.contains("first user message"));
+    assert_eq!(outcome.stats.messages_evicted, plan.evict_zone.len());
+    assert!(matches!(
+        outcome.messages.first(),
+        Some(AgentMessage::Llm(Message::User { content, .. }))
+            if matches!(content.first(), Some(Content::Text { text }) if text == summary)
+    ));
 }
 
 #[tokio::test]
@@ -194,8 +186,7 @@ async fn executor_bounds_summary_consistently() {
     messages.push(assistant_msg("latest critical conclusion must survive"));
     messages.push(user_msg("recent prompt"));
     let plan = evotengine::context::compaction::types::CompactionPlan {
-        pinned_head: 0..1,
-        evict_zone: 1..32,
+        evict_zone: 0..32,
         retained_tail: 32..33,
         split_turn: None,
     };
@@ -219,7 +210,7 @@ async fn executor_bounds_summary_consistently() {
     assert!(summary.contains("latest critical conclusion must survive"));
     assert_eq!(outcome.state.last_summary.as_deref(), Some(summary));
     assert!(matches!(
-        outcome.messages.get(1),
+        outcome.messages.first(),
         Some(AgentMessage::Llm(Message::User { content, .. }))
             if matches!(content.first(), Some(Content::Text { text }) if text == summary)
     ));

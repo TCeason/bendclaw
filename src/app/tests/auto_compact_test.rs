@@ -164,7 +164,7 @@ async fn auto_compaction_persists_structured_compact_item() -> TestResult {
         transcript.iter().all(|item| {
             !matches!(item, TranscriptItem::User { text, .. } if text.starts_with("old message one "))
         }),
-        "the Engine-only pinned head must not reappear after resume"
+        "evicted history must not reappear after resume"
     );
 
     Ok(())

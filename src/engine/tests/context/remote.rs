@@ -217,8 +217,7 @@ async fn executor_assembles_replayable_remote_item() {
         assistant("recent answer"),
     ];
     let plan = CompactionPlan {
-        pinned_head: 0..1,
-        evict_zone: 1..4,
+        evict_zone: 0..4,
         retained_tail: 4..6,
         split_turn: None,
     };
@@ -237,7 +236,7 @@ async fn executor_assembles_replayable_remote_item() {
     assert_eq!(outcome.stats.method, Some(CompactionMethod::Remote));
     assert_eq!(outcome.stats.remote_blob_bytes, Some(14));
     assert!(matches!(
-        outcome.messages.get(1),
+        outcome.messages.first(),
         Some(AgentMessage::Llm(Message::Assistant { content, .. }))
             if matches!(content.first(), Some(Content::Thinking {
                 metadata: Some(ThinkingMetadata::OpenAiResponses { item }), ..
@@ -259,15 +258,14 @@ async fn executor_uses_deterministic_fallback_after_remote_failure_for_overflow(
     let mut ctx = context(ApiProtocol::OpenAiResponses, "gpt-5.6-sol", &server.uri());
     ctx.provider = Arc::new(MockProvider::new(vec![]));
     let messages = vec![
-        user("pinned"),
+        user("oldest fact"),
         user("old deterministic fact"),
         assistant("old answer"),
         user("recent"),
         assistant("recent answer"),
     ];
     let plan = CompactionPlan {
-        pinned_head: 0..1,
-        evict_zone: 1..3,
+        evict_zone: 0..3,
         retained_tail: 3..5,
         split_turn: None,
     };
@@ -289,9 +287,10 @@ async fn executor_uses_deterministic_fallback_after_remote_failure_for_overflow(
     );
     assert!(outcome.stats.summary.is_some());
     assert!(matches!(
-        outcome.messages.get(1),
+        outcome.messages.first(),
         Some(AgentMessage::Llm(Message::User { content, .. }))
-            if matches!(content.first(), Some(Content::Text { text }) if text.contains("old deterministic fact"))
+            if matches!(content.first(), Some(Content::Text { text })
+                if text.contains("oldest fact") && text.contains("old deterministic fact"))
     ));
 }
 
@@ -305,15 +304,14 @@ async fn executor_falls_back_to_local_summary_when_remote_fails() {
         .await;
     let ctx = context(ApiProtocol::OpenAiResponses, "gpt-5.6-sol", &server.uri());
     let messages = vec![
-        user("pinned"),
+        user("oldest request"),
         user("old request"),
         assistant("old answer"),
         user("recent"),
         assistant("recent answer"),
     ];
     let plan = CompactionPlan {
-        pinned_head: 0..1,
-        evict_zone: 1..3,
+        evict_zone: 0..3,
         retained_tail: 3..5,
         split_turn: None,
     };
@@ -340,10 +338,11 @@ async fn executor_falls_back_to_local_summary_when_remote_fails() {
         .as_deref()
         .is_some_and(|reason| reason.contains("remote unavailable")));
     assert!(matches!(
-        outcome.messages.get(1),
+        outcome.messages.first(),
         Some(AgentMessage::Llm(Message::User { content, .. }))
-            if matches!(content.first(), Some(Content::Text { text }) if text.contains("local fallback"))
+            if matches!(content.first(), Some(Content::Text { text }) if text == "local fallback")
     ));
+    assert_eq!(outcome.stats.messages_evicted, plan.evict_zone.len());
 }
 
 #[tokio::test]

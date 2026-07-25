@@ -18,6 +18,8 @@ mod remote;
 mod session;
 #[path = "context/summarizer.rs"]
 mod summarizer;
+#[path = "context/tokens.rs"]
+mod tokens;
 #[path = "context/tracking.rs"]
 mod tracking;
 #[path = "context/trigger.rs"]

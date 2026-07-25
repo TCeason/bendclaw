@@ -137,7 +137,8 @@ impl Content {
         };
 
         // Apply resize to cap dimensions at 2000×2000 and size at 5MB.
-        // This ensures the fixed token estimate (5333) is accurate.
+        // Token budgeting uses pi's fixed 4,800-character image heuristic;
+        // resizing still bounds the actual provider payload and cost.
         // If resize fails (e.g., unrecognized format), fall back to original data.
         raw.map(|(data, mime)| crate::context::resize_image(&data, &mime).unwrap_or((data, mime)))
     }

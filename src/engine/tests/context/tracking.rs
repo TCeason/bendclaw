@@ -42,12 +42,12 @@ fn assistant_at(text: &str, input: u64, cache_read: u64, timestamp: u64) -> Agen
     })
 }
 
-/// The anchor is the provider's real total usage, plus a byte estimate of only
-/// the messages appended after it.
+/// The anchor is the provider's real total usage, plus a pi-compatible estimate
+/// of only the messages appended after it.
 #[test]
 fn anchors_on_latest_assistant_usage_plus_trailing() {
     let tracker = ContextTracker::new();
-    let trailing = "x".repeat(400); // ~100 tokens at len/4
+    let trailing = "x".repeat(400); // 100 tokens at UTF-16 chars / 4
     let messages = vec![
         user_msg("hello"),
         assistant_with_input("hi", 90_000, 10_000),
@@ -55,9 +55,9 @@ fn anchors_on_latest_assistant_usage_plus_trailing() {
     ];
 
     let estimate = tracker.estimate_context_tokens(&messages);
-    // 100_050 provider total (input + cache_read + output), plus the trailing
-    // user message: 400 bytes / 4 = 100 content tokens + 4 envelope tokens.
-    assert_eq!(estimate, 100_050 + 104);
+    // 100_050 provider total (input + cache_read + output), plus 100 tokens
+    // for the trailing user message. pi adds no synthetic role envelope.
+    assert_eq!(estimate, 100_050 + 100);
 }
 
 /// The fix for the resume bug: a fresh tracker (as built on every resumed run)
@@ -79,15 +79,14 @@ fn fresh_tracker_recovers_anchor_on_resume() {
 }
 
 /// Before any assistant response (first turn of a fresh session) there is no
-/// anchor, so the byte estimate over the whole list is the floor.
+/// anchor, so the pi-compatible local estimate over the whole list is the floor.
 #[test]
-fn falls_back_to_byte_estimate_without_anchor() {
+fn falls_back_to_local_estimate_without_anchor() {
     let tracker = ContextTracker::new();
     let messages = vec![user_msg(&"x".repeat(400))];
 
-    let estimate = tracker.estimate_context_tokens(&messages);
-    // No provider usage yet: ~100 bytes/4 + envelope, far from any anchor.
-    assert!(estimate > 0 && estimate < 1_000);
+    // No provider usage yet: 400 UTF-16 units / 4 = 100 tokens.
+    assert_eq!(tracker.estimate_context_tokens(&messages), 100);
 }
 
 /// Assistant usage recorded at or before the compaction boundary describes the

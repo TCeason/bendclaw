@@ -32,6 +32,13 @@ fn assistant(text: &str) -> AgentMessage {
     })
 }
 
+fn extension() -> AgentMessage {
+    AgentMessage::Extension(ExtensionMessage::new(
+        "note",
+        serde_json::json!({ "text": "ui-only" }),
+    ))
+}
+
 fn tool_call(name: &str, path: &str) -> AgentMessage {
     AgentMessage::Llm(Message::Assistant {
         content: vec![Content::ToolCall {
@@ -66,13 +73,13 @@ fn transcript(messages: Vec<AgentMessage>) -> Vec<CompactEntry> {
 
 #[test]
 fn empty_returns_none() {
-    assert!(plan_session_compaction(&[], None, 100, 2).is_none());
+    assert!(plan_session_compaction(&[], None, 100).is_none());
 }
 
 #[test]
 fn large_budget_returns_none_without_forced_eviction() {
     let entries = transcript(vec![user("hi"), assistant("there"), user("more")]);
-    assert!(plan_session_compaction(&entries, None, 100_000, 2).is_none());
+    assert!(plan_session_compaction(&entries, None, 100_000).is_none());
 }
 
 #[test]
@@ -86,7 +93,7 @@ fn evicts_old_messages_and_keeps_recent() {
     messages.push(assistant("recent answer"));
     let entries = transcript(messages);
 
-    let plan = match plan_session_compaction(&entries, None, 200, 2) {
+    let plan = match plan_session_compaction(&entries, None, 200) {
         Some(plan) => plan,
         None => panic!("expected a compaction plan"),
     };
@@ -113,7 +120,7 @@ fn boundary_seq_skips_already_summarized_prefix() {
 
     // Pretend a prior compaction kept everything from seq 5 onward.
     let boundary_seq = 5;
-    let plan = match plan_session_compaction(&entries, Some(boundary_seq), 200, 2) {
+    let plan = match plan_session_compaction(&entries, Some(boundary_seq), 200) {
         Some(plan) => plan,
         None => panic!("expected a compaction plan"),
     };
@@ -132,7 +139,7 @@ fn boundary_at_last_entry_returns_none() {
     // there is nothing new to summarize.
     let entries = transcript(vec![user("a"), assistant("b"), user("c")]);
     let last_seq = entries[entries.len() - 1].seq;
-    assert!(plan_session_compaction(&entries, Some(last_seq), 1, 1).is_none());
+    assert!(plan_session_compaction(&entries, Some(last_seq), 1).is_none());
 }
 
 #[test]
@@ -149,7 +156,7 @@ fn extracts_file_ops_from_summarized_zone() {
     messages.push(assistant("recent answer"));
     let entries = transcript(messages);
 
-    let plan = match plan_session_compaction(&entries, None, 200, 2) {
+    let plan = match plan_session_compaction(&entries, None, 200) {
         Some(plan) => plan,
         None => panic!("expected a compaction plan"),
     };
@@ -161,9 +168,26 @@ fn extracts_file_ops_from_summarized_zone() {
 }
 
 #[test]
+fn keeps_adjacent_ui_metadata_with_the_retained_tail() {
+    let entries = transcript(vec![user(&big(100)), extension(), assistant("a")]);
+
+    let plan = match plan_session_compaction(&entries, None, 1) {
+        Some(plan) => plan,
+        None => panic!("expected old history to be evicted"),
+    };
+    assert_eq!(plan.summarize, 0..0);
+    assert_eq!(plan.turn_prefix, Some(0..1));
+    assert_eq!(plan.first_kept, 1);
+    assert!(matches!(
+        entries[plan.first_kept].message,
+        AgentMessage::Extension(_)
+    ));
+}
+
+#[test]
 fn detects_split_turn_when_cut_lands_mid_turn() {
-    // One pinned head message, then a single large turn that must be split.
-    let mut messages = vec![user("head")];
+    // An old turn followed by a single large turn that must be split.
+    let mut messages = vec![user("old turn")];
     messages.push(user(&big(400))); // turn start
     for _ in 0..6 {
         messages.push(tool_call("read", "a.rs"));
@@ -173,7 +197,7 @@ fn detects_split_turn_when_cut_lands_mid_turn() {
     let entries = transcript(messages);
 
     // Small token budget forces the cut inside the big turn.
-    if let Some(plan) = plan_session_compaction(&entries, None, 100, 2) {
+    if let Some(plan) = plan_session_compaction(&entries, None, 100) {
         if let Some(split) = &plan.split_turn {
             // turn_prefix must be present and align with the split.
             let prefix = match &plan.turn_prefix {

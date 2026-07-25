@@ -187,9 +187,8 @@ pub async fn execute_with_options(
     new_state.last_summary = Some(summary_text.clone());
     new_state.context_summary_message = Some(summary_text.clone());
 
-    // Step 7: Assemble final messages: pinned_head + memory_summary + retained_tail
-    let mut result = Vec::with_capacity(plan.pinned_head.len() + 1 + plan.retained_tail.len());
-    result.extend_from_slice(&messages[plan.pinned_head.clone()]);
+    // Step 7: Assemble final messages: memory_summary + retained_tail
+    let mut result = Vec::with_capacity(1 + plan.retained_tail.len());
     result.push(memory_summary_msg);
     result.extend_from_slice(&messages[plan.retained_tail.clone()]);
 
@@ -275,8 +274,7 @@ fn assemble_remote(
     // dedupe; the blob message is evicted/chained like ordinary conversation.
     new_state.context_summary_message = None;
 
-    let mut result = Vec::with_capacity(plan.pinned_head.len() + 1 + plan.retained_tail.len());
-    result.extend_from_slice(&messages[plan.pinned_head.clone()]);
+    let mut result = Vec::with_capacity(1 + plan.retained_tail.len());
     result.push(blob_message);
     result.extend_from_slice(&messages[plan.retained_tail.clone()]);
     let result = sanitize_tool_pairs(result);

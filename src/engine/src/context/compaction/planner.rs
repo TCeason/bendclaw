@@ -17,84 +17,66 @@ pub fn plan(messages: &[AgentMessage], config: &CompactionConfig) -> Option<Comp
         return None;
     }
 
-    // 1. Pinned head: keep_first messages, expanded to complete turn boundary.
-    let head_end = expand_head(messages, config.keep_first);
+    // 1. Retained tail: walk backwards accumulating tokens until budget exhausted.
+    let tail_start = find_retention_boundary(messages, config);
 
-    // 2. Retained tail: walk backwards accumulating tokens until budget exhausted.
-    let tail_start = find_retention_boundary(messages, head_end, config);
-
-    // 3. Evict zone = head_end..tail_start
-    if head_end >= tail_start {
+    // 2. Evict zone = everything before the tail. Mirrors pi, which pins no
+    //    head: the summary represents all evicted history.
+    if tail_start == 0 {
         return None; // Nothing to evict
     }
 
-    // 4. Detect split turn
-    let split_turn = detect_split_turn(messages, tail_start, head_end);
+    // 3. Detect split turn
+    let split_turn = detect_split_turn(messages, tail_start);
 
     Some(CompactionPlan {
-        pinned_head: 0..head_end,
-        evict_zone: head_end..tail_start,
+        evict_zone: 0..tail_start,
         retained_tail: tail_start..len,
         split_turn,
     })
 }
 
-/// Expand head boundary to include complete turns (don't orphan tool results).
-fn expand_head(messages: &[AgentMessage], keep_first: usize) -> usize {
-    let mut end = keep_first.min(messages.len());
-    let limit = messages.len(); // safety cap
-
-    while end < limit {
-        match &messages[end] {
-            // If previous message is an assistant with tool calls, include trailing results.
-            AgentMessage::Llm(Message::ToolResult { .. }) => {
-                end += 1;
-            }
-            _ => break,
-        }
-    }
-
-    end
-}
-
-/// Walk backwards from the end, accumulating tokens. Stop when we've reached
-/// `keep_recent_tokens` AND `keep_recent_min` messages. Then snap to a valid
-/// cut point.
-fn find_retention_boundary(
-    messages: &[AgentMessage],
-    floor: usize,
-    config: &CompactionConfig,
-) -> usize {
+/// Walk backwards from the end, accumulating tokens until `keep_recent_tokens`
+/// is reached, then snap to a valid cut point. Mirrors pi's `findCutPoint`: the
+/// token budget is the only retention condition.
+fn find_retention_boundary(messages: &[AgentMessage], config: &CompactionConfig) -> usize {
     let len = messages.len();
+    let Some(first_cut) = snap_forward_to_cut(messages, 0, len) else {
+        return 0;
+    };
     let mut accumulated_tokens = 0usize;
-    let mut candidate = floor; // not enough history means keep everything
+    let mut candidate = first_cut; // all history fits means keep everything
 
-    for i in (floor..len).rev() {
-        accumulated_tokens += message_tokens(&messages[i]);
+    for i in (0..len).rev() {
+        let tokens = message_tokens(&messages[i]);
+        if tokens == 0 {
+            continue;
+        }
+        accumulated_tokens += tokens;
 
-        let enough_tokens = accumulated_tokens >= config.keep_recent_tokens;
-        let enough_messages = len - i >= config.keep_recent_min;
-
-        if enough_tokens && enough_messages {
-            // Snap forward to a valid cut point (user or assistant boundary).
-            candidate = snap_forward_to_cut(messages, i, len);
+        if accumulated_tokens >= config.keep_recent_tokens {
+            // pi falls back to the first valid cut point when no valid point
+            // exists at or after the message that crossed the budget.
+            candidate = snap_forward_to_cut(messages, i, len).unwrap_or(first_cut);
             break;
         }
     }
 
-    // Ensure we don't cut below the floor.
-    candidate.max(floor)
+    // Keep adjacent UI-only metadata with the retained tail, matching pi's
+    // backwards scan over entries that produce no context messages.
+    while candidate > 0 && matches!(messages[candidate - 1], AgentMessage::Extension(_)) {
+        candidate -= 1;
+    }
+    candidate
 }
 
 /// Find the nearest valid cut point at or after `start`.
 /// Valid cut points: user messages or assistant messages (never tool results).
-fn snap_forward_to_cut(messages: &[AgentMessage], start: usize, end: usize) -> usize {
-    for (i, msg) in messages[start..end].iter().enumerate() {
-        if is_valid_cut_point(msg) {
-            return start + i;
-        }
-    }
-    end
+fn snap_forward_to_cut(messages: &[AgentMessage], start: usize, end: usize) -> Option<usize> {
+    messages[start..end]
+        .iter()
+        .position(is_valid_cut_point)
+        .map(|offset| start + offset)
 }
 
 /// A valid cut point is a user or assistant message (not a tool result).
@@ -107,11 +89,7 @@ fn is_valid_cut_point(msg: &AgentMessage) -> bool {
 
 /// Detect if the cut point splits a turn (i.e., retained_tail starts at an
 /// assistant message rather than a user message).
-fn detect_split_turn(
-    messages: &[AgentMessage],
-    tail_start: usize,
-    floor: usize,
-) -> Option<SplitTurn> {
+fn detect_split_turn(messages: &[AgentMessage], tail_start: usize) -> Option<SplitTurn> {
     // If tail_start is at or beyond the end, no split possible.
     if tail_start >= messages.len() {
         return None;
@@ -123,7 +101,7 @@ fn detect_split_turn(
     }
 
     // Walk backwards to find the user message that started this turn.
-    for i in (floor..tail_start).rev() {
+    for i in (0..tail_start).rev() {
         if is_user(&messages[i]) {
             return Some(SplitTurn {
                 turn_start: i,

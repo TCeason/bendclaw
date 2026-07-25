@@ -1599,8 +1599,6 @@ async fn test_compact_messages_reduces_over_budget_context() {
         context_window: 2_000,
         reserve_tokens: 500,
         keep_recent_tokens: 500,
-        keep_recent_min: 5,
-        keep_first: 2,
         summarizer_mode: SummarizerMode::default(),
         summary_max_chars: 4000,
     };
@@ -1615,7 +1613,7 @@ async fn test_compact_messages_reduces_over_budget_context() {
     );
     assert!(
         messages.len() >= 2,
-        "should keep at least keep_first messages"
+        "compacted context should contain a summary and retained tail"
     );
 }
 
@@ -1736,8 +1734,6 @@ async fn test_compaction_after_tool_use_waits_for_tool_results() {
     config.context_config = Some(ContextConfig {
         max_context_tokens: 1_000,
         system_prompt_tokens: 0,
-        keep_recent: 1,
-        keep_first: 1,
         reserve_tokens: Some(125),
         keep_recent_tokens: Some(200),
     });
@@ -1900,8 +1896,6 @@ async fn test_non_overflow_error_compacts_on_estimate() {
     config.context_config = Some(ContextConfig {
         max_context_tokens: 1_000,
         system_prompt_tokens: 0,
-        keep_recent: 1,
-        keep_first: 1,
         reserve_tokens: Some(125),
         keep_recent_tokens: Some(200),
     });
@@ -2023,8 +2017,6 @@ async fn test_overflow_retry_never_completes_abandoned_partial_response() {
     config.context_config = Some(ContextConfig {
         max_context_tokens: 1_000,
         system_prompt_tokens: 0,
-        keep_recent: 1,
-        keep_first: 1,
         reserve_tokens: Some(125),
         keep_recent_tokens: Some(200),
     });
@@ -2169,8 +2161,6 @@ async fn test_model_switch_compacts_before_clamp_can_fall_to_one() {
     config.context_config = Some(ContextConfig {
         max_context_tokens: 10_000,
         system_prompt_tokens: 0,
-        keep_recent: 1,
-        keep_first: 1,
         reserve_tokens: Some(1250),
         keep_recent_tokens: Some(2000),
     });
@@ -2234,15 +2224,14 @@ async fn test_uncompactable_context_is_still_sent_to_the_provider() {
 
     // Local estimate: prior user = 3956/4 + 4 = 993, current user =
     // 8/4 + 4 = 6, system prompt = 4/4 = 1, totaling exactly 1000.
-    // Both messages are pinned by keep_first=2, so compaction cannot progress.
+    // The request must still proceed even if best-effort compaction cannot make
+    // the provider accept it.
     let output = TestHarness::new()
         .responses(vec![MockResponse::Text("sent anyway".into())])
         .prior_messages(vec![AgentMessage::Llm(Message::user("x".repeat(3_956)))])
         .context_config(ContextConfig {
             max_context_tokens: 1_000,
             system_prompt_tokens: 0,
-            keep_recent: 1,
-            keep_first: 2,
             reserve_tokens: Some(125),
             keep_recent_tokens: Some(200),
         })
@@ -2351,8 +2340,6 @@ async fn test_failed_summarizer_still_sends_the_main_request() {
     config.context_config = Some(ContextConfig {
         max_context_tokens: 1_000,
         system_prompt_tokens: 0,
-        keep_recent: 1,
-        keep_first: 1,
         reserve_tokens: Some(125),
         keep_recent_tokens: Some(200),
     });
@@ -2407,8 +2394,6 @@ async fn test_preflight_no_progress_defers_to_provider() {
         .context_config(ContextConfig {
             max_context_tokens: 1_100,
             system_prompt_tokens: 0,
-            keep_recent: 10,
-            keep_first: 2,
             reserve_tokens: Some(137),
             keep_recent_tokens: Some(220),
         })
@@ -2454,8 +2439,6 @@ async fn test_llm_call_start_carries_budget_and_window() {
         .context_config(ContextConfig {
             max_context_tokens: 100_000,
             system_prompt_tokens: 10_000,
-            keep_recent: 10,
-            keep_first: 2,
             reserve_tokens: Some(12500),
             keep_recent_tokens: Some(20000),
         })

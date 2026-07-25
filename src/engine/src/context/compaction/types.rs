@@ -97,14 +97,15 @@ pub enum TriggerDecision {
 // Planner
 // ---------------------------------------------------------------------------
 
-/// Describes the three zones of a compaction plan.
+/// Describes the zones of a compaction plan.
+///
+/// pi pins no head, so a plan is just "evict everything before the retained
+/// tail"; the summary represents all evicted history.
 #[derive(Debug, Clone)]
 pub struct CompactionPlan {
-    /// Zone A: pinned head messages (always kept).
-    pub pinned_head: Range<usize>,
-    /// Zone B: messages to evict (replaced by compact memory summary).
+    /// Messages to evict (replaced by the compact memory summary).
     pub evict_zone: Range<usize>,
-    /// Zone C: retained tail (recent work, kept in full).
+    /// Retained tail (recent work, kept in full).
     pub retained_tail: Range<usize>,
     /// If the cut point splits a turn, info about the split.
     pub split_turn: Option<SplitTurn>,

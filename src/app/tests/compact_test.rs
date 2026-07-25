@@ -46,7 +46,6 @@ async fn compact_session_persists_structured_item_with_summary_override() -> Tes
             observer: None,
             settings: CompactSettings {
                 keep_recent_tokens: KEEP_RECENT_TOKENS,
-                keep_recent_min_messages: 2,
                 context_window: 0,
             },
         },
@@ -62,7 +61,9 @@ async fn compact_session_persists_structured_item_with_summary_override() -> Tes
         return Err(std::io::Error::other("expected compact item").into());
     };
 
-    assert_eq!(summary, "LLM supplied summary");
+    assert!(summary.starts_with("LLM supplied summary"));
+    assert!(summary.contains("**Turn Context (split turn):**"));
+    assert!(summary.contains("recent request"));
     assert_eq!(reason, CompactReason::Threshold);
 
     let raw = session.load_all_entries().await?;
@@ -72,10 +73,17 @@ async fn compact_session_persists_structured_item_with_summary_override() -> Tes
     ));
 
     let context = session.transcript().await;
-    assert!(
-        matches!(&context[0], TranscriptItem::User { text, .. } if text.contains("LLM supplied summary"))
-    );
-    assert!(context
+    assert!(matches!(
+        &context[0],
+        TranscriptItem::User { text, .. }
+            if text.contains("LLM supplied summary") && text.contains("recent request")
+    ));
+    assert!(context.iter().any(|item| matches!(
+        item,
+        TranscriptItem::Assistant { content, .. }
+            if evot::types::assistant_text(content) == "recent answer"
+    )));
+    assert!(!context
         .iter()
         .any(|item| matches!(item, TranscriptItem::User { text, .. } if text == "recent request")));
     assert!(!context.iter().any(
@@ -203,7 +211,6 @@ async fn compact_after_clear_does_not_inherit_previous_summary() -> TestResult {
             observer: None,
             settings: CompactSettings {
                 keep_recent_tokens: KEEP_RECENT_TOKENS,
-                keep_recent_min_messages: 2,
                 context_window: 0,
             },
         },
@@ -250,7 +257,6 @@ async fn compact_context_view_uses_latest_compact_boundary() -> TestResult {
             observer: None,
             settings: CompactSettings {
                 keep_recent_tokens: KEEP_RECENT_TOKENS,
-                keep_recent_min_messages: 2,
                 context_window: 0,
             },
         },
@@ -262,10 +268,17 @@ async fn compact_context_view_uses_latest_compact_boundary() -> TestResult {
     let entries = session.load_all_entries().await?;
     let context = resolve_context_items(&entries);
 
-    assert!(
-        matches!(&context[0], TranscriptItem::User { text, .. } if text.contains("summary one"))
-    );
-    assert!(context
+    assert!(matches!(
+        &context[0],
+        TranscriptItem::User { text, .. }
+            if text.contains("summary one") && text.contains("kept")
+    ));
+    assert!(context.iter().any(|item| matches!(
+        item,
+        TranscriptItem::Assistant { content, .. }
+            if evot::types::assistant_text(content) == "kept reply"
+    )));
+    assert!(!context
         .iter()
         .any(|item| matches!(item, TranscriptItem::User { text, .. } if text == "kept")));
     assert!(context

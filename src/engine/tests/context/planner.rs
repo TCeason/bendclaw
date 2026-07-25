@@ -60,6 +60,13 @@ fn tool_result_msg(id: &str, text: &str) -> AgentMessage {
     })
 }
 
+fn extension_msg() -> AgentMessage {
+    AgentMessage::Extension(ExtensionMessage::new(
+        "note",
+        serde_json::json!({ "text": "ui-only" }),
+    ))
+}
+
 fn big_text(n: usize) -> String {
     "x".repeat(n)
 }
@@ -69,8 +76,6 @@ fn config_small() -> CompactionConfig {
         context_window: 10_000,
         reserve_tokens: 2_000,
         keep_recent_tokens: 1_000,
-        keep_recent_min: 2,
-        keep_first: 2,
         summarizer_mode: SummarizerMode::default(),
         summary_max_chars: 4000,
     }
@@ -102,9 +107,8 @@ fn plan_evicts_middle_zone() {
         None => panic!("expected planner to evict middle zone"),
     };
 
-    // Pinned head should start at 0
-    assert_eq!(plan.pinned_head.start, 0);
-    assert!(plan.pinned_head.end >= 2);
+    // Nothing is pinned: the summary represents all evicted history.
+    assert_eq!(plan.evict_zone.start, 0);
 
     // Evict zone should be non-empty
     assert!(plan.evict_zone.start < plan.evict_zone.end);
@@ -117,12 +121,10 @@ fn plan_evicts_middle_zone() {
 #[test]
 fn no_plan_when_retention_budget_exceeds_available_tail() {
     let mut config = config_small();
-    config.keep_first = 2;
     config.keep_recent_tokens = 100_000;
-    config.keep_recent_min = 6;
     let messages = vec![
-        user_msg("pinned user"),
-        assistant_msg("pinned assistant"),
+        user_msg("first user"),
+        assistant_msg("first assistant"),
         user_msg("fresh prompt must remain"),
     ];
 
@@ -133,10 +135,8 @@ fn no_plan_when_retention_budget_exceeds_available_tail() {
 fn plan_always_retains_the_newest_message() {
     let mut config = config_small();
     config.keep_recent_tokens = 0;
-    config.keep_recent_min = 0;
-    config.keep_first = 1;
 
-    let mut messages = vec![user_msg("pinned")];
+    let mut messages = vec![user_msg("oldest")];
     for _ in 0..10 {
         messages.push(user_msg(&big_text(300)));
         messages.push(assistant_msg(&big_text(300)));
@@ -185,15 +185,13 @@ fn detects_split_turn() {
         context_window: 10_000,
         reserve_tokens: 2_000,
         keep_recent_tokens: 500,
-        keep_recent_min: 2,
-        keep_first: 1,
         summarizer_mode: SummarizerMode::default(),
         summary_max_chars: 4000,
     };
 
     // user, assistant(tool_call), tool_result, tool_call, tool_result (big turn)
-    let mut messages = vec![user_msg(&big_text(100))]; // pinned
-                                                       // Big turn
+    let mut messages = vec![user_msg(&big_text(100))]; // old turn
+                                                       // Big current turn
     messages.push(user_msg(&big_text(200)));
     messages.push(tool_call_msg("t1", "read"));
     messages.push(tool_result_msg("t1", &big_text(2000)));
@@ -208,6 +206,25 @@ fn detects_split_turn() {
         plan.split_turn.is_some(),
         "cut inside a turn should be reported as a split"
     );
+}
+
+#[test]
+fn keeps_adjacent_ui_metadata_with_the_retained_tail() {
+    let mut config = config_small();
+    config.keep_recent_tokens = 1;
+    let messages = vec![
+        user_msg(&big_text(100)),
+        extension_msg(),
+        assistant_msg("a"),
+    ];
+
+    let plan = planner::plan(&messages, &config).expect("expected old history to be evicted");
+    assert_eq!(plan.evict_zone, 0..1);
+    assert_eq!(plan.retained_tail, 1..3);
+    assert!(matches!(
+        messages[plan.retained_tail.start],
+        AgentMessage::Extension(_)
+    ));
 }
 
 #[test]

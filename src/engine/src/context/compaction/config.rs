@@ -46,11 +46,8 @@ pub struct CompactionConfig {
 
     // — Planner —
     /// Token budget for the retained tail (recent messages to keep in full).
+    /// The sole retention condition, matching pi's `keepRecentTokens`.
     pub keep_recent_tokens: usize,
-    /// Minimum messages to keep in the tail (floor guarantee).
-    pub keep_recent_min: usize,
-    /// Fixed head messages to always keep (first user + assistant pair).
-    pub keep_first: usize,
 
     // — Summarizer —
     /// Summarization strategy for summary generation.
@@ -75,8 +72,6 @@ impl CompactionConfig {
             context_window,
             reserve_tokens: DEFAULT_RESERVE_TOKENS,
             keep_recent_tokens: DEFAULT_KEEP_RECENT_TOKENS,
-            keep_recent_min: 6,
-            keep_first: 2,
             summarizer_mode: SummarizerMode::default(),
             // The provider output budget already bounds generated summaries;
             // match pi by retaining that summary without a second byte cap.
@@ -90,8 +85,6 @@ impl CompactionConfig {
         // Output headroom is reserved here via reserve_tokens (single source
         // of headroom), so trigger threshold = window - reserve_tokens.
         let mut cfg = Self::from_context_window(ctx.max_context_tokens);
-        cfg.keep_first = ctx.keep_first;
-        cfg.keep_recent_min = ctx.keep_recent;
         if let Some(reserve) = ctx.reserve_tokens {
             cfg.reserve_tokens = reserve;
         }

@@ -58,8 +58,8 @@ impl ContextTracker {
         self.compacted_at = Some(compacted_at);
     }
 
-    /// Measure current context size: provider anchor + byte estimate of the
-    /// trailing delta since that response.
+    /// Measure current context size: provider anchor + pi-compatible local
+    /// estimate of the trailing delta since that response.
     ///
     /// The latest valid provider usage is the anchor; only later messages are
     /// estimated locally. Without an anchor (including immediately after
@@ -199,10 +199,6 @@ pub struct ContextConfig {
     pub max_context_tokens: usize,
     /// Tokens reserved for the system prompt
     pub system_prompt_tokens: usize,
-    /// Minimum recent messages to always keep (full detail)
-    pub keep_recent: usize,
-    /// Minimum first messages to always keep
-    pub keep_first: usize,
     /// Output headroom reserved before compaction triggers. `None` uses
     /// [`crate::context::DEFAULT_RESERVE_TOKENS`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -218,8 +214,6 @@ impl Default for ContextConfig {
         Self {
             max_context_tokens: 100_000,
             system_prompt_tokens: 4_000,
-            keep_recent: 10,
-            keep_first: 2,
             reserve_tokens: None,
             keep_recent_tokens: None,
         }

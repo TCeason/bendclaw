@@ -15,8 +15,6 @@ fn config_for_dsl() -> CompactionConfig {
         context_window: 10_000,
         reserve_tokens: 2_000,
         keep_recent_tokens: 500,
-        keep_recent_min: 2,
-        keep_first: 1,
         summarizer_mode: SummarizerMode::default(),
         summary_max_chars: 4000,
     }
@@ -71,10 +69,7 @@ async fn dsl_compaction_can_split_current_turn_without_orphans() {
 
 #[tokio::test]
 async fn dsl_compaction_removes_orphan_tool_call_created_by_boundary() {
-    let config = CompactionConfig {
-        keep_first: 2,
-        ..config_for_dsl()
-    };
+    let config = CompactionConfig { ..config_for_dsl() };
     let messages = pat("u tr u tr tr tr tr u")
         .pad(300)
         .tool_output(1200)
@@ -99,7 +94,7 @@ async fn dsl_compaction_removes_orphan_tool_call_created_by_boundary() {
 }
 
 #[tokio::test]
-async fn dsl_compaction_shape_is_head_marker_tail() {
+async fn dsl_compaction_shape_is_marker_then_tail() {
     let result = compact_pattern_with_size("u a u a u a u a u a u a", 1000, 10).await;
 
     assert_no_orphan_tool_pairs(&result);
@@ -112,8 +107,11 @@ async fn dsl_compaction_shape_is_head_marker_tail() {
         None => panic!("expected compaction marker"),
     };
 
-    assert_eq!(marker_index, 1, "marker should follow the pinned head");
-    assert!(result.len() >= 4, "tail should retain recent messages");
+    assert_eq!(
+        marker_index, 0,
+        "summary marker should replace all evicted history"
+    );
+    assert!(result.len() >= 3, "tail should retain recent messages");
 }
 
 #[test]

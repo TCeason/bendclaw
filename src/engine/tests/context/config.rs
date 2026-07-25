@@ -37,15 +37,11 @@ fn explicit_budgets_override_the_defaults() {
     let cfg = CompactionConfig::from_context_config(&ContextConfig {
         max_context_tokens: 1_000,
         system_prompt_tokens: 0,
-        keep_recent: 3,
-        keep_first: 1,
         reserve_tokens: Some(125),
         keep_recent_tokens: Some(200),
     });
     assert_eq!(cfg.reserve_tokens, 125);
     assert_eq!(cfg.keep_recent_tokens, 200);
-    assert_eq!(cfg.keep_recent_min, 3);
-    assert_eq!(cfg.keep_first, 1);
     assert_eq!(cfg.trigger_threshold(), 875);
 }
 

@@ -52,7 +52,6 @@ pub fn plan_session_compaction(
     entries: &[CompactEntry],
     boundary_seq: Option<u64>,
     keep_recent_tokens: usize,
-    keep_recent_min_messages: usize,
 ) -> Option<SessionCompactPlan> {
     if entries.is_empty() {
         return None;
@@ -65,12 +64,7 @@ pub fn plan_session_compaction(
         return None;
     }
 
-    let first_kept = find_first_kept(
-        entries,
-        boundary,
-        keep_recent_tokens,
-        keep_recent_min_messages,
-    );
+    let first_kept = find_first_kept(entries, boundary, keep_recent_tokens);
     if first_kept <= boundary {
         return None;
     }
@@ -111,35 +105,40 @@ pub fn plan_session_compaction(
     })
 }
 
-fn find_first_kept(
-    entries: &[CompactEntry],
-    boundary: usize,
-    keep_recent_tokens: usize,
-    keep_recent_min_messages: usize,
-) -> usize {
+fn find_first_kept(entries: &[CompactEntry], boundary: usize, keep_recent_tokens: usize) -> usize {
+    let Some(first_cut) = snap_forward_to_cut(entries, boundary, entries.len()) else {
+        return boundary;
+    };
     let mut accumulated = 0usize;
-    let mut candidate = boundary;
+    let mut candidate = first_cut;
 
     for i in (boundary..entries.len()).rev() {
-        accumulated += message_tokens(&entries[i].message);
-        let enough_tokens = accumulated >= keep_recent_tokens;
-        let enough_messages = entries.len() - i >= keep_recent_min_messages;
-        if enough_tokens && enough_messages {
-            candidate = snap_forward_to_cut(entries, i, entries.len());
+        let tokens = message_tokens(&entries[i].message);
+        if tokens == 0 {
+            continue;
+        }
+        accumulated += tokens;
+        if accumulated >= keep_recent_tokens {
+            candidate = snap_forward_to_cut(entries, i, entries.len()).unwrap_or(first_cut);
             break;
         }
     }
 
-    candidate.max(boundary)
+    while candidate > boundary
+        && matches!(entries[candidate - 1].message, AgentMessage::Extension(_))
+    {
+        candidate -= 1;
+    }
+    candidate
 }
 
-fn snap_forward_to_cut(entries: &[CompactEntry], start: usize, end: usize) -> usize {
-    for (i, entry) in entries.iter().enumerate().take(end).skip(start) {
-        if is_valid_cut_point(&entry.message) {
-            return i;
-        }
-    }
-    end.saturating_sub(1)
+fn snap_forward_to_cut(entries: &[CompactEntry], start: usize, end: usize) -> Option<usize> {
+    entries
+        .iter()
+        .enumerate()
+        .take(end)
+        .skip(start)
+        .find_map(|(index, entry)| is_valid_cut_point(&entry.message).then_some(index))
 }
 
 fn is_valid_cut_point(msg: &AgentMessage) -> bool {

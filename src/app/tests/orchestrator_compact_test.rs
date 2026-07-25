@@ -154,7 +154,6 @@ fn summarizer(provider: Arc<CapturingProvider>) -> CompactSummarizer {
 fn settings() -> CompactSettings {
     CompactSettings {
         keep_recent_tokens: KEEP_RECENT_TOKENS,
-        keep_recent_min_messages: 2,
         context_window: 0,
     }
 }
@@ -428,7 +427,10 @@ async fn second_compaction_passes_previous_summary() -> TestResult {
         .await?;
 
     // First compaction produces a summary via the LLM.
-    let provider1 = Arc::new(CapturingProvider::new(vec!["FIRST PASS SUMMARY"]));
+    let provider1 = Arc::new(CapturingProvider::new(vec![
+        "FIRST PASS SUMMARY",
+        "FIRST TURN SUMMARY",
+    ]));
     compact_session(
         &session,
         ManualCompactRequest {
@@ -454,7 +456,10 @@ async fn second_compaction_passes_previous_summary() -> TestResult {
         ])
         .await?;
 
-    let provider2 = Arc::new(CapturingProvider::new(vec!["SECOND PASS SUMMARY"]));
+    let provider2 = Arc::new(CapturingProvider::new(vec![
+        "SECOND PASS SUMMARY",
+        "SECOND TURN SUMMARY",
+    ]));
     let captured2 = provider2.captured();
     let second = compact_session(
         &session,
@@ -487,10 +492,21 @@ async fn second_compaction_passes_previous_summary() -> TestResult {
         return Err(std::io::Error::other("expected structured compact item").into());
     };
     assert_eq!(state.generation, 2);
-    assert_eq!(state.last_summary.as_deref(), Some("SECOND PASS SUMMARY"));
+    let second_summary = state
+        .last_summary
+        .as_deref()
+        .ok_or_else(|| std::io::Error::other("missing second summary"))?;
+    assert!(second_summary.starts_with("SECOND PASS SUMMARY"));
+    assert!(second_summary.contains("**Turn Context (split turn):**"));
+    assert!(second_summary.contains("SECOND TURN SUMMARY"));
     assert!(!messages.is_empty());
     assert_eq!(engine_messages.len(), messages.len());
-    assert!(messages
+    assert!(messages.iter().any(|item| matches!(
+        item,
+        TranscriptItem::Assistant { content, .. }
+            if evot::types::assistant_text(content) == "newest answer"
+    )));
+    assert!(!messages
         .iter()
         .any(|item| matches!(item, TranscriptItem::User { text, .. } if text == "newest request")));
     Ok(())

@@ -1244,12 +1244,8 @@ pub(crate) fn build_agent(
         options.supports_image,
     );
 
-    let mut context_config =
+    let context_config =
         evot_engine::context::ContextConfig::from_context_window(model_config.context_window());
-    // Persisted compaction checkpoints are represented as summary + retained
-    // tail. Do not pin an unsummarized head that the checkpoint schema cannot
-    // reconstruct on the next turn.
-    context_config.keep_first = 0;
 
     let provider_agent = match (options.provider_override, &options.protocol) {
         (Some(provider), _) => evot_engine::Agent::new(provider),

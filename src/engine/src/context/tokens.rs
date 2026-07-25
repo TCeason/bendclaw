@@ -4,8 +4,9 @@
 //! context size always comes from the provider's own `usage` (see
 //! `ContextTracker::estimate_context_tokens`, which anchors on the latest
 //! assistant usage embedded in the transcript). A real tokenizer here would
-//! only be right for one model family and wrong for every other, so we use a
-//! cheap byte-based heuristic instead.
+//! only be right for one model family and wrong for every other, so we mirror
+//! pi's cheap `Math.ceil(string.length / 4)` heuristic. JavaScript
+//! `string.length` counts UTF-16 code units, so this module does the same.
 //!
 //! It is used only where an exact count is unnecessary:
 //!   - sizing the small trailing delta since the last provider response,
@@ -15,47 +16,52 @@
 use crate::provider::ToolDefinition;
 use crate::types::*;
 
-/// Conservative fixed token estimate for images.
-/// Images are resized to 2000×2000 max before provider calls, and Claude's
-/// visual token formula is roughly `width * height / 750`, so use the maximum
-/// post-resize cost instead of a low placeholder.
-const IMAGE_FIXED_TOKEN_ESTIMATE: usize = 5_333;
+/// pi models an image as 4,800 characters before applying chars / 4.
+const IMAGE_FIXED_CHAR_ESTIMATE: usize = 4_800;
 
-/// Approximate tokens for a text string.
-///
-/// Byte-length / 4: matches the ~4 bytes/token of ASCII text and code while
-/// staying closer to reality for multi-byte (e.g. CJK) text than a char count.
-/// Model-agnostic by design — the precise count is the provider's job.
-pub fn estimate_tokens(text: &str) -> usize {
-    text.len().div_ceil(4)
+fn utf16_len(text: &str) -> usize {
+    text.encode_utf16().count()
 }
 
-/// Estimate tokens for a single message
+fn chars_to_tokens(chars: usize) -> usize {
+    chars.div_ceil(4)
+}
+
+/// Approximate tokens for a text string using pi's UTF-16 chars / 4 heuristic.
+pub fn estimate_tokens(text: &str) -> usize {
+    chars_to_tokens(utf16_len(text))
+}
+
+fn content_chars(content: &[Content]) -> usize {
+    content
+        .iter()
+        .map(|block| match block {
+            Content::Text { text } => utf16_len(text),
+            Content::Image { .. } => IMAGE_FIXED_CHAR_ESTIMATE,
+            Content::Thinking { thinking, .. } => utf16_len(thinking),
+            Content::ToolCall {
+                name, arguments, ..
+            } => utf16_len(name) + utf16_len(&arguments.to_string()),
+        })
+        .sum()
+}
+
+/// Estimate tokens for one message. As in pi, all visible content is summed
+/// before rounding; role envelopes and tool names add no synthetic overhead.
 pub fn message_tokens(msg: &AgentMessage) -> usize {
     match msg {
-        AgentMessage::Llm(m) => match m {
-            Message::User { content, .. } => content_tokens(content) + 4,
-            Message::Assistant { content, .. } => content_tokens(content) + 4,
-            Message::ToolResult {
-                content, tool_name, ..
-            } => content_tokens(content) + estimate_tokens(tool_name) + 8,
+        AgentMessage::Llm(message) => match message {
+            Message::User { content, .. }
+            | Message::Assistant { content, .. }
+            | Message::ToolResult { content, .. } => chars_to_tokens(content_chars(content)),
         },
-        AgentMessage::Extension(ext) => estimate_tokens(&ext.data.to_string()) + 4,
+        // Extension messages are UI-only and never enter the LLM context.
+        AgentMessage::Extension(_) => 0,
     }
 }
 
 pub fn content_tokens(content: &[Content]) -> usize {
-    content
-        .iter()
-        .map(|c| match c {
-            Content::Text { text } => estimate_tokens(text),
-            Content::Image { .. } => IMAGE_FIXED_TOKEN_ESTIMATE,
-            Content::Thinking { thinking, .. } => estimate_tokens(thinking),
-            Content::ToolCall {
-                name, arguments, ..
-            } => estimate_tokens(name) + estimate_tokens(&arguments.to_string()) + 8,
-        })
-        .sum()
+    chars_to_tokens(content_chars(content))
 }
 
 /// Estimate total tokens for a message list
@@ -64,15 +70,16 @@ pub fn total_tokens(messages: &[AgentMessage]) -> usize {
 }
 
 /// Estimate tokens for a single `Content` block.
-fn single_content_tokens(c: &Content) -> usize {
-    match c {
-        Content::Text { text } => estimate_tokens(text),
-        Content::Image { .. } => IMAGE_FIXED_TOKEN_ESTIMATE,
-        Content::Thinking { thinking, .. } => estimate_tokens(thinking),
+fn single_content_tokens(content: &Content) -> usize {
+    let chars = match content {
+        Content::Text { text } => utf16_len(text),
+        Content::Image { .. } => IMAGE_FIXED_CHAR_ESTIMATE,
+        Content::Thinking { thinking, .. } => utf16_len(thinking),
         Content::ToolCall {
             name, arguments, ..
-        } => estimate_tokens(name) + estimate_tokens(&arguments.to_string()) + 8,
-    }
+        } => utf16_len(name) + utf16_len(&arguments.to_string()),
+    };
+    chars_to_tokens(chars)
 }
 
 /// Estimate tokens for tool definitions.
