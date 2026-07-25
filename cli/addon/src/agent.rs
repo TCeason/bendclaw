@@ -389,6 +389,18 @@ impl NapiAgent {
             .map_err(|e| Error::from_reason(format!("invalid provider: {e}")))
     }
 
+    /// Reload provider/model selection from disk for session resume. Unlike an
+    /// interactive switch, this reapplies the current configured thinking level.
+    /// Returns false when the saved selection is unavailable and the current
+    /// live selection was refreshed instead.
+    #[napi]
+    pub fn reload_provider(&self, provider: String) -> Result<bool> {
+        let config = self.load_config()?;
+        self.agent
+            .reload_provider_for_resume(&config, &provider)
+            .map_err(|e| Error::from_reason(format!("invalid provider: {e}")))
+    }
+
     /// Advance the thinking level to the next tier the current model supports,
     /// wrapping around. Returns the new level's display label, or `null` when
     /// the model has no selectable reasoning levels.
@@ -398,8 +410,8 @@ impl NapiAgent {
         Some(display_thinking_level(&self.agent.llm()))
     }
 
-    /// Restore a persisted thinking level by its lowercase name (used when
-    /// resuming a session). Unknown or unsupported levels are ignored.
+    /// Apply a named thinking level when supported by the active model.
+    /// Session resume intentionally uses `reload_provider` instead.
     #[napi]
     pub fn restore_thinking_level(&self, level: String) {
         self.agent.restore_thinking_level(&level);

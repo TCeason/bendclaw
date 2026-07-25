@@ -58,3 +58,20 @@ export function resumeModelUnavailableNote(opts: {
   }
   return `  model '${opts.model ?? ''}' unavailable · kept ${opts.keptModel} · /model to switch`
 }
+
+/** Reload a resumed session's model and current configured thinking level. */
+export function reloadResumeModel(
+  agent: { model: string; reloadProvider(spec: string): boolean },
+  model?: string,
+  provider?: string,
+): string | null {
+  if (!model) return null
+
+  const preferred = provider ? `${provider}:${model}` : model
+  try {
+    if (agent.reloadProvider(preferred)) return null
+  } catch {
+    // Keep the current live selection and show the same recovery hint.
+  }
+  return resumeModelUnavailableNote({ provider, model, keptModel: agent.model })
+}

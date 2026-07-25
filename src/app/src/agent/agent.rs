@@ -362,9 +362,9 @@ impl Agent {
         self.llm.write().thinking_level = level;
     }
 
-    /// Restore a thinking level from its persisted lowercase name (e.g. when
-    /// resuming a session). Unknown names and levels the current model does not
-    /// support are ignored, leaving the configured default in place.
+    /// Apply a named thinking level when supported by the active model.
+    /// Kept as a public API for callers that explicitly manage live state;
+    /// session resume intentionally reloads the current configured value instead.
     pub fn restore_thinking_level(&self, name: &str) {
         let Ok(level) = crate::conf::thinking_level_from_str(name) else {
             return;
@@ -452,13 +452,39 @@ impl Agent {
         Ok(())
     }
 
-    /// Switch provider by spec. Unlike `set_model_by_spec`, this fails if the spec
-    /// cannot be resolved to a known provider.
+    /// Switch provider by spec while preserving the live thinking level.
+    /// Used for interactive model changes.
     pub fn set_provider_by_spec(&self, config: &Config, spec: &str) -> Result<()> {
         let (provider_name, model_override) = config.resolve_model_spec(spec)?;
         let llm = config.build_llm(&provider_name, model_override)?;
         self.set_llm_preserving_thinking(llm);
         Ok(())
+    }
+
+    /// Reload a session's provider/model from current config. If that saved
+    /// selection no longer exists, reapply config to the current live selection
+    /// so its thinking level still refreshes. Returns whether the saved
+    /// selection was restored; neither path mutates until resolution succeeds.
+    pub fn reload_provider_for_resume(&self, config: &Config, spec: &str) -> Result<bool> {
+        match config.resolve_model_spec(spec) {
+            Ok((provider_name, model_override)) => {
+                let llm = config.build_llm(&provider_name, model_override)?;
+                self.set_llm(llm);
+                Ok(true)
+            }
+            Err(saved_error) => {
+                let current_spec = {
+                    let llm = self.llm.read();
+                    format!("{}:{}", llm.provider, llm.model)
+                };
+                let (provider_name, model_override) = config
+                    .resolve_model_spec(&current_spec)
+                    .map_err(|_| saved_error)?;
+                let llm = config.build_llm(&provider_name, model_override)?;
+                self.set_llm(llm);
+                Ok(false)
+            }
+        }
     }
 
     pub fn variables(&self) -> Option<Arc<Variables>> {
@@ -1153,9 +1179,9 @@ impl Agent {
     /// The session-facing label for the agent's current thinking level, or
     /// `None` when the level is not a selectable tier for the active model
     /// (e.g. a config-set level the model rejects).
-    /// Gating on membership keeps persistence symmetric with
-    /// [`Self::restore_thinking_level`]: only values that can be restored are
-    /// ever written, so the session never carries inert data.
+    /// Gating on membership keeps session metadata meaningful even though
+    /// resume now reapplies the current configured value instead of restoring
+    /// this historical snapshot.
     fn persisted_thinking_level(&self) -> Option<String> {
         let level = self.llm.read().thinking_level;
         if self.supported_thinking_levels().contains(&level) {

@@ -119,7 +119,7 @@ import {
   resolveSessionByPrefix,
   shortenSessionCwd,
 } from './app/resume.js'
-import { findPreviousSession, shouldPreloadStartupSessions, selectResumeMessages, resumeElidedLine, resumeModelUnavailableNote } from './app/session-view.js'
+import { findPreviousSession, shouldPreloadStartupSessions, selectResumeMessages, resumeElidedLine, reloadResumeModel } from './app/session-view.js'
 import { handleSelectorControl } from './app/selector-control.js'
 import { decideReplControl, type ReplControlAction } from './app/repl-control.js'
 import { replaceOrPushStatusLine } from './app/status-line.js'
@@ -825,44 +825,20 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       // (e.g. the resume selector only knows the id); fetch the full record.
       let model = session.model
       let provider = session.provider
-      let thinkingLevel = session.thinking_level
       let sessionCwd = session.cwd
-      if (!model || !provider || thinkingLevel === undefined || !sessionCwd) {
+      if (!model || !provider || !sessionCwd) {
         const full = await agent.findSession(session.session_id)
         if (full) {
           if (!model) model = full.model
           if (!provider) provider = full.provider
-          if (thinkingLevel === undefined) thinkingLevel = full.thinking_level
           if (!sessionCwd) sessionCwd = full.cwd
         }
       }
 
-      // Restore model selection when possible. A removed/renamed provider must
-      // never block resume — keep the current live model and let the user pick
-      // a replacement with /model after the transcript is painted.
-      let modelRestoreNote: string | null = null
-      if (model) {
-        const preferred = provider ? `${provider}:${model}` : model
-        try {
-          agent.setProvider(preferred)
-        } catch {
-          // Do not force the raw model id onto the current provider: a missing
-          // channel like `grok` would leave anthropic/openai holding a foreign
-          // model name. Keep the live selection and surface a switch hint.
-          const kept = agent.model
-          modelRestoreNote = resumeModelUnavailableNote({
-            provider: provider || undefined,
-            model,
-            keptModel: kept,
-          })
-        }
-      }
-      // Restore the session's reasoning effort so a resumed conversation keeps
-      // the level it was last run with (no-op for non-reasoning models).
-      if (thinkingLevel) {
-        agent.restoreThinkingLevel(thinkingLevel)
-      }
-
+      // Restore model selection and reapply its current configured thinking
+      // level. Missing saved selections keep the refreshed live model and show
+      // a recovery hint.
+      const modelRestoreNote = reloadResumeModel(agent, model, provider)
       sessionId = session.session_id
       rendererTrace.bind(session.session_id)
       refreshConfigInfo()

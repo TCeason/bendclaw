@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { findPreviousSession, shouldPreloadStartupSessions, selectResumeMessages, resumeElidedLine, resumeModelUnavailableNote, RESUME_DISPLAY_LIMIT } from '../src/term/app/session-view.js'
+import { findPreviousSession, shouldPreloadStartupSessions, selectResumeMessages, resumeElidedLine, reloadResumeModel, resumeModelUnavailableNote, RESUME_DISPLAY_LIMIT } from '../src/term/app/session-view.js'
 import type { SessionMeta } from '../src/native/index.js'
 import type { UIMessage } from '../src/term/app/types.js'
 
@@ -63,6 +63,38 @@ describe('repl session view helpers', () => {
     expect(many.text).toContain('120 earlier messages hidden')
     expect(many.text).toContain(`latest ${RESUME_DISPLAY_LIMIT}`)
     expect(resumeElidedLine(1).text).toContain('1 earlier message hidden')
+  })
+
+  test('reloadResumeModel reapplies config without using session thinking metadata', () => {
+    const calls: string[] = []
+    const agent = {
+      model: 'claude-opus-4-8',
+      reloadProvider(spec: string) {
+        calls.push(spec)
+        return true
+      },
+    }
+
+    expect(reloadResumeModel(agent, 'gpt-5.5', 'openai')).toBeNull()
+    expect(calls).toEqual(['openai:gpt-5.5'])
+    expect(reloadResumeModel(agent, undefined, 'openai')).toBeNull()
+    expect(calls).toHaveLength(1)
+  })
+
+  test('reloadResumeModel reports unavailable saved selections and reload errors', () => {
+    const unavailable = {
+      model: 'claude-opus-4-8',
+      reloadProvider: (_spec: string) => false,
+    }
+    expect(reloadResumeModel(unavailable, 'grok-4.5', 'grok'))
+      .toBe("  provider 'grok' unavailable · kept claude-opus-4-8 · /model to switch")
+
+    const failing = {
+      model: 'claude-opus-4-8',
+      reloadProvider: (_spec: string): boolean => { throw new Error('bad config') },
+    }
+    expect(reloadResumeModel(failing, 'missing-model'))
+      .toBe("  model 'missing-model' unavailable · kept claude-opus-4-8 · /model to switch")
   })
 
   test('resumeModelUnavailableNote keeps live model and points to /model', () => {

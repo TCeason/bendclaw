@@ -1,11 +1,28 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
 import { execFileSync } from 'child_process'
-import { mkdirSync, writeFileSync, existsSync, rmSync, symlinkSync } from 'fs'
+import { createServer } from 'http'
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from 'fs'
 import { join } from 'path'
 import { tmpdir, homedir } from 'os'
+import { gzipSync } from 'zlib'
 import { _testing } from '../src/commands/share.js'
 
-const { isSharedSessionUrl, toDownloadUrl, encrypt, decrypt, validateArchive, validateAndImport, listFilesRecursive, generatePassword, collectFiles } = _testing
+const {
+  isSharedSessionUrl,
+  tmpfilesViewerUrl,
+  extractTmpfilesDownloadUrl,
+  resolveRedirectUrl,
+  download,
+  hasExportMagic,
+  encrypt,
+  decrypt,
+  validateArchiveSize,
+  validateArchive,
+  validateAndImport,
+  listFilesRecursive,
+  generatePassword,
+  collectFiles,
+} = _testing
 
 // ---------------------------------------------------------------------------
 // shared URL detection
@@ -25,35 +42,113 @@ describe('isSharedSessionUrl', () => {
 })
 
 // ---------------------------------------------------------------------------
-// toDownloadUrl
+// tmpfiles.org download URL resolution
 // ---------------------------------------------------------------------------
 
-describe('toDownloadUrl', () => {
-  test('inserts /dl/ for tmpfiles.org URLs', () => {
-    expect(toDownloadUrl('https://tmpfiles.org/12345/evot-log.bin'))
-      .toBe('https://tmpfiles.org/dl/12345/evot-log.bin')
+describe('tmpfiles.org download URL resolution', () => {
+  const viewer = 'https://tmpfiles.org/wywHXeSghysu/evot-log.bin'
+  const signed = 'https://tmpfiles.org/dl/1784975103.3bb43207d08d3530/wywHXeSghysu/evot-log.bin'
+
+  test('keeps viewer URLs unchanged', () => {
+    expect(tmpfilesViewerUrl(new URL(viewer))).toBe(viewer)
   })
 
-  test('handles http variant', () => {
-    expect(toDownloadUrl('http://tmpfiles.org/99/file.bin'))
-      .toBe('http://tmpfiles.org/dl/99/file.bin')
+  test('normalizes HTTP viewer URLs to canonical HTTPS', () => {
+    expect(tmpfilesViewerUrl(new URL('http://tmpfiles.org/wywHXeSghysu/evot-log.bin')))
+      .toBe(viewer)
   })
 
-  test('inserts /dl/ for alphanumeric ids (tmpfiles.org current format)', () => {
-    // tmpfiles.org switched from numeric to alphanumeric ids; the download
-    // variant must still be produced or /share fetches the HTML viewer page.
-    expect(toDownloadUrl('https://tmpfiles.org/wywHXeSghysu/evot-log.bin'))
-      .toBe('https://tmpfiles.org/dl/wywHXeSghysu/evot-log.bin')
+  test('converts legacy and signed download URLs back to the viewer', () => {
+    expect(tmpfilesViewerUrl(new URL('https://tmpfiles.org/dl/wywHXeSghysu/evot-log.bin')))
+      .toBe(viewer)
+    expect(tmpfilesViewerUrl(new URL(signed))).toBe(viewer)
   })
 
-  test('does not double-insert /dl/ when already a download URL', () => {
-    expect(toDownloadUrl('https://tmpfiles.org/dl/wywHXeSghysu/evot-log.bin'))
-      .toBe('https://tmpfiles.org/dl/wywHXeSghysu/evot-log.bin')
+  test('extracts the signed URL for the same file from the viewer', () => {
+    const html = `<p><a class="download" href="${signed}">Download</a></p>`
+    expect(extractTmpfilesDownloadUrl(viewer, html)).toBe(signed)
   })
 
-  test('returns other URLs unchanged', () => {
-    expect(toDownloadUrl('https://example.com/file.bin'))
-      .toBe('https://example.com/file.bin')
+  test('accepts relative signed download links', () => {
+    const path = '/dl/1784975103.3bb43207d08d3530/wywHXeSghysu/evot-log.bin'
+    expect(extractTmpfilesDownloadUrl(viewer, `<a href="${path}">Download</a>`)).toBe(signed)
+  })
+
+  test('rejects links on another host, custom ports, credentials, or another file', () => {
+    const rejected = [
+      'https://example.com/dl/x/wywHXeSghysu/evot-log.bin',
+      'https://tmpfiles.org:444/dl/x/wywHXeSghysu/evot-log.bin',
+      'https://user@tmpfiles.org/dl/x/wywHXeSghysu/evot-log.bin',
+      'https://tmpfiles.org/dl/x/other/file.bin',
+    ]
+    for (const href of rejected) {
+      expect(() => extractTmpfilesDownloadUrl(viewer, `<a href="${href}">Download</a>`))
+        .toThrow('download link was not found')
+    }
+  })
+
+  test('resolves relative redirects while enforcing the trusted origin', () => {
+    const current = new URL(viewer)
+    expect(resolveRedirectUrl(current, '/next/file.bin', 'https://tmpfiles.org'))
+      .toBe('https://tmpfiles.org/next/file.bin')
+    expect(() => resolveRedirectUrl(current, 'https://example.com/file.bin', 'https://tmpfiles.org'))
+      .toThrow('left trusted origin')
+  })
+
+  test('recognizes encrypted export payloads by magic', () => {
+    expect(hasExportMagic(Buffer.from('EVOTLOG1payload'))).toBe(true)
+    expect(hasExportMagic(Buffer.from('<!DOCTYPE html>'))).toBe(false)
+  })
+
+  test('download bounds redirects and response size', async () => {
+    const server = createServer((req, res) => {
+      switch (req.url) {
+        case '/redirect':
+          res.writeHead(302, { Location: '/payload' })
+          res.end()
+          break
+        case '/cross-origin':
+          res.writeHead(302, { Location: 'https://example.com/payload' })
+          res.end()
+          break
+        case '/declared-large':
+          res.writeHead(200, { 'Content-Length': '6' })
+          res.end('123456')
+          break
+        case '/chunked-large':
+          res.writeHead(200)
+          res.write('123')
+          res.end('456')
+          break
+        default:
+          res.writeHead(200)
+          res.end('payload')
+      }
+    })
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', resolve)
+    })
+
+    try {
+      const address = server.address()
+      if (!address || typeof address === 'string') throw new Error('missing test server address')
+      const origin = `http://127.0.0.1:${address.port}`
+
+      expect((await download(`${origin}/redirect`, 5, origin, 1024)).toString()).toBe('payload')
+      await expect(download(`${origin}/cross-origin`, 5, origin, 1024))
+        .rejects.toThrow('left trusted origin')
+      await expect(download(`${origin}/declared-large`, 5, origin, 5))
+        .rejects.toThrow('exceeds 5 byte limit')
+      await expect(download(`${origin}/chunked-large`, 5, origin, 5))
+        .rejects.toThrow('exceeds 5 byte limit')
+      await expect(download('file:///tmp/payload'))
+        .rejects.toThrow('Unsupported download protocol')
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close(err => err ? reject(err) : resolve())
+      })
+    }
   })
 })
 
@@ -153,6 +248,14 @@ describe('validateArchive', () => {
     expect(() => validateArchive(archive)).toThrow('unsafe archive path')
   })
 
+  test('rejects archives whose expanded tar stream exceeds the limit', async () => {
+    const archive = join(tmpDir, 'large.tar.gz')
+    writeFileSync(archive, gzipSync(Buffer.alloc(1024, 0)))
+
+    await expect(validateArchiveSize(archive, 512))
+      .rejects.toThrow('expands beyond 512 byte limit')
+  })
+
   test('rejects symbolic links before extraction', () => {
     const sid = 'abcdef01-2345-6789-abcd-ef0123456789'
     mkdirSync(join(tmpDir, 'sessions', sid), { recursive: true })
@@ -205,6 +308,47 @@ describe('validateAndImport', () => {
     expect(existsSync(join(targetDir, 'logs', `${SID}.markdown.log`))).toBe(true)
 
     rmSync(targetDir, { recursive: true, force: true })
+  })
+
+  test('rejects existing targets without overwriting or partially importing', () => {
+    mkdirSync(join(tmpDir, 'sessions', SID), { recursive: true })
+    mkdirSync(join(tmpDir, 'logs'), { recursive: true })
+    writeFileSync(join(tmpDir, 'sessions', SID, 'session.json'), '{"incoming":true}')
+    writeFileSync(join(tmpDir, 'logs', `${SID}.log`), 'incoming log')
+
+    const targetDir = join(tmpdir(), `evot-test-conflict-${Date.now()}`)
+    mkdirSync(join(targetDir, 'sessions', SID), { recursive: true })
+    const existing = join(targetDir, 'sessions', SID, 'session.json')
+    writeFileSync(existing, '{"existing":true}')
+
+    try {
+      expect(() => validateAndImport(tmpDir, targetDir)).toThrow('would overwrite existing file')
+      expect(readFileSync(existing, 'utf8')).toBe('{"existing":true}')
+      expect(existsSync(join(targetDir, 'logs', `${SID}.log`))).toBe(false)
+    } finally {
+      rmSync(targetDir, { recursive: true, force: true })
+    }
+  })
+
+  test('rolls back files copied before a later destination failure', () => {
+    mkdirSync(join(tmpDir, 'sessions', SID), { recursive: true })
+    mkdirSync(join(tmpDir, 'logs'), { recursive: true })
+    writeFileSync(join(tmpDir, 'sessions', SID, 'session.json'), '{}')
+    writeFileSync(join(tmpDir, 'logs', `${SID}.log`), 'incoming log')
+
+    const targetDir = join(tmpdir(), `evot-test-rollback-${Date.now()}`)
+    mkdirSync(targetDir, { recursive: true })
+    // Sorted imports copy logs first. A file at sessions/ makes the subsequent
+    // session destination fail after that first copy has succeeded.
+    writeFileSync(join(targetDir, 'sessions'), 'blocking file')
+
+    try {
+      expect(() => validateAndImport(tmpDir, targetDir)).toThrow()
+      expect(existsSync(join(targetDir, 'logs', `${SID}.log`))).toBe(false)
+      expect(readFileSync(join(targetDir, 'sessions'), 'utf8')).toBe('blocking file')
+    } finally {
+      rmSync(targetDir, { recursive: true, force: true })
+    }
   })
 
   test('rejects path traversal', () => {

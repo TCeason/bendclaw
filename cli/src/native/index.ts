@@ -346,6 +346,15 @@ export class Agent {
   }
 
   /**
+   * Reload provider/model from disk, including its configured thinking level.
+   * Returns false when the saved selection is unavailable and the current live
+   * selection was refreshed instead.
+   */
+  reloadProvider(provider: string): boolean {
+    return this.raw.reloadProvider(provider)
+  }
+
+  /**
    * Advance the thinking level to the next tier the current model supports,
    * wrapping around. Returns the new level's display label, or null when the
    * model has no selectable reasoning levels.
@@ -354,7 +363,7 @@ export class Agent {
     return this.raw.cycleThinkingLevel()
   }
 
-  /** Restore a persisted thinking level by its lowercase name (used on resume). */
+  /** Apply an explicit live thinking level when supported by the active model. */
   restoreThinkingLevel(level: string): void {
     this.raw.restoreThinkingLevel(level)
   }

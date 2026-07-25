@@ -17,10 +17,9 @@ pub struct SessionMeta {
     /// field existed; resume callers then fall back to legacy model-only lookup.
     #[serde(default)]
     pub provider: String,
-    /// Reasoning effort active for this session, as a lowercase level name
-    /// (e.g. `"high"`). `None` for sessions created before this field existed
-    /// or whose model has no selectable thinking level; callers fall back to
-    /// the agent's configured default.
+    /// Historical reasoning effort used by this session, as a lowercase level
+    /// name (e.g. `"high"`). Retained for metadata compatibility and diagnostics;
+    /// resume reapplies the current provider configuration instead.
     #[serde(default)]
     pub thinking_level: Option<String>,
     pub title: Option<String>,

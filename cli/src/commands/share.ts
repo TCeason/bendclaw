@@ -10,17 +10,23 @@
 
 import { execFileSync } from 'child_process'
 import { createCipheriv, createDecipheriv, randomBytes, pbkdf2Sync } from 'crypto'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, readdirSync, renameSync, rmSync } from 'fs'
+import { constants as fsConstants, copyFileSync, createReadStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, readdirSync, rmSync, statSync } from 'fs'
 import https from 'https'
 import http from 'http'
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
+import { createGunzip } from 'zlib'
 
 const MAGIC = 'EVOTLOG1'
 const EVOTAI_DIR = join(homedir(), '.evotai')
 const PBKDF2_ITERATIONS = 100_000
 const PASSWORD_LENGTH = 8
 const PASSWORD_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789' // no ambiguous chars
+const TMPFILES_ORIGIN = 'https://tmpfiles.org'
+const MAX_SHARE_DOWNLOAD_BYTES = 100 * 1024 * 1024
+const MAX_SHARE_ARCHIVE_BYTES = 512 * 1024 * 1024
+const MAX_SERVICE_RESPONSE_BYTES = 1024 * 1024
+const NETWORK_TIMEOUT_MS = 30_000
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -61,6 +67,11 @@ export async function shareSession(sessionId: string): Promise<ShareResult> {
       } catch (err: any) {
         throw new Error(`tar failed: ${err?.message ?? err}`)
       }
+      const archiveBytes = statSync(tarPath).size
+      const encryptionOverhead = 8 + 16 + 12 + 16
+      if (archiveBytes + encryptionOverhead > MAX_SHARE_DOWNLOAD_BYTES) {
+        throw new Error(`Share archive exceeds ${MAX_SHARE_DOWNLOAD_BYTES} byte limit`)
+      }
       return encrypt(readFileSync(tarPath))
     } finally {
       rmSync(tmpDir, { recursive: true, force: true })
@@ -85,7 +96,7 @@ export async function importSharedSession(urlWithKey: string): Promise<ImportRes
     throw new Error('Password is empty')
   }
 
-  const payload = await download(toDownloadUrl(baseUrl))
+  const payload = await downloadSharedPayload(baseUrl)
   let decrypted: Buffer
   try {
     decrypted = decrypt(payload, password)
@@ -97,6 +108,7 @@ export async function importSharedSession(urlWithKey: string): Promise<ImportRes
   const tarPath = join(tmpDir, 'export.tar.gz')
   try {
     writeFileSync(tarPath, decrypted)
+    await validateArchiveSize(tarPath)
     validateArchive(tarPath)
     try {
       execFileSync('tar', ['xzf', tarPath], { cwd: tmpDir })
@@ -141,6 +153,40 @@ const ALLOWED_FILE_PATTERN = new RegExp(
 )
 const ALLOWED_DIRECTORY_PATTERN = new RegExp(`^(sessions|logs|sessions/${UUID_PATTERN})/$`)
 
+async function validateArchiveSize(
+  tarPath: string,
+  maxBytes = MAX_SHARE_ARCHIVE_BYTES,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const source = createReadStream(tarPath)
+    const gunzip = createGunzip()
+    let total = 0
+    let settled = false
+
+    const fail = (err: Error) => {
+      if (settled) return
+      settled = true
+      source.destroy()
+      gunzip.destroy()
+      reject(err)
+    }
+    source.on('error', fail)
+    gunzip.on('error', fail)
+    gunzip.on('data', (chunk: Buffer) => {
+      total += chunk.length
+      if (total > maxBytes) {
+        fail(new Error(`Archive expands beyond ${maxBytes} byte limit`))
+      }
+    })
+    gunzip.on('end', () => {
+      if (settled) return
+      settled = true
+      resolve()
+    })
+    source.pipe(gunzip)
+  })
+}
+
 /** Validate member paths and reject links before extraction. */
 function validateArchive(tarPath: string): void {
   let members: string[]
@@ -173,8 +219,9 @@ function validateAndImport(tmpDir: string, targetRoot?: string): string {
   const destRoot = targetRoot ?? EVOTAI_DIR
 
   // Enumerate all files
-  const allFiles = listFilesRecursive(tmpDir)
+  const allFiles = listFilesRecursive(tmpDir).sort()
   let sessionId: string | null = null
+  let extractedBytes = 0
 
   for (const rel of allFiles) {
     // Security: reject path traversal, absolute paths, symlinks
@@ -188,6 +235,11 @@ function validateAndImport(tmpDir: string, targetRoot?: string): string {
     }
     if (!ALLOWED_FILE_PATTERN.test(rel)) {
       throw new Error(`Unexpected file in archive: ${rel}`)
+    }
+
+    extractedBytes += stat.size
+    if (extractedBytes > MAX_SHARE_ARCHIVE_BYTES) {
+      throw new Error(`Extracted files exceed ${MAX_SHARE_ARCHIVE_BYTES} byte limit`)
     }
 
     // Extract session id
@@ -204,17 +256,28 @@ function validateAndImport(tmpDir: string, targetRoot?: string): string {
     throw new Error('Could not determine session id from archive')
   }
 
-  // Move files into place
-  const targetSessionDir = join(destRoot, 'sessions', sessionId)
-  const targetLogsDir = join(destRoot, 'logs')
-  mkdirSync(targetSessionDir, { recursive: true })
-  mkdirSync(targetLogsDir, { recursive: true })
+  const destinations = allFiles.map(rel => ({
+    rel,
+    src: join(tmpDir, rel),
+    dst: join(destRoot, rel),
+  }))
+  const conflict = destinations.find(({ dst }) => existsSync(dst))
+  if (conflict) {
+    throw new Error(`Session import would overwrite existing file: ${conflict.rel}`)
+  }
 
-  for (const rel of allFiles) {
-    const src = join(tmpDir, rel)
-    const dst = join(destRoot, rel)
-    mkdirSync(join(dst, '..'), { recursive: true })
-    renameSync(src, dst)
+  const written: string[] = []
+  try {
+    for (const { src, dst } of destinations) {
+      mkdirSync(join(dst, '..'), { recursive: true })
+      copyFileSync(src, dst, fsConstants.COPYFILE_EXCL)
+      written.push(dst)
+    }
+  } catch (err) {
+    for (const path of written.reverse()) {
+      rmSync(path, { force: true })
+    }
+    throw err
   }
 
   return sessionId
@@ -233,22 +296,80 @@ function listFilesRecursive(dir: string, prefix = ''): string[] {
   return results
 }
 
-/** Convert tmpfiles.org URL to its download variant (insert /dl/) */
-function toDownloadUrl(url: string): string {
-  // https://tmpfiles.org/<id>/file.bin → https://tmpfiles.org/dl/<id>/file.bin
-  // The id was once purely numeric but tmpfiles.org now issues alphanumeric
-  // ids (e.g. /wywHXeSghysu/). A numeric-only match left the URL unchanged, so
-  // /share would otherwise fetch the HTML viewer page instead of the raw
-  // payload and fail decryption. Match any non-empty id segment, but don't double-insert
-  // /dl/ if it is already present.
-  const m = url.match(/^(https?:\/\/tmpfiles\.org)\/([^/]+\/.+)$/)
-  if (m && !m[2]!.startsWith('dl/')) {
-    return `${m[1]}/dl/${m[2]}`
+/** Download a shared payload, resolving tmpfiles.org's signed download URL. */
+async function downloadSharedPayload(url: string): Promise<Buffer> {
+  const parsed = new URL(url)
+  if (parsed.hostname !== 'tmpfiles.org') {
+    return download(url)
   }
-  return url
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.port) {
+    throw new Error('Invalid tmpfiles.org URL')
+  }
+
+  const viewerUrl = tmpfilesViewerUrl(parsed)
+  const viewerPayload = await download(viewerUrl, 5, TMPFILES_ORIGIN)
+  if (hasExportMagic(viewerPayload)) {
+    return viewerPayload
+  }
+
+  const signedUrl = extractTmpfilesDownloadUrl(viewerUrl, viewerPayload.toString('utf8'))
+  const payload = await download(signedUrl, 5, TMPFILES_ORIGIN)
+  if (!hasExportMagic(payload)) {
+    throw new Error('tmpfiles.org returned an unexpected file format')
+  }
+  return payload
 }
 
-/** Upload a buffer to tmpfiles.org, return the raw URL. */
+function tmpfilesViewerUrl(url: URL): string {
+  const parts = url.pathname.split('/').filter(Boolean)
+  // Current signed URLs are /dl/<signature>/<id>/<file>. Legacy download URLs
+  // are /dl/<id>/<file> and now redirect back to the viewer.
+  const viewerParts = parts[0] === 'dl'
+    ? (parts.length >= 4 ? parts.slice(2) : parts.slice(1))
+    : parts
+  const viewer = new URL(TMPFILES_ORIGIN)
+  viewer.pathname = `/${viewerParts.join('/')}`
+  return viewer.toString()
+}
+
+function extractTmpfilesDownloadUrl(viewerUrl: string, html: string): string {
+  const viewer = new URL(viewerUrl)
+  const expectedPath = viewer.pathname
+  const hrefPattern = /href=["']([^"']+)["']/gi
+
+  for (const match of html.matchAll(hrefPattern)) {
+    const href = match[1]?.replaceAll('&amp;', '&')
+    if (!href) continue
+
+    let candidate: URL
+    try {
+      candidate = new URL(href, viewer)
+    } catch {
+      continue
+    }
+    const viewerParts = expectedPath.split('/').filter(Boolean)
+    const candidateParts = candidate.pathname.split('/').filter(Boolean)
+    if (
+      candidate.origin === TMPFILES_ORIGIN
+      && !candidate.username
+      && !candidate.password
+      && candidateParts.length === viewerParts.length + 2
+      && candidateParts[0] === 'dl'
+      && candidateParts[1]?.length > 0
+      && candidateParts.slice(2).every((part, index) => part === viewerParts[index])
+    ) {
+      return candidate.toString()
+    }
+  }
+
+  throw new Error('tmpfiles.org download link was not found or has expired')
+}
+
+function hasExportMagic(payload: Buffer): boolean {
+  return payload.length >= MAGIC.length && payload.subarray(0, MAGIC.length).toString() === MAGIC
+}
+
+/** Upload a buffer to tmpfiles.org, return the viewer URL. */
 function upload(data: Buffer): Promise<string> {
   return new Promise((resolve, reject) => {
     const boundary = `----evot${Date.now()}`
@@ -268,7 +389,16 @@ function upload(data: Buffer): Promise<string> {
       },
       (res) => {
         let raw = ''
-        res.on('data', (chunk: Buffer) => (raw += chunk))
+        let responseBytes = 0
+        res.on('data', (chunk: Buffer) => {
+          responseBytes += chunk.length
+          if (responseBytes > MAX_SERVICE_RESPONSE_BYTES) {
+            res.destroy(new Error(`Upload response exceeds ${MAX_SERVICE_RESPONSE_BYTES} byte limit`))
+            return
+          }
+          raw += chunk.toString('utf8')
+        })
+        res.on('error', reject)
         res.on('end', () => {
           if (res.statusCode !== 200) {
             reject(new Error(`Upload failed (HTTP ${res.statusCode}): ${raw.slice(0, 200)}`))
@@ -290,6 +420,9 @@ function upload(data: Buffer): Promise<string> {
       },
     )
     req.on('error', reject)
+    req.setTimeout(NETWORK_TIMEOUT_MS, () => {
+      req.destroy(new Error(`Upload timed out after ${NETWORK_TIMEOUT_MS}ms`))
+    })
     req.write(body)
     req.end()
   })
@@ -299,7 +432,23 @@ function upload(data: Buffer): Promise<string> {
 // Test helpers — exported for unit tests only
 // ---------------------------------------------------------------------------
 
-export const _testing = { isSharedSessionUrl, toDownloadUrl, encrypt, decrypt, validateArchive, validateAndImport, listFilesRecursive, generatePassword, collectFiles }
+export const _testing = {
+  isSharedSessionUrl,
+  downloadSharedPayload,
+  tmpfilesViewerUrl,
+  extractTmpfilesDownloadUrl,
+  resolveRedirectUrl,
+  download,
+  hasExportMagic,
+  encrypt,
+  decrypt,
+  validateArchiveSize,
+  validateArchive,
+  validateAndImport,
+  listFilesRecursive,
+  generatePassword,
+  collectFiles,
+}
 
 function generatePassword(): string {
   const bytes = randomBytes(PASSWORD_LENGTH)
@@ -348,28 +497,91 @@ function decrypt(payload: Buffer, password: string): Buffer {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()])
 }
 
-/** Download a URL, following redirects. */
-function download(url: string, redirects = 5): Promise<Buffer> {
+function resolveRedirectUrl(currentUrl: URL, location: string, requiredOrigin?: string): string {
+  const redirect = new URL(location, currentUrl)
+  if (requiredOrigin && redirect.origin !== requiredOrigin) {
+    throw new Error(`Download redirect left trusted origin: ${requiredOrigin}`)
+  }
+  return redirect.toString()
+}
+
+/** Download a URL, following redirects within an optional trusted origin. */
+function download(
+  url: string,
+  redirects = 5,
+  requiredOrigin?: string,
+  maxBytes = MAX_SHARE_DOWNLOAD_BYTES,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     if (redirects <= 0) {
       reject(new Error('Too many redirects'))
       return
     }
-    const proto = url.startsWith('https') ? https : http
-    proto.get(url, (res) => {
+
+    const requestUrl = new URL(url)
+    if (!['http:', 'https:'].includes(requestUrl.protocol)) {
+      reject(new Error(`Unsupported download protocol: ${requestUrl.protocol}`))
+      return
+    }
+    if (requiredOrigin && requestUrl.origin !== requiredOrigin) {
+      reject(new Error(`Download redirect left trusted origin: ${requiredOrigin}`))
+      return
+    }
+
+    const proto = requestUrl.protocol === 'https:' ? https : http
+    const req = proto.get(requestUrl, (res) => {
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        resolve(download(res.headers.location, redirects - 1))
+        try {
+          const redirectUrl = resolveRedirectUrl(requestUrl, res.headers.location, requiredOrigin)
+          res.resume()
+          resolve(download(redirectUrl, redirects - 1, requiredOrigin, maxBytes))
+        } catch (err) {
+          res.resume()
+          reject(err)
+        }
         return
       }
       if (res.statusCode !== 200) {
-        let body = ''
-        res.on('data', (chunk: Buffer) => (body += chunk))
-        res.on('end', () => reject(new Error(`Download failed (HTTP ${res.statusCode}): ${body.slice(0, 200)}`)))
+        let body = Buffer.alloc(0)
+        const rejectResponse = () => {
+          reject(new Error(`Download failed (HTTP ${res.statusCode}): ${body.toString('utf8')}`))
+        }
+        res.on('data', (chunk: Buffer) => {
+          const remaining = 200 - body.length
+          if (remaining > 0) body = Buffer.concat([body, chunk.subarray(0, remaining)])
+          if (body.length >= 200) {
+            res.destroy()
+            rejectResponse()
+          }
+        })
+        res.on('end', rejectResponse)
+        res.on('error', reject)
         return
       }
+
+      const contentLength = Number(res.headers['content-length'])
+      if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+        res.resume()
+        reject(new Error(`Download exceeds ${maxBytes} byte limit`))
+        return
+      }
+
       const chunks: Buffer[] = []
-      res.on('data', (chunk: Buffer) => chunks.push(chunk))
+      let total = 0
+      res.on('data', (chunk: Buffer) => {
+        total += chunk.length
+        if (total > maxBytes) {
+          res.destroy(new Error(`Download exceeds ${maxBytes} byte limit`))
+          return
+        }
+        chunks.push(chunk)
+      })
       res.on('end', () => resolve(Buffer.concat(chunks)))
-    }).on('error', reject)
+      res.on('error', reject)
+    })
+    req.on('error', reject)
+    req.setTimeout(NETWORK_TIMEOUT_MS, () => {
+      req.destroy(new Error(`Download timed out after ${NETWORK_TIMEOUT_MS}ms`))
+    })
   })
 }

@@ -250,46 +250,59 @@ fn model_switch_preserves_or_clamps_thinking_and_fails_fast() -> TestResult {
 }
 
 #[test]
-fn restore_thinking_level_applies_supported_name() -> TestResult {
+fn resume_reload_reapplies_current_configured_thinking_level() -> TestResult {
+    let dir = TempDir::new()?;
+    let mut initial = anthropic_config(&dir);
+    initial
+        .providers
+        .get_mut("anthropic")
+        .ok_or("missing anthropic provider")?
+        .thinking_level = Some(ThinkingLevel::Low);
+    let agent = Agent::new(&initial, "/work")?;
+    assert_eq!(agent.llm().thinking_level, ThinkingLevel::Low);
+
+    // Simulate the historical value carried by a session, then an external
+    // config edit made before that session is resumed.
+    agent.set_thinking_level(ThinkingLevel::Minimal);
+    let mut reloaded = initial;
+    reloaded
+        .providers
+        .get_mut("anthropic")
+        .ok_or("missing anthropic provider")?
+        .thinking_level = Some(ThinkingLevel::High);
+
+    assert!(agent.reload_provider_for_resume(&reloaded, "anthropic:claude-opus-4-6")?);
+    assert_eq!(agent.llm().thinking_level, ThinkingLevel::High);
+
+    // If the session's saved selection disappeared, refresh the current live
+    // selection from the same config snapshot instead of retaining stale effort.
+    agent.set_thinking_level(ThinkingLevel::Minimal);
+    assert!(!agent.reload_provider_for_resume(&reloaded, "missing:model")?);
+    assert_eq!(agent.llm().provider, "anthropic");
+    assert_eq!(agent.llm().model, "claude-opus-4-6");
+    assert_eq!(agent.llm().thinking_level, ThinkingLevel::High);
+
+    // If neither saved nor live selection resolves, fail without mutation.
+    let empty = Config::new(dir.path().to_path_buf());
+    let before = agent.llm();
+    assert!(agent
+        .reload_provider_for_resume(&empty, "missing:model")
+        .is_err());
+    assert_eq!(agent.llm().provider, before.provider);
+    assert_eq!(agent.llm().model, before.model);
+    assert_eq!(agent.llm().thinking_level, before.thinking_level);
+    Ok(())
+}
+
+#[test]
+fn explicit_thinking_restore_api_remains_supported() -> TestResult {
     let dir = TempDir::new()?;
     let agent = Agent::new(&anthropic_config(&dir), "/work")?;
 
     agent.restore_thinking_level("high");
     assert_eq!(agent.llm().thinking_level, ThinkingLevel::High);
-    Ok(())
-}
-
-#[test]
-fn restore_thinking_level_ignores_unknown_or_unsupported() -> TestResult {
-    let dir = TempDir::new()?;
-    let mut config = Config::new(dir.path().to_path_buf());
-    config.providers.insert("openai".into(), ProviderProfile {
-        protocol: Protocol::OpenAiResponses,
-        api_key: "test-key".into(),
-        base_url: "https://api.openai.com/v1".into(),
-        models: vec!["gpt-5.5-pro".into()],
-        compat_caps: CompatCaps::REASONING_EFFORT,
-        route_capabilities: Default::default(),
-        thinking_level: None,
-        context_window: None,
-        max_tokens: None,
-        supports_image: None,
-    });
-    config.llm.provider = "openai".into();
-    let agent = Agent::new(&config, "/work")?;
-    agent.set_thinking_level(ThinkingLevel::High);
-
-    // Unknown name: left untouched.
-    agent.restore_thinking_level("bogus");
+    agent.restore_thinking_level("invalid");
     assert_eq!(agent.llm().thinking_level, ThinkingLevel::High);
-
-    // Known but unsupported on gpt-5.5-pro (floor is medium): left untouched.
-    agent.restore_thinking_level("low");
-    assert_eq!(agent.llm().thinking_level, ThinkingLevel::High);
-
-    // Known and supported: applied.
-    agent.restore_thinking_level("xhigh");
-    assert_eq!(agent.llm().thinking_level, ThinkingLevel::Xhigh);
     Ok(())
 }
 
