@@ -97,21 +97,11 @@ impl ProviderProfile {
 // LlmSelection — which provider is active + runtime overrides
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct LlmSelection {
     pub provider: String,
     pub model_override: Option<String>,
     pub thinking_level: ThinkingLevel,
-}
-
-impl Default for LlmSelection {
-    fn default() -> Self {
-        Self {
-            provider: String::new(),
-            model_override: None,
-            thinking_level: ThinkingLevel::Adaptive,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -420,9 +410,15 @@ pub fn thinking_level_from_str(value: &str) -> Result<ThinkingLevel> {
         "high" => Ok(ThinkingLevel::High),
         "xhigh" => Ok(ThinkingLevel::Xhigh),
         "max" => Ok(ThinkingLevel::Max),
-        "adaptive" => Ok(ThinkingLevel::Adaptive),
+        // `adaptive` used to mean "let the provider pick an effort". Every level
+        // is now a real tier, so name the one you want instead.
+        "adaptive" => Err(EvotError::Conf(
+            "thinking level 'adaptive' was removed; use an explicit level \
+             (off, minimal, low, medium, high, xhigh, max) — medium is the default"
+                .to_string(),
+        )),
         other => Err(EvotError::Conf(format!(
-            "unknown thinking level: {other} (valid: off, minimal, low, medium, high, xhigh, max, adaptive)"
+            "unknown thinking level: {other} (valid: off, minimal, low, medium, high, xhigh, max)"
         ))),
     }
 }

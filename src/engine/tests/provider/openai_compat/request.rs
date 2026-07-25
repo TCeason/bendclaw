@@ -72,12 +72,12 @@ fn test_third_party_compatible_endpoint_omits_verbosity() {
 }
 
 #[test]
-fn test_uncatalogued_gpt_and_codex_keep_medium_adaptive_default() {
+fn test_uncatalogued_gpt_and_codex_pass_medium_through() {
     for id in ["codex-mini", "gpt-5.7-nova"] {
         let config = StreamConfigBuilder::openai()
             .model(id)
             .model_config(ModelConfig::openai(id, id))
-            .thinking(ThinkingLevel::Adaptive)
+            .thinking(ThinkingLevel::Medium)
             .build();
 
         let body = build_request_body(&config, &OpenAiCompat::openai());
@@ -87,29 +87,40 @@ fn test_uncatalogued_gpt_and_codex_keep_medium_adaptive_default() {
 }
 
 #[test]
-fn test_gpt_5_5_adaptive_thinking_maps_to_model_default_reasoning_effort() {
-    let model_config = ModelConfig::openai("gpt-5.5", "GPT-5.5");
-    let config = StreamConfigBuilder::openai()
-        .model("gpt-5.5")
-        .model_config(model_config.clone())
-        .thinking(ThinkingLevel::Adaptive)
-        .build();
+fn test_gpt_5_levels_map_to_matching_reasoning_effort() {
+    // Every level is a real tier that maps to the same-named effort unless the
+    // model's catalog entry overrides or rejects it.
+    let cases = [
+        (ThinkingLevel::Minimal, "minimal"),
+        (ThinkingLevel::Low, "low"),
+        (ThinkingLevel::Medium, "medium"),
+        (ThinkingLevel::High, "high"),
+        (ThinkingLevel::Xhigh, "xhigh"),
+    ];
+    for (level, expected) in cases {
+        let config = StreamConfigBuilder::openai()
+            .model("gpt-5.4")
+            .model_config(ModelConfig::openai("gpt-5.4", "GPT-5.4"))
+            .thinking(level)
+            .build();
 
-    let body = build_request_body(&config, &OpenAiCompat::openai());
-    assert_eq!(body["reasoning_effort"], "medium");
+        let body = build_request_body(&config, &OpenAiCompat::openai());
+        assert_eq!(body["reasoning_effort"], expected, "{level:?}");
+    }
 }
 
 #[test]
-fn test_gpt_5_4_adaptive_thinking_maps_to_model_default_reasoning_effort() {
-    let model_config = ModelConfig::openai("gpt-5.4", "GPT-5.4");
+fn test_gpt_5_5_first_party_route_clamps_unsupported_minimal_up_to_low() {
+    // gpt-5.5 rejects `minimal` on the first-party route, so the request clamps
+    // upward to the next selectable tier instead of sending an invalid value.
     let config = StreamConfigBuilder::openai()
-        .model("gpt-5.4")
-        .model_config(model_config.clone())
-        .thinking(ThinkingLevel::Adaptive)
+        .model("gpt-5.5")
+        .model_config(ModelConfig::openai("gpt-5.5", "GPT-5.5"))
+        .thinking(ThinkingLevel::Minimal)
         .build();
 
     let body = build_request_body(&config, &OpenAiCompat::openai());
-    assert_eq!(body["reasoning_effort"], "xhigh");
+    assert_eq!(body["reasoning_effort"], "low");
 }
 
 #[test]
@@ -203,7 +214,7 @@ fn test_unsupported_off_is_clamped_before_request() {
 fn test_compat_without_reasoning_support_omits_reasoning_effort() {
     let config = StreamConfigBuilder::openai()
         .model("gpt-5")
-        .thinking(ThinkingLevel::Adaptive)
+        .thinking(ThinkingLevel::Medium)
         .build();
 
     let body = build_request_body(&config, &OpenAiCompat::default());

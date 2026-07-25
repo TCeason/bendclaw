@@ -383,17 +383,7 @@ impl Agent {
     }
 
     fn supported_thinking_levels_for(llm: &LlmConfig) -> Vec<evot_engine::ThinkingLevel> {
-        let model = super::run::runtime::build_model_config(
-            llm.protocol.clone(),
-            &llm.provider,
-            &llm.model,
-            Some(&llm.base_url),
-            llm.compat_caps,
-            llm.route_capabilities,
-            llm.context_window,
-            llm.max_tokens,
-            llm.supports_image,
-        );
+        let model = Self::model_config_for(llm);
         if model.reasoning() {
             model.supported_thinking_levels()
         } else {
@@ -401,53 +391,8 @@ impl Agent {
         }
     }
 
-    /// Replace the LLM config while inheriting the session's current thinking
-    /// level. Unsupported levels are clamped using pi's ordering: first search
-    /// upward from the requested effort, then downward. Models without
-    /// selectable reasoning always use `Off`.
-    fn set_llm_preserving_thinking(&self, mut llm: LlmConfig) {
-        use evot_engine::ThinkingLevel;
-
-        let current = self.llm.read().thinking_level;
-        let supported = Self::supported_thinking_levels_for(&llm);
-        llm.thinking_level = if supported.is_empty() {
-            ThinkingLevel::Off
-        } else if current == ThinkingLevel::Adaptive {
-            // Adaptive is evot's provider-selected effort. Preserve it across
-            // switches between reasoning models; non-reasoning models were
-            // handled above.
-            ThinkingLevel::Adaptive
-        } else if supported.contains(&current) {
-            current
-        } else {
-            const ORDERED: [ThinkingLevel; 7] = [
-                ThinkingLevel::Off,
-                ThinkingLevel::Minimal,
-                ThinkingLevel::Low,
-                ThinkingLevel::Medium,
-                ThinkingLevel::High,
-                ThinkingLevel::Xhigh,
-                ThinkingLevel::Max,
-            ];
-            let requested = ORDERED
-                .iter()
-                .position(|level| *level == current)
-                .unwrap_or(0);
-            ORDERED[requested..]
-                .iter()
-                .chain(ORDERED[..requested].iter().rev())
-                .find(|level| supported.contains(level))
-                .copied()
-                .unwrap_or(ThinkingLevel::Off)
-        };
-        self.set_llm(llm);
-    }
-
-    /// The active model's resolved context window in tokens, after applying
-    /// explicit overrides. Used to size and validate compaction so the retained
-    /// context fits what the model actually accepts.
-    pub fn resolved_context_window(&self) -> u32 {
-        let llm = self.llm.read();
+    /// Resolve catalog + override metadata for an LLM selection.
+    fn model_config_for(llm: &LlmConfig) -> evot_engine::provider::ModelConfig {
         super::run::runtime::build_model_config(
             llm.protocol.clone(),
             &llm.provider,
@@ -459,7 +404,22 @@ impl Agent {
             llm.max_tokens,
             llm.supports_image,
         )
-        .context_window()
+    }
+
+    /// Replace the LLM config while inheriting the session's current thinking
+    /// level, clamped to what the new model supports. Models without selectable
+    /// reasoning always use `Off`.
+    fn set_llm_preserving_thinking(&self, mut llm: LlmConfig) {
+        let current = self.llm.read().thinking_level;
+        llm.thinking_level = Self::model_config_for(&llm).effective_thinking_level(current);
+        self.set_llm(llm);
+    }
+
+    /// The active model's resolved context window in tokens, after applying
+    /// explicit overrides. Used to size and validate compaction so the retained
+    /// context fits what the model actually accepts.
+    pub fn resolved_context_window(&self) -> u32 {
+        Self::model_config_for(&self.llm.read()).context_window()
     }
 
     /// Advance the thinking level to the next supported tier, wrapping around.
@@ -1192,7 +1152,7 @@ impl Agent {
 
     /// The session-facing label for the agent's current thinking level, or
     /// `None` when the level is not a selectable tier for the active model
-    /// (e.g. the `Adaptive` default, or a config-set level the model rejects).
+    /// (e.g. a config-set level the model rejects).
     /// Gating on membership keeps persistence symmetric with
     /// [`Self::restore_thinking_level`]: only values that can be restored are
     /// ever written, so the session never carries inert data.
@@ -1434,19 +1394,6 @@ fn prompt_mode(mode: ToolMode) -> PromptMode {
     }
 }
 
-fn thinking_label(level: evot_engine::ThinkingLevel) -> &'static str {
-    match level {
-        evot_engine::ThinkingLevel::Off => "off",
-        evot_engine::ThinkingLevel::Minimal => "minimal",
-        evot_engine::ThinkingLevel::Low => "low",
-        evot_engine::ThinkingLevel::Medium => "medium",
-        evot_engine::ThinkingLevel::High => "high",
-        evot_engine::ThinkingLevel::Xhigh => "xhigh",
-        evot_engine::ThinkingLevel::Max => "max",
-        evot_engine::ThinkingLevel::Adaptive => "adaptive",
-    }
-}
-
 fn build_prompt_dump(_agent: &Agent, mode: ToolMode, turn: &runtime::TurnInput) -> PromptDump {
     let opts = &turn.options;
 
@@ -1523,7 +1470,7 @@ fn build_prompt_dump(_agent: &Agent, mode: ToolMode, turn: &runtime::TurnInput) 
         cwd: opts.cwd.display().to_string(),
         mode: mode_label(mode).into(),
         model: opts.model.clone(),
-        thinking_level: thinking_label(opts.thinking_level).into(),
+        thinking_level: opts.thinking_level.as_str().into(),
         system_prompt,
         tools: tool_dumps,
         skill_instructions,

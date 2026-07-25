@@ -11,7 +11,7 @@ use crate::provider::route::CompatCaps;
 use crate::provider::route::ThinkingFormat;
 use crate::ThinkingLevel;
 
-/// Default token budgets for Anthropic budget-based thinking (non-adaptive).
+/// Default token budgets for Anthropic budget-based thinking.
 pub const DEFAULT_BUDGET_MINIMAL: u32 = 1024;
 pub const DEFAULT_BUDGET_LOW: u32 = 2048;
 pub const DEFAULT_BUDGET_MEDIUM: u32 = 8192;
@@ -21,8 +21,9 @@ pub const MIN_THINKING_BUDGET: u32 = 1024;
 /// Leave at least this many tokens for the visible answer.
 pub const MIN_OUTPUT_AFTER_THINKING: u32 = 1024;
 
-/// Ordered ladder used for selection UI and nearest-level clamping.
-const LEVEL_LADDER: [ThinkingLevel; 8] = [
+/// Ordered ladder used for selection UI and nearest-level clamping. Mirrors
+/// pi's `EXTENDED_THINKING_LEVELS`.
+const LEVEL_LADDER: [ThinkingLevel; 7] = [
     ThinkingLevel::Off,
     ThinkingLevel::Minimal,
     ThinkingLevel::Low,
@@ -30,7 +31,6 @@ const LEVEL_LADDER: [ThinkingLevel; 8] = [
     ThinkingLevel::High,
     ThinkingLevel::Xhigh,
     ThinkingLevel::Max,
-    ThinkingLevel::Adaptive,
 ];
 
 impl ModelConfig {
@@ -65,7 +65,7 @@ impl ModelConfig {
         }
         LEVEL_LADDER
             .into_iter()
-            .filter(|level| *level != ThinkingLevel::Adaptive && self.level_selectable(*level))
+            .filter(|level| self.level_selectable(*level))
             .collect()
     }
 
@@ -94,6 +94,8 @@ impl ModelConfig {
     }
 
     /// Clamp a requested level to the nearest supported tier for this model.
+    /// Searches upward from the request first, then downward, matching pi's
+    /// `clampThinkingLevel`.
     pub fn clamp_thinking_level(&self, level: ThinkingLevel) -> ThinkingLevel {
         let available = self.supported_thinking_levels();
         if available.is_empty() {
@@ -102,14 +104,9 @@ impl ModelConfig {
         if available.contains(&level) {
             return level;
         }
-        let anchor = if level == ThinkingLevel::Adaptive {
-            ThinkingLevel::High
-        } else {
-            level
-        };
         let Some(idx) = LEVEL_LADDER
             .iter()
-            .position(|candidate| *candidate == anchor)
+            .position(|candidate| *candidate == level)
         else {
             return available[0];
         };
@@ -131,11 +128,7 @@ impl ModelConfig {
         if !self.reasoning() || self.supported_thinking_levels().is_empty() {
             return ThinkingLevel::Off;
         }
-        if requested == ThinkingLevel::Adaptive {
-            ThinkingLevel::Adaptive
-        } else {
-            self.clamp_thinking_level(requested)
-        }
+        self.clamp_thinking_level(requested)
     }
 }
 
@@ -149,7 +142,9 @@ pub fn effective_thinking_level(
         .unwrap_or(requested)
 }
 
-/// Map a thinking level to an Anthropic adaptive-thinking effort value.
+/// Map a thinking level to an Anthropic effort value. Mirrors pi's
+/// `mapThinkingLevelToEffort`: the model map wins, otherwise fall back to the
+/// protocol default (Anthropic has no `minimal` effort).
 pub fn anthropic_effort(level: ThinkingLevel, model: Option<&ModelConfig>) -> Option<String> {
     if let Some(model) = model {
         match model.thinking_level_policy(level) {
@@ -162,7 +157,7 @@ pub fn anthropic_effort(level: ThinkingLevel, model: Option<&ModelConfig>) -> Op
         ThinkingLevel::Off => None,
         ThinkingLevel::Minimal | ThinkingLevel::Low => Some("low".into()),
         ThinkingLevel::Medium => Some("medium".into()),
-        ThinkingLevel::High | ThinkingLevel::Adaptive => Some("high".into()),
+        ThinkingLevel::High => Some("high".into()),
         ThinkingLevel::Xhigh => Some("xhigh".into()),
         ThinkingLevel::Max => Some("max".into()),
     }
@@ -174,7 +169,7 @@ pub fn anthropic_thinking_budget(level: ThinkingLevel) -> u32 {
         ThinkingLevel::Off => 0,
         ThinkingLevel::Minimal => DEFAULT_BUDGET_MINIMAL,
         ThinkingLevel::Low => DEFAULT_BUDGET_LOW,
-        ThinkingLevel::Medium | ThinkingLevel::Adaptive => DEFAULT_BUDGET_MEDIUM,
+        ThinkingLevel::Medium => DEFAULT_BUDGET_MEDIUM,
         ThinkingLevel::High | ThinkingLevel::Xhigh | ThinkingLevel::Max => DEFAULT_BUDGET_HIGH,
     }
 }

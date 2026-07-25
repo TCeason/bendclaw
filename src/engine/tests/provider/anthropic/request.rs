@@ -43,7 +43,7 @@ fn test_kimi_coding_request_uses_pi_catalog_limits() {
         .model("kimi-for-coding")
         .model_config(ModelConfig::anthropic("kimi-for-coding", "Kimi For Coding"))
         .no_max_tokens()
-        .thinking(ThinkingLevel::Adaptive)
+        .thinking(ThinkingLevel::High)
         .build();
 
     let body = build_request_body(&config, false);
@@ -68,22 +68,6 @@ fn test_kimi_k3_thinking_uses_enabled_wire_with_effort() {
     assert_eq!(body["thinking"]["type"], "enabled");
     assert!(body["thinking"].get("budget_tokens").is_none());
     // K3's catalog maps High to an explicit "high" wire value.
-    assert_eq!(body["output_config"]["effort"], "high");
-}
-
-#[test]
-fn test_adaptive_thinking_sent_for_anthropic_adaptive_model() {
-    let config = StreamConfigBuilder::anthropic()
-        .model("claude-opus-4-8")
-        .model_config(ModelConfig::anthropic("claude-opus-4-8", "Opus 4.8"))
-        .thinking(ThinkingLevel::Adaptive)
-        .build();
-
-    let body = build_request_body(&config, false);
-    assert_eq!(body["thinking"]["type"], "adaptive");
-    assert_eq!(body["thinking"]["display"], "summarized");
-    assert!(body["thinking"].get("budget_tokens").is_none());
-    // Adaptive defaults to high effort (pi mapThinkingLevelToEffort default).
     assert_eq!(body["output_config"]["effort"], "high");
 }
 
@@ -134,7 +118,6 @@ fn test_thinking_effort_levels_map_for_anthropic() {
         (ThinkingLevel::Low, "low"),
         (ThinkingLevel::Medium, "medium"),
         (ThinkingLevel::High, "high"),
-        (ThinkingLevel::Adaptive, "high"),
     ];
     for (level, expected) in cases {
         let config = StreamConfigBuilder::anthropic()

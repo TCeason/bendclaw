@@ -177,7 +177,7 @@ fn apply_reasoning(body: &mut serde_json::Value, config: &StreamConfig, enabled:
             ThinkingLevel::Minimal => Some("minimal".into()),
             ThinkingLevel::Low => Some("low".into()),
             ThinkingLevel::Medium => Some("medium".into()),
-            ThinkingLevel::High | ThinkingLevel::Adaptive => Some("high".into()),
+            ThinkingLevel::High => Some("high".into()),
             ThinkingLevel::Xhigh => Some("xhigh".into()),
             ThinkingLevel::Max => Some("max".into()),
         },

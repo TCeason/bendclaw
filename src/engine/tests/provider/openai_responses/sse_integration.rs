@@ -137,7 +137,7 @@ async fn native_openai_posts_responses_payload_to_responses_endpoint(
         .model("gpt-5.5")
         .model_config(model)
         .tools(vec![tool_def("bash", "Run a command")])
-        .thinking(ThinkingLevel::Adaptive)
+        .thinking(ThinkingLevel::Medium)
         .build();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let outcome = OpenAiResponsesProvider

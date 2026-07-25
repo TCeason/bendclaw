@@ -363,14 +363,15 @@ fn ensure_env_file(path: &Path) -> Result<()> {
 }
 
 fn default_env_content() -> &'static str {
-    r#"# EVOT_LLM_THINKING_LEVEL=adaptive
-# Global reasoning effort. Default: adaptive. Applies to every provider unless
-# overridden per provider via EVOT_LLM_{PROVIDER}_THINKING_LEVEL below.
-# Anthropic: thinking is always adaptive; this sets output_config.effort.
-#   off disables thinking; minimal/low=low, medium/adaptive=medium, high=high effort.
+    r#"# EVOT_LLM_THINKING_LEVEL=medium
+# Global reasoning effort. One of off, minimal, low, medium, high, xhigh, max.
+# Default: medium. Applies to every provider unless overridden per provider via
+# EVOT_LLM_{PROVIDER}_THINKING_LEVEL below. Levels a model does not support are
+# clamped to the nearest tier it does (searching upward first, then downward).
+# Anthropic: off disables thinking; minimal/low=low, medium=medium, high=high.
 #   xhigh/max=strongest efforts when the active model supports those tiers.
-# OpenAI-compatible: adaptive=model default when known (gpt-5.5=medium, gpt-5.4=xhigh),
-#   high=high, xhigh=xhigh and max=max for supported GPT models, medium=medium, minimal/low=low.
+# OpenAI-compatible: each level maps to the matching reasoning_effort value,
+#   except xhigh/max which need explicit model support (e.g. gpt-5.6).
 
 # EVOT_LLM_ANTHROPIC_API_KEY=
 # EVOT_LLM_ANTHROPIC_BASE_URL=https://api.anthropic.com

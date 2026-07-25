@@ -22,7 +22,7 @@ fn native_openai_request_uses_responses_schema_with_reasoning_and_tools() {
         .system_prompt("Be helpful")
         .messages(vec![Message::user("List files")])
         .tools(vec![tool_def("bash", "Run a command")])
-        .thinking(ThinkingLevel::Adaptive)
+        .thinking(ThinkingLevel::Medium)
         .prompt_cache_key("session-123")
         .build();
 
@@ -158,12 +158,12 @@ fn github_copilot_responses_off_omits_reasoning() {
 }
 
 #[test]
-fn uncatalogued_gpt_and_codex_keep_medium_adaptive_default() {
+fn uncatalogued_gpt_and_codex_pass_medium_through() {
     for id in ["codex-mini", "gpt-5.7-nova"] {
         let config = StreamConfigBuilder::openai()
             .model(id)
             .model_config(ModelConfig::openai_responses(id, id))
-            .thinking(ThinkingLevel::Adaptive)
+            .thinking(ThinkingLevel::Medium)
             .build();
 
         let body = build_request_body(&config);

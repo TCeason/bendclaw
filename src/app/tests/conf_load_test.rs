@@ -365,17 +365,9 @@ fn thinking_level_from_str_valid() -> TestResult {
     assert_eq!(thinking_level_from_str("high")?, ThinkingLevel::High);
     assert_eq!(thinking_level_from_str("xhigh")?, ThinkingLevel::Xhigh);
     assert_eq!(thinking_level_from_str("max")?, ThinkingLevel::Max);
-    assert_eq!(
-        thinking_level_from_str("adaptive")?,
-        ThinkingLevel::Adaptive
-    );
     // case-insensitive
     assert_eq!(thinking_level_from_str("HIGH")?, ThinkingLevel::High);
     assert_eq!(thinking_level_from_str("Medium")?, ThinkingLevel::Medium);
-    assert_eq!(
-        thinking_level_from_str("Adaptive")?,
-        ThinkingLevel::Adaptive
-    );
     Ok(())
 }
 
@@ -383,12 +375,20 @@ fn thinking_level_from_str_valid() -> TestResult {
 fn thinking_level_from_str_rejects_invalid() {
     assert!(thinking_level_from_str("turbo").is_err());
     assert!(thinking_level_from_str("").is_err());
+    // `adaptive` was a pre-pi meta level. It is rejected with a message that
+    // names the replacement rather than a bare "unknown level".
+    let err = thinking_level_from_str("adaptive")
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(err.contains("was removed"), "{err}");
+    assert!(err.contains("medium"), "{err}");
 }
 
 #[test]
-fn default_thinking_level_is_adaptive() {
+fn default_thinking_level_is_medium() {
     let config = Config::new(std::path::PathBuf::from("/tmp"));
-    assert_eq!(config.llm.thinking_level, ThinkingLevel::Adaptive);
+    assert_eq!(config.llm.thinking_level, ThinkingLevel::Medium);
 }
 
 #[test]

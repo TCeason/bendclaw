@@ -7,7 +7,6 @@ const GROK_4_5_LEVELS: &[(ThinkingLevel, Option<&str>)] = &[
     (ThinkingLevel::Low, Some("low")),
     (ThinkingLevel::Medium, Some("medium")),
     (ThinkingLevel::High, Some("high")),
-    (ThinkingLevel::Adaptive, Some("high")),
     (ThinkingLevel::Xhigh, None),
     (ThinkingLevel::Max, None),
 ];

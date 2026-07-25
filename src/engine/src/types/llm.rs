@@ -168,21 +168,24 @@ pub enum CacheStrategy {
 // Thinking level
 // ---------------------------------------------------------------------------
 
+/// Abstract reasoning effort selected by the user. Mirrors pi's
+/// `ModelThinkingLevel`: every variant is a real, selectable tier. Translation
+/// to a provider-specific wire value happens per model via
+/// [`crate::provider::ModelConfig::thinking_level_policy`].
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ThinkingLevel {
     Off,
     Minimal,
     Low,
+    #[default]
     Medium,
     High,
     /// Extra-high reasoning level. Only selectable when model metadata opts in.
     Xhigh,
-    /// Maximum reasoning level. Distinct from `xhigh`; GPT-5.6 and newer
-    /// adaptive-thinking models can expose both tiers.
+    /// Maximum reasoning level. Distinct from `xhigh`; GPT-5.6 and newer Claude
+    /// models can expose both tiers.
     Max,
-    #[default]
-    Adaptive,
 }
 
 impl ThinkingLevel {
@@ -196,7 +199,6 @@ impl ThinkingLevel {
             Self::High => "high",
             Self::Xhigh => "xhigh",
             Self::Max => "max",
-            Self::Adaptive => "adaptive",
         }
     }
 }

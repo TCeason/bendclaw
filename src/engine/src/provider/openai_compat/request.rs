@@ -266,7 +266,7 @@ fn apply_reasoning_effort(
             ThinkingLevel::Minimal => Some("minimal".into()),
             ThinkingLevel::Low => Some("low".into()),
             ThinkingLevel::Medium => Some("medium".into()),
-            ThinkingLevel::High | ThinkingLevel::Adaptive => Some("high".into()),
+            ThinkingLevel::High => Some("high".into()),
             ThinkingLevel::Xhigh => Some("xhigh".into()),
             ThinkingLevel::Max => Some("max".into()),
             ThinkingLevel::Off => model
