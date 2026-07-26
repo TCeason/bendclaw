@@ -7,8 +7,9 @@ const KIMI_CODING_LEVELS: &[(ThinkingLevel, Option<&str>)] = &[
     (ThinkingLevel::Off, Some("none")),
     (ThinkingLevel::High, Some("high")),
 ];
+// K3 always thinks (platform.moonshot.ai): reasoning_effort supports
+// low/high/max with default max; there is no off value.
 const K3_LEVELS: &[(ThinkingLevel, Option<&str>)] = &[
-    (ThinkingLevel::Off, Some("none")),
     (ThinkingLevel::Low, Some("low")),
     (ThinkingLevel::High, Some("high")),
     (ThinkingLevel::Max, Some("max")),
@@ -20,7 +21,7 @@ const KIMI_CODING_REASONING: ReasoningProfile = ReasoningProfile {
 };
 const K3_REASONING: ReasoningProfile = ReasoningProfile {
     levels: K3_LEVELS,
-    default: ThinkingLevel::High,
+    default: ThinkingLevel::Max,
     anthropic_wire: Some(super::super::capabilities::AnthropicThinkingWire::Enabled),
 };
 
@@ -30,9 +31,11 @@ const KIMI_CODING: ModelProfile = ModelProfile {
     reasoning: KIMI_CODING_REASONING,
     ..BASE
 };
+// 1M total window with a 131_072 default max_completion_tokens
+// (platform.moonshot.ai model list + K3 guide).
 const K3: ModelProfile = ModelProfile {
-    max_input_tokens: 196_608,
-    max_output_tokens: 65_536,
+    max_input_tokens: 917_504,
+    max_output_tokens: 131_072,
     reasoning: K3_REASONING,
     ..BASE
 };

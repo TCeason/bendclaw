@@ -3,10 +3,13 @@ use super::profile::ReasoningProfile;
 use super::profile::BASE;
 use crate::ThinkingLevel;
 
+// GLM-5.2 exposes two thinking-effort tiers (docs.z.ai): "high" and "max".
+// The top tier is Evot's Xhigh level; ThinkingLevel::Max is reserved for models
+// exposing both tiers, so binding "max" there would strand Xhigh users on High.
 const GLM_5_2_LEVELS: &[(ThinkingLevel, Option<&str>)] = &[
     (ThinkingLevel::Off, Some("none")),
     (ThinkingLevel::High, Some("high")),
-    (ThinkingLevel::Max, Some("max")),
+    (ThinkingLevel::Xhigh, Some("max")),
 ];
 const GLM_5_2_REASONING: ReasoningProfile = ReasoningProfile {
     levels: GLM_5_2_LEVELS,

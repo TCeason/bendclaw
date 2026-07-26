@@ -205,11 +205,14 @@ fn kimi_profiles_match_catalog_contracts() {
 
     use evotengine::ThinkingLevel::*;
     let k3 = ModelConfig::anthropic("k3", "Kimi K3");
-    assert_eq!(k3.context_window(), 196_608);
-    assert_eq!(k3.max_tokens(), 65_536);
-    assert_eq!(k3.supported_thinking_levels(), vec![Off, Low, High, Max]);
-    assert!(k3.can_disable_thinking());
-    assert_eq!(k3.default_thinking_level(), High);
+    // 1M window minus the 131_072 default max_completion_tokens; K3 always
+    // thinks, so Off is not offered and the official default effort is max.
+    assert_eq!(k3.context_window(), 917_504);
+    assert_eq!(k3.max_tokens(), 131_072);
+    assert_eq!(k3.supported_thinking_levels(), vec![Low, High, Max]);
+    assert!(!k3.can_disable_thinking());
+    assert_eq!(k3.default_thinking_level(), Max);
+    assert_eq!(k3.default_compaction_limit(Max), 250_000);
 
     let thinking = ModelConfig::anthropic("kimi-k2-thinking", "Kimi K2 Thinking");
     assert_eq!(thinking.context_window(), 196_608);
@@ -397,7 +400,7 @@ fn glm_and_deepseek_profiles_are_explicit() {
     assert_eq!(glm.context_window(), 908_928);
     assert_eq!(glm.max_tokens(), 131_072);
     assert_eq!(glm.input(), [InputModality::Text]);
-    assert_eq!(glm.supported_thinking_levels(), vec![Off, High, Max]);
+    assert_eq!(glm.supported_thinking_levels(), vec![Off, High, Xhigh]);
     assert_eq!(glm.default_thinking_level(), High);
 
     let chat = resolved(
