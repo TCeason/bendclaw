@@ -34,7 +34,8 @@ pub enum Verbosity {
 pub(crate) enum AnthropicThinkingWire {
     /// Claude: `{"type":"adaptive","display":"summarized"}` + `output_config.effort`.
     Adaptive,
-    /// Anthropic-compatible endpoints such as Kimi: `{"type":"enabled"}`.
+    /// Anthropic-compatible effort mode: enabled thinking with a token budget
+    /// plus `output_config.effort` (used by Kimi and Claude Opus 4.5).
     Enabled,
 }
 
@@ -117,6 +118,9 @@ pub(super) struct ModelCapabilities {
     pub(super) input: Vec<InputModality>,
     pub(super) reasoning: ReasoningCapabilities,
     pub(super) default_verbosity: Option<Verbosity>,
+    /// Resolved proactive compaction threshold. `None` means the model was not
+    /// found in the catalog and context management should use safe fallback headroom.
+    pub(super) compaction_limit: Option<u32>,
     pub(super) remote_compaction: bool,
 }
 

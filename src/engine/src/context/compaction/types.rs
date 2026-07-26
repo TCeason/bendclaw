@@ -1,7 +1,6 @@
 //! Compaction types — data structures for the compaction system.
 
 use std::collections::BTreeSet;
-use std::ops::Range;
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -95,33 +94,6 @@ pub enum TriggerDecision {
     /// attempted this turn. Do not retry — surface a user-visible message so
     /// the user can reduce context or switch to a larger-context model.
     OverflowExhausted { context_tokens: usize },
-}
-
-// ---------------------------------------------------------------------------
-// Planner
-// ---------------------------------------------------------------------------
-
-/// Describes the zones of a compaction plan.
-///
-/// pi pins no head, so a plan is just "evict everything before the retained
-/// tail"; the summary represents all evicted history.
-#[derive(Debug, Clone)]
-pub struct CompactionPlan {
-    /// Messages to evict (replaced by the compact memory summary).
-    pub evict_zone: Range<usize>,
-    /// Retained tail (recent work, kept in full).
-    pub retained_tail: Range<usize>,
-    /// If the cut point splits a turn, info about the split.
-    pub split_turn: Option<SplitTurn>,
-}
-
-/// When the cut point falls inside a turn (not at a user message boundary).
-#[derive(Debug, Clone)]
-pub struct SplitTurn {
-    /// Index of the user message that started this turn.
-    pub turn_start: usize,
-    /// Index where the retained tail begins (mid-turn).
-    pub cut_at: usize,
 }
 
 // ---------------------------------------------------------------------------

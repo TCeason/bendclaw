@@ -188,6 +188,7 @@ async fn test_compaction_state_persists_across_submits() {
             max_context_tokens: 1_000,
             system_prompt_tokens: 0,
             reserve_tokens: Some(125),
+            trigger_tokens: None,
             keep_recent_tokens: Some(100),
         });
 

@@ -24,7 +24,16 @@ pub fn summarize(input: &SummarizerInput) -> SummarizerOutput {
         sections.push(format!("Previous compacted context:\n{previous}"));
     }
 
-    // Section 3: Completed user requests
+    // Section 3: User guidance for this compaction (manual `/compact` focus).
+    if let Some(instructions) = input
+        .custom_instructions
+        .as_deref()
+        .filter(|text| !text.trim().is_empty())
+    {
+        sections.push(format!("Additional focus:\n{}", instructions.trim()));
+    }
+
+    // Section 4: Completed user requests
     if !input.completed_requests.is_empty() {
         let mut s = String::from("Completed requests (do not revisit):");
         for req in &input.completed_requests {

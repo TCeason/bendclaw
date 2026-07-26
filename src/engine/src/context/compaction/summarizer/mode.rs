@@ -11,7 +11,7 @@ use super::types::SummarizerOutput;
 use crate::provider::StreamProvider;
 use crate::types::ThinkingLevel;
 
-pub const DEFAULT_SUMMARY_RESERVE_TOKENS: u32 = 16_384;
+pub const DEFAULT_SUMMARY_RESERVE_TOKENS: u32 = 8_000;
 
 /// LLM-generated structured summary configuration.
 #[derive(Debug, Clone)]
@@ -27,7 +27,8 @@ impl Default for SummarizerMode {
     }
 }
 
-/// Context needed for LLM summarization (passed by caller, not stored).
+/// Context needed for an LLM summary or provider-native remote compaction.
+#[derive(Clone)]
 pub struct SummarizerContext {
     pub provider: Arc<dyn StreamProvider>,
     pub model: String,
@@ -47,20 +48,35 @@ pub struct SummarizerContext {
 }
 
 impl SummarizerMode {
-    /// Generate a summary for threshold/manual compaction.
+    pub fn reserve_tokens(&self) -> u32 {
+        match self {
+            Self::Llm { reserve_tokens } => *reserve_tokens,
+        }
+    }
+
+    /// Generate a summary with the mode's configured output budget.
     pub async fn summarize(
         &self,
         input: SummarizerInput,
         ctx: Option<&SummarizerContext>,
         cancel: CancellationToken,
     ) -> Result<SummarizerOutput, SummarizerError> {
+        self.summarize_with_reserve(input, ctx, self.reserve_tokens(), cancel)
+            .await
+    }
+
+    /// Generate a summary with a context-adjusted output budget.
+    pub async fn summarize_with_reserve(
+        &self,
+        input: SummarizerInput,
+        ctx: Option<&SummarizerContext>,
+        reserve_tokens: u32,
+        cancel: CancellationToken,
+    ) -> Result<SummarizerOutput, SummarizerError> {
+        let ctx = ctx
+            .ok_or_else(|| SummarizerError::Failed("LLM mode requires SummarizerContext".into()))?;
         match self {
-            Self::Llm { reserve_tokens } => {
-                let ctx = ctx.ok_or_else(|| {
-                    SummarizerError::Failed("LLM mode requires SummarizerContext".into())
-                })?;
-                llm::summarize(input, ctx, *reserve_tokens, cancel).await
-            }
+            Self::Llm { .. } => llm::summarize(input, ctx, reserve_tokens, cancel).await,
         }
     }
 }

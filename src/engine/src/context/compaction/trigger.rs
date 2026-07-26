@@ -95,7 +95,7 @@ pub fn evaluate(input: &TriggerInput, config: &CompactionConfig) -> TriggerDecis
     }
 
     // Case 4: Threshold — context approaching limit.
-    if window_known && context_tokens > config.trigger_threshold() {
+    if window_known && context_tokens >= config.trigger_threshold() {
         return TriggerDecision::Threshold { context_tokens };
     }
 
@@ -103,6 +103,11 @@ pub fn evaluate(input: &TriggerInput, config: &CompactionConfig) -> TriggerDecis
 }
 
 fn calculate_context_tokens(usage: &UsageSnapshot) -> usize {
+    context_tokens(usage)
+}
+
+/// Effective context tokens represented by a usage snapshot.
+pub fn context_tokens(usage: &UsageSnapshot) -> usize {
     if usage.total_tokens > 0 {
         usage.total_tokens
     } else {

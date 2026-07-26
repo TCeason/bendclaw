@@ -10,16 +10,40 @@ use crate::types::*;
 /// Conversation serialization follows pi's newest-biased branch-summary
 /// budgeting while preserving the original goal at the head.
 const SUMMARIZER_OMISSION_MARKER: &str = "[... middle messages omitted for summarization ...]";
-/// Max chars per tool result in serialized output (prevents bloat).
+/// Max chars per tool result in detailed serialized output (prevents bloat).
 const TOOL_RESULT_MAX_CHARS: usize = 2000;
 
-/// Prepare a SummarizerInput from raw messages and state.
-/// Bridge between executor (which has messages) and summarizer (which wants text).
+/// Controls provider-specific/tool-heavy message rendering. The abbreviated
+/// form is used only after a summarizer context-limit failure.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SerializationOptions {
+    pub abbreviate_tools: bool,
+}
+
+/// Prepare detailed summarizer input (normal path).
 pub fn prepare_input(
     evicted: &[AgentMessage],
     split_prefix: Option<&[AgentMessage]>,
     prev_state: Option<&CompactionState>,
     config: &CompactionConfig,
+) -> SummarizerInput {
+    prepare_input_with_options(
+        evicted,
+        split_prefix,
+        prev_state,
+        config,
+        SerializationOptions::default(),
+    )
+}
+
+/// Prepare a SummarizerInput from raw messages and state.
+/// Bridge between executor (which has messages) and summarizer (which wants text).
+pub fn prepare_input_with_options(
+    evicted: &[AgentMessage],
+    split_prefix: Option<&[AgentMessage]>,
+    prev_state: Option<&CompactionState>,
+    config: &CompactionConfig,
+    options: SerializationOptions,
 ) -> SummarizerInput {
     let input_max_bytes = config.summarizer_input_max_bytes();
     let previous_summary = prev_state
@@ -27,9 +51,11 @@ pub fn prepare_input(
         .map(|summary| truncate_summary(summary, config.summary_max_bytes));
     let conversation_budget = input_max_bytes
         .saturating_sub(previous_summary.as_ref().map_or(0, |summary| summary.len()));
-    let conversation = serialize_messages_bounded(evicted, conversation_budget);
-    let turn_prefix =
-        split_prefix.map(|messages| serialize_messages_bounded(messages, input_max_bytes));
+    let conversation =
+        serialize_messages_bounded_with_options(evicted, conversation_budget, options);
+    let turn_prefix = split_prefix.map(|messages| {
+        serialize_messages_bounded_with_options(messages, input_max_bytes, options)
+    });
     let file_ops = memory::extract_file_ops(evicted, prev_state);
     let completed_requests = memory::extract_user_requests(evicted);
     let env_discoveries = memory::extract_env_discoveries(evicted, prev_state);
@@ -53,7 +79,15 @@ pub fn prepare_input(
 /// progress within a strict byte budget. The output is plain summarizer input,
 /// so omitting whole middle messages cannot break provider tool-call pairing.
 pub fn serialize_messages_bounded(messages: &[AgentMessage], max_bytes: usize) -> String {
-    let parts = serialize_message_parts(messages);
+    serialize_messages_bounded_with_options(messages, max_bytes, SerializationOptions::default())
+}
+
+pub fn serialize_messages_bounded_with_options(
+    messages: &[AgentMessage],
+    max_bytes: usize,
+    options: SerializationOptions,
+) -> String {
+    let parts = serialize_message_parts(messages, options);
     let full = parts.join("\n\n");
     if full.len() <= max_bytes {
         return full;
@@ -77,10 +111,13 @@ pub fn serialize_messages_bounded(messages: &[AgentMessage], max_bytes: usize) -
 
 /// Serialize messages to a text representation for the LLM.
 pub fn serialize_messages(messages: &[AgentMessage]) -> String {
-    serialize_message_parts(messages).join("\n\n")
+    serialize_message_parts(messages, SerializationOptions::default()).join("\n\n")
 }
 
-fn serialize_message_parts(messages: &[AgentMessage]) -> Vec<String> {
+fn serialize_message_parts(
+    messages: &[AgentMessage],
+    options: SerializationOptions,
+) -> Vec<String> {
     let mut parts: Vec<String> = Vec::new();
 
     for msg in messages {
@@ -100,12 +137,19 @@ fn serialize_message_parts(messages: &[AgentMessage]) -> Vec<String> {
                 for block in content {
                     match block {
                         Content::Text { text } => text_parts.push(text),
-                        Content::Thinking { thinking, .. } => thinking_parts.push(thinking),
+                        Content::Thinking { thinking, .. } if !options.abbreviate_tools => {
+                            thinking_parts.push(thinking)
+                        }
+                        Content::Thinking { .. } => {}
                         Content::ToolCall {
                             name, arguments, ..
                         } => {
-                            let args_str = arguments.to_string();
-                            tool_calls.push(format!("{name}({args_str})"));
+                            if options.abbreviate_tools {
+                                tool_calls.push(name.clone());
+                            } else {
+                                let args_str = arguments.to_string();
+                                tool_calls.push(format!("{name}({args_str})"));
+                            }
                         }
                         _ => {}
                     }
@@ -125,11 +169,23 @@ fn serialize_message_parts(messages: &[AgentMessage]) -> Vec<String> {
                         .push(format!("[Assistant tool calls]: {}", tool_calls.join("; ")));
                 }
             }
-            AgentMessage::Llm(Message::ToolResult { content, .. }) => {
-                let text = extract_text_content(content);
-                if !text.is_empty() {
-                    let truncated = truncate_for_summary(&text, TOOL_RESULT_MAX_CHARS);
-                    message_parts.push(format!("[Tool result]: {truncated}"));
+            AgentMessage::Llm(Message::ToolResult {
+                tool_name,
+                content,
+                is_error,
+                ..
+            }) => {
+                if options.abbreviate_tools {
+                    let status = if *is_error { "error" } else { "ok" };
+                    message_parts.push(format!(
+                        "[Tool result: {tool_name}, status={status}, details omitted]"
+                    ));
+                } else {
+                    let text = extract_text_content(content);
+                    if !text.is_empty() {
+                        let truncated = truncate_for_summary(&text, TOOL_RESULT_MAX_CHARS);
+                        message_parts.push(format!("[Tool result]: {truncated}"));
+                    }
                 }
             }
             _ => {}

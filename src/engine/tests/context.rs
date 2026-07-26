@@ -10,14 +10,14 @@ mod executor;
 mod history;
 #[path = "context/memory.rs"]
 mod memory;
-#[path = "context/planner.rs"]
-mod planner;
+#[path = "context/plan.rs"]
+mod plan;
 #[path = "context/remote.rs"]
 mod remote;
-#[path = "context/session.rs"]
-mod session;
 #[path = "context/summarizer.rs"]
 mod summarizer;
+#[path = "context/summary.rs"]
+mod summary;
 #[path = "context/tokens.rs"]
 mod tokens;
 #[path = "context/tracking.rs"]

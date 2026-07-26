@@ -17,7 +17,8 @@ const GROK_REASONING: ReasoningProfile = ReasoningProfile {
 
 #[rustfmt::skip]
 const PROFILES: &[(&str, ModelProfile)] = &[
-    ("grok-4.5", ModelProfile { max_input_tokens: 200_000, max_output_tokens: 63_356, reasoning: GROK_REASONING, ..BASE }),
+    // xAI's 500k model window; 200k is only the higher-price prompt tier.
+    ("grok-4.5", ModelProfile { max_input_tokens: 500_000, max_output_tokens: 63_356, reasoning: GROK_REASONING, ..BASE }),
     ("grok-composer-2.5-fast", ModelProfile { max_input_tokens: 200_000, max_output_tokens: 200_000, vision: false, reasoning: NO_REASONING, ..BASE }),
 ];
 

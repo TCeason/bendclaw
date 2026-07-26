@@ -4,18 +4,31 @@ use tokio_util::sync::CancellationToken;
 
 use super::config::CompactionConfig;
 use super::executor;
-use super::planner;
+use super::executor::ExecutionResult;
+use super::plan;
 use super::summarizer::mode::SummarizerContext;
+use super::summary::LlmPolicy;
+use super::summary::SummaryContexts;
 use super::trigger::TriggerInput;
 use super::trigger::{self};
 use super::types::*;
 use crate::types::AgentMessage;
+
+/// Threshold-compaction suppression key (droid-style): once a threshold
+/// compaction failed to bring usage back under the limit, further threshold
+/// compactions for the same model/threshold are skipped until usage recovers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ThresholdKey {
+    model: ModelId,
+    threshold: usize,
+}
 
 /// Stateful controller that lives across turns in the agent loop.
 pub struct CompactionController {
     config: CompactionConfig,
     overflow_recovery_attempted: bool,
     last_compaction_ts: Option<u64>,
+    threshold_suppression: Option<ThresholdKey>,
     /// Cross-compaction state (previous summary, cumulative file ops).
     /// Seeded from the session's last compaction on resume so follow-up
     /// compactions update the existing summary instead of restarting.
@@ -29,6 +42,7 @@ impl CompactionController {
             config,
             overflow_recovery_attempted: false,
             last_compaction_ts: None,
+            threshold_suppression: None,
             state: CompactionState::default(),
             observer: None,
         }
@@ -70,9 +84,8 @@ impl CompactionController {
         self.overflow_recovery_attempted = false;
     }
 
-    /// Evaluate whether compaction should run after an assistant response.
-    /// If compaction runs, mutates `messages` in place.
-    /// Returns what the loop should do next.
+    /// Evaluate compaction using one model context for both remote and local
+    /// summary stages.
     pub async fn after_response(
         &mut self,
         messages: &mut Vec<AgentMessage>,
@@ -81,12 +94,33 @@ impl CompactionController {
         summarizer_ctx: Option<&SummarizerContext>,
         cancel: CancellationToken,
     ) -> CompactionResponse {
+        self.after_response_with_contexts(
+            messages,
+            usage,
+            current_model,
+            SummaryContexts::same(summarizer_ctx),
+            cancel,
+        )
+        .await
+    }
+
+    /// Evaluate whether compaction should run after an assistant response.
+    /// Remote and local LLM stages may use different model contexts.
+    pub async fn after_response_with_contexts(
+        &mut self,
+        messages: &mut Vec<AgentMessage>,
+        usage: &UsageSnapshot,
+        current_model: &ModelId,
+        contexts: SummaryContexts<'_>,
+        cancel: CancellationToken,
+    ) -> CompactionResponse {
         let trigger_input = TriggerInput {
             usage: Some(usage.clone()),
             current_model: current_model.clone(),
             last_compaction_ts: self.last_compaction_ts,
             overflow_recovery_attempted: self.overflow_recovery_attempted,
         };
+        self.clear_suppression_if_recovered(usage, current_model);
 
         match trigger::evaluate(&trigger_input, &self.config) {
             TriggerDecision::Skip => CompactionResponse::skip(),
@@ -108,8 +142,15 @@ impl CompactionController {
                 // The provider request is retried only after compaction
                 // completed; cancellation or no plan leaves the turn terminal
                 // instead of resending the same oversized context.
+                let request_overhead_tokens = contexts.request_overhead_tokens();
                 let mut stats = self
-                    .run_compaction(messages, summarizer_ctx, true, cancel.clone())
+                    .run_compaction(
+                        messages,
+                        contexts,
+                        request_overhead_tokens,
+                        LlmPolicy::Required,
+                        cancel.clone(),
+                    )
                     .await;
                 if will_retry && stats.is_none() && !cancel.is_cancelled() {
                     // Recovery must not depend on a second model call: the
@@ -120,7 +161,13 @@ impl CompactionController {
                     // deterministic emergency summary so one compact-and-retry
                     // still happens.
                     stats = self
-                        .run_compaction(messages, None, false, cancel.clone())
+                        .run_compaction(
+                            messages,
+                            SummaryContexts::default(),
+                            request_overhead_tokens,
+                            LlmPolicy::Skip,
+                            cancel.clone(),
+                        )
                         .await;
                 }
                 let retry_after_compaction = will_retry && stats.is_some();
@@ -159,47 +206,49 @@ impl CompactionController {
             }
 
             TriggerDecision::Threshold { context_tokens } => {
-                let stats = self
-                    .run_compaction(messages, summarizer_ctx, true, cancel)
-                    .await;
-                CompactionResponse {
-                    action: AfterResponseAction::Continue,
-                    stats,
-                    reason: Some(CompactReason::Threshold),
-                    context_tokens: Some(context_tokens),
-                    overflow_exhausted: false,
-                    overflow_recovery_failed: false,
-                }
+                self.threshold_compact(messages, context_tokens, current_model, contexts, cancel)
+                    .await
             }
         }
     }
 
-    /// Threshold compaction from the latest real usage anchor plus trailing
-    /// messages. Used for error and all-zero responses, matching pi's
-    /// `_checkCompaction` fallback. Overflow detection still requires the
-    /// response's direct signal and is handled by `after_response`.
+    /// Estimate-driven threshold check using one model for all summary stages.
     pub async fn compact_on_estimate(
         &mut self,
         messages: &mut Vec<AgentMessage>,
         estimated_tokens: usize,
+        current_model: &ModelId,
         summarizer_ctx: Option<&SummarizerContext>,
         cancel: CancellationToken,
     ) -> CompactionResponse {
-        if self.config.context_window > 0 && estimated_tokens > self.config.trigger_threshold() {
-            let stats = self
-                .run_compaction(messages, summarizer_ctx, true, cancel)
-                .await;
-            return CompactionResponse {
-                action: AfterResponseAction::Continue,
-                stats,
-                reason: Some(CompactReason::Threshold),
-                context_tokens: Some(estimated_tokens),
-                overflow_exhausted: false,
-                overflow_recovery_failed: false,
-            };
-        }
+        self.compact_on_estimate_with_contexts(
+            messages,
+            estimated_tokens,
+            current_model,
+            SummaryContexts::same(summarizer_ctx),
+            cancel,
+        )
+        .await
+    }
 
-        CompactionResponse::skip()
+    /// Estimate-driven threshold check with independent summary contexts.
+    pub async fn compact_on_estimate_with_contexts(
+        &mut self,
+        messages: &mut Vec<AgentMessage>,
+        estimated_tokens: usize,
+        current_model: &ModelId,
+        contexts: SummaryContexts<'_>,
+        cancel: CancellationToken,
+    ) -> CompactionResponse {
+        if self.config.context_window == 0 {
+            return CompactionResponse::skip();
+        }
+        if estimated_tokens < self.config.trigger_threshold() {
+            self.clear_suppression_for(current_model);
+            return CompactionResponse::skip();
+        }
+        self.threshold_compact(messages, estimated_tokens, current_model, contexts, cancel)
+            .await
     }
 
     /// Force a compaction (e.g., manual trigger from user command).
@@ -209,15 +258,96 @@ impl CompactionController {
         summarizer_ctx: Option<&SummarizerContext>,
         cancel: CancellationToken,
     ) -> Option<CompactionStats> {
-        self.run_compaction(messages, summarizer_ctx, true, cancel)
-            .await
+        let contexts = SummaryContexts::same(summarizer_ctx);
+        let request_overhead_tokens = contexts.request_overhead_tokens();
+        self.run_compaction(
+            messages,
+            contexts,
+            request_overhead_tokens,
+            LlmPolicy::Required,
+            cancel,
+        )
+        .await
+    }
+
+    /// Shared threshold path: honor suppression, compact, then arm suppression
+    /// so a compaction that could not lower usage does not repeat every turn.
+    async fn threshold_compact(
+        &mut self,
+        messages: &mut Vec<AgentMessage>,
+        context_tokens: usize,
+        current_model: &ModelId,
+        contexts: SummaryContexts<'_>,
+        cancel: CancellationToken,
+    ) -> CompactionResponse {
+        let key = ThresholdKey {
+            model: current_model.clone(),
+            threshold: self.config.trigger_threshold(),
+        };
+        if self.threshold_suppression.as_ref() == Some(&key) {
+            tracing::debug!(
+                context_tokens,
+                threshold = key.threshold,
+                "threshold compaction suppressed: previous compaction did not lower usage"
+            );
+            return CompactionResponse::skip();
+        }
+
+        let request_overhead_tokens = contexts.request_overhead_tokens();
+        let stats = self
+            .run_compaction(
+                messages,
+                contexts,
+                request_overhead_tokens,
+                LlmPolicy::Required,
+                cancel,
+            )
+            .await;
+        if stats.is_some() {
+            self.threshold_suppression = Some(key);
+        }
+        CompactionResponse {
+            action: AfterResponseAction::Continue,
+            stats,
+            reason: Some(CompactReason::Threshold),
+            context_tokens: Some(context_tokens),
+            overflow_exhausted: false,
+            overflow_recovery_failed: false,
+        }
+    }
+
+    /// Post-compaction usage back under the threshold re-arms threshold
+    /// compaction. Stale usage (predating the last compaction) is ignored.
+    fn clear_suppression_if_recovered(&mut self, usage: &UsageSnapshot, current_model: &ModelId) {
+        if self.config.context_window == 0 || usage.model != *current_model {
+            return;
+        }
+        if let Some(last_ts) = self.last_compaction_ts {
+            if usage.timestamp > 0 && last_ts > 0 && usage.timestamp <= last_ts {
+                return;
+            }
+        }
+        if trigger::context_tokens(usage) <= self.config.trigger_threshold() {
+            self.clear_suppression_for(current_model);
+        }
+    }
+
+    fn clear_suppression_for(&mut self, current_model: &ModelId) {
+        if self
+            .threshold_suppression
+            .as_ref()
+            .is_some_and(|key| key.model == *current_model)
+        {
+            self.threshold_suppression = None;
+        }
     }
 
     async fn run_compaction(
         &mut self,
         messages: &mut Vec<AgentMessage>,
-        summarizer_ctx: Option<&SummarizerContext>,
-        use_llm_fallback: bool,
+        contexts: SummaryContexts<'_>,
+        request_overhead_tokens: usize,
+        llm_policy: LlmPolicy,
         cancel: CancellationToken,
     ) -> Option<CompactionStats> {
         // A resumed context already contains the previous summary as a user
@@ -235,43 +365,44 @@ impl CompactionController {
             })
             .map(|index| (index, messages.remove(index)));
 
-        let Some(plan) = planner::plan(messages, &self.config) else {
+        let retained_tail = self.config.retained_tail_budget(request_overhead_tokens);
+        let Some(plan) = plan::plan_messages(messages, retained_tail) else {
             restore_removed_summary(messages, removed_summary);
             return None;
         };
         notify_compaction_phase(&self.observer, CompactionPhase::Planning);
 
-        // For overflow, summarizer_ctx is None which triggers emergency summary.
-        let outcome = executor::execute_with_options(
+        let result = executor::execute_with_contexts(
             std::mem::take(messages),
             &plan,
             &self.config,
             Some(&self.state),
-            summarizer_ctx,
+            contexts,
             executor::ExecutionOptions {
-                use_llm_fallback,
+                llm_policy,
                 observer: self.observer.clone(),
                 cancel: cancel.clone(),
             },
         )
         .await;
 
-        // If stats are default (all zeros), LLM failed — compaction didn't happen.
-        if outcome.stats.before_message_count == 0 {
-            *messages = outcome.messages;
-            restore_removed_summary(messages, removed_summary);
-            if !cancel.is_cancelled() {
-                notify_compaction_phase(&self.observer, CompactionPhase::Complete);
+        match result {
+            ExecutionResult::Skipped(returned) => {
+                *messages = returned;
+                restore_removed_summary(messages, removed_summary);
+                if !cancel.is_cancelled() {
+                    notify_compaction_phase(&self.observer, CompactionPhase::Complete);
+                }
+                None
             }
-            return None;
+            ExecutionResult::Compacted(outcome) => {
+                *messages = outcome.messages;
+                self.state = outcome.state;
+                self.last_compaction_ts = Some(self.state.timestamp);
+                notify_compaction_phase(&self.observer, CompactionPhase::Complete);
+                Some(outcome.stats)
+            }
         }
-
-        *messages = outcome.messages;
-        self.state = outcome.state;
-        self.last_compaction_ts = Some(self.state.timestamp);
-        notify_compaction_phase(&self.observer, CompactionPhase::Complete);
-
-        Some(outcome.stats)
     }
 }
 

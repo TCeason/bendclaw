@@ -282,15 +282,45 @@ fn anthropic_version_rules_cover_current_and_future_models() {
         "claude-sonnet-4-20250514",
         "claude-sonnet-4-5",
         "claude-haiku-4-5",
-        "claude-opus-4-1",
     ] {
         let config = ModelConfig::anthropic(id, id);
         assert_eq!(config.context_window(), 200_000, "{id}");
         assert_eq!(config.max_tokens(), 64_000, "{id}");
     }
-    let legacy = ModelConfig::anthropic("claude-3-opus-20240229", "Opus 3");
-    assert_eq!(legacy.context_window(), 200_000);
-    assert_eq!(legacy.max_tokens(), 8_192);
+    let opus_4_5 = ModelConfig::anthropic("claude-opus-4-5", "Claude Opus 4.5");
+    assert_eq!(opus_4_5.context_window(), 200_000);
+    assert_eq!(opus_4_5.max_tokens(), 64_000);
+}
+
+#[test]
+fn compaction_limits_follow_existing_model_profiles() {
+    let gpt = ModelConfig::openai("gpt-5.5", "GPT-5.5");
+    assert_eq!(gpt.context_window(), 922_000);
+    assert_eq!(gpt.default_compaction_limit(ThinkingLevel::Medium), 250_000);
+
+    let adaptive = ModelConfig::anthropic("claude-opus-4-6", "Claude Opus 4.6");
+    assert_eq!(adaptive.context_window(), 867_000);
+    assert_eq!(
+        adaptive.default_compaction_limit(ThinkingLevel::High),
+        250_000
+    );
+
+    let budget_based = ModelConfig::anthropic("claude-sonnet-4-20250514", "Claude Sonnet 4");
+    assert_eq!(budget_based.context_window(), 200_000);
+    assert_eq!(
+        budget_based.default_compaction_limit(ThinkingLevel::High),
+        180_000
+    );
+
+    let kimi = ModelConfig::anthropic("kimi-for-coding", "Kimi for Coding");
+    assert_eq!(kimi.context_window(), 196_608);
+    assert_eq!(kimi.default_compaction_limit(ThinkingLevel::High), 196_608);
+
+    // xAI documents 500k as the model window; 200k is only its higher-price
+    // prompt tier boundary.
+    let grok = ModelConfig::openai("grok-4.5", "Grok 4.5");
+    assert_eq!(grok.context_window(), 500_000);
+    assert_eq!(grok.default_compaction_limit(ThinkingLevel::High), 250_000);
 }
 
 #[test]

@@ -38,11 +38,14 @@ pub fn truncate_summary(summary: &str, max_bytes: usize) -> String {
 #[derive(Debug, Clone)]
 pub struct CompactionConfig {
     // — Trigger —
-    /// Context window size (total tokens the model accepts).
+    /// Effective request-input limit for the active model.
     pub context_window: usize,
     /// Tokens reserved for output + system prompt + tool defs.
-    /// Trigger threshold = context_window - reserve_tokens.
     pub reserve_tokens: usize,
+    /// Explicit compaction trigger. `None` uses `context_window - reserve_tokens`.
+    /// Kept separate from output headroom so per-model policy does not distort
+    /// summary input/output budgets.
+    pub trigger_tokens: Option<usize>,
 
     // — Planner —
     /// Token budget for the retained tail (recent messages to keep in full).
@@ -56,17 +59,19 @@ pub struct CompactionConfig {
     pub summary_max_bytes: usize,
 }
 
-/// Tokens reserved for output + system prompt + tool defs. Fixed rather than a
-/// share of the window, mirroring pi's `DEFAULT_COMPACTION_SETTINGS`: the
-/// reserve covers a response, not a fraction of history, so scaling it with the
-/// window over-reserves on large-context models.
+/// Tokens reserved for output + system prompt + tool defs. This is a fixed
+/// fallback for models without an explicit profile threshold.
 pub const DEFAULT_RESERVE_TOKENS: usize = 16_384;
-/// Token budget for the retained tail. Also fixed, for the same reason.
-pub const DEFAULT_KEEP_RECENT_TOKENS: usize = 20_000;
+/// Maximum context retained immediately after compaction. Droid targets 40k;
+/// the summary and active request overhead are deducted from this envelope.
+pub const DEFAULT_POST_COMPACTION_TOKENS: usize = 40_000;
+/// Default retained-message ceiling before active request overhead is deducted.
+pub const DEFAULT_KEEP_RECENT_TOKENS: usize = DEFAULT_POST_COMPACTION_TOKENS
+    - super::summarizer::mode::DEFAULT_SUMMARY_RESERVE_TOKENS as usize;
 /// Maximum UTF-8 bytes for a summary inserted back into model context. Provider
 /// output limits are token-based and do not protect deterministic fallbacks or
 /// oversized summaries restored from older sessions.
-pub const DEFAULT_SUMMARY_MAX_BYTES: usize = 64 * 1024;
+pub const DEFAULT_SUMMARY_MAX_BYTES: usize = 32 * 1024;
 /// Absolute byte ceiling for each complete summarizer user prompt. The effective
 /// budget is also bounded by the model's context window via
 /// `summarizer_input_max_bytes()`.
@@ -74,11 +79,12 @@ pub const SUMMARIZER_INPUT_MAX_BYTES: usize = 512 * 1024;
 const ESTIMATED_BYTES_PER_TOKEN: usize = 4;
 
 impl CompactionConfig {
-    /// Derive config from a context config (uses max_context_tokens as the window).
+    /// Derive config from an effective request-input limit.
     pub fn from_context_window(context_window: usize) -> Self {
         Self {
             context_window,
             reserve_tokens: DEFAULT_RESERVE_TOKENS,
+            trigger_tokens: None,
             keep_recent_tokens: DEFAULT_KEEP_RECENT_TOKENS,
             summarizer_mode: SummarizerMode::default(),
             summary_max_bytes: DEFAULT_SUMMARY_MAX_BYTES,
@@ -87,35 +93,69 @@ impl CompactionConfig {
 
     /// Build from a `ContextConfig`, respecting user-customized fields.
     pub fn from_context_config(ctx: &crate::context::tracking::ContextConfig) -> Self {
-        // ContextConfig.max_context_tokens is the full context window.
+        // ContextConfig.max_context_tokens is the effective input limit.
         // Output headroom is reserved here via reserve_tokens (single source
         // of headroom), so trigger threshold = window - reserve_tokens.
         let mut cfg = Self::from_context_window(ctx.max_context_tokens);
         if let Some(reserve) = ctx.reserve_tokens {
             cfg.reserve_tokens = reserve;
         }
+        cfg.trigger_tokens = ctx.trigger_tokens;
         if let Some(keep_recent) = ctx.keep_recent_tokens {
             cfg.keep_recent_tokens = keep_recent;
         }
         cfg
     }
 
-    /// Input budget for each complete summarizer user prompt. This follows pi's
-    /// branch-summary budget (`context window - reserve`) and adds a transport
-    /// ceiling so compaction cannot emit another multi-megabyte request.
+    pub fn post_compaction_target(&self) -> usize {
+        if self.context_window == 0 {
+            DEFAULT_POST_COMPACTION_TOKENS
+        } else {
+            DEFAULT_POST_COMPACTION_TOKENS.min(self.context_window)
+        }
+    }
+
+    /// Summary budget used by both planning and generation. Tiny model windows
+    /// keep at least half of the post-compaction envelope for retained context.
+    pub fn summary_reserve_tokens(&self) -> usize {
+        (self.summarizer_mode.reserve_tokens() as usize).min(self.post_compaction_target() / 2)
+    }
+
+    /// Effective byte bound for generated and deterministic summaries.
+    pub fn summary_max_bytes(&self) -> usize {
+        self.summary_max_bytes.min(
+            self.summary_reserve_tokens()
+                .saturating_mul(ESTIMATED_BYTES_PER_TOKEN),
+        )
+    }
+
+    /// Retained-message budget inside the post-compaction envelope.
+    pub fn retained_tail_budget(&self, request_overhead_tokens: usize) -> usize {
+        let envelope_budget = self
+            .post_compaction_target()
+            .saturating_sub(self.summary_reserve_tokens())
+            .saturating_sub(request_overhead_tokens);
+        self.keep_recent_tokens.min(envelope_budget)
+    }
+
+    /// Input budget for each complete summarizer user prompt. It uses the
+    /// context window minus output headroom and an absolute transport ceiling.
     pub fn summarizer_input_max_bytes(&self) -> usize {
         if self.context_window == 0 {
             return SUMMARIZER_INPUT_MAX_BYTES;
         }
+        let output_headroom = self.reserve_tokens.min(self.context_window / 2);
         self.context_window
-            .saturating_sub(self.reserve_tokens)
+            .saturating_sub(output_headroom)
             .saturating_mul(ESTIMATED_BYTES_PER_TOKEN)
             .min(SUMMARIZER_INPUT_MAX_BYTES)
     }
 
     /// Token threshold that triggers compaction.
     pub fn trigger_threshold(&self) -> usize {
-        self.context_window.saturating_sub(self.reserve_tokens)
+        self.trigger_tokens
+            .unwrap_or_else(|| self.context_window.saturating_sub(self.reserve_tokens))
+            .min(self.context_window)
     }
 }
 

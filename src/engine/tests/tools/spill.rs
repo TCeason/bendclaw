@@ -273,6 +273,8 @@ async fn test_agent_loop_spill_integration() {
         get_steering_messages: None,
         get_follow_up_messages: None,
         context_config: None,
+        compaction_context: None,
+        compaction_fallback_context: None,
         initial_compaction_state: None,
         execution_limits: None,
         cache_config: CacheConfig::default(),

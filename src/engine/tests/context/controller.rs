@@ -91,6 +91,7 @@ fn config_small() -> CompactionConfig {
     CompactionConfig {
         context_window: 10_000,
         reserve_tokens: 2_000,
+        trigger_tokens: None,
         keep_recent_tokens: 1_000,
         summarizer_mode: SummarizerMode::default(),
         summary_max_bytes: 4000,
@@ -114,7 +115,13 @@ async fn controller_reports_live_local_phase_order() {
     }
 
     let result = ctrl
-        .compact_on_estimate(&mut messages, 9_000, None, CancellationToken::new())
+        .compact_on_estimate(
+            &mut messages,
+            9_000,
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
         .await;
     assert!(result.stats.is_some());
     let phases = phases.lock().unwrap_or_else(|error| error.into_inner());
@@ -277,7 +284,8 @@ async fn controller_retries_on_overflow() {
 
 #[tokio::test]
 async fn overflow_falls_back_to_emergency_when_summarizer_fails() {
-    let mut ctrl = CompactionController::new(config_small());
+    let config = config_small();
+    let mut ctrl = CompactionController::new(config.clone());
     let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];
     for _ in 0..20 {
         messages.push(user_msg(&big_text(300)));
@@ -299,7 +307,7 @@ async fn overflow_falls_back_to_emergency_when_summarizer_fails() {
         model: "test".into(),
         api_key: "key".into(),
         thinking_level: ThinkingLevel::Off,
-        system_prompt: String::new(),
+        system_prompt: big_text(2_400),
         tools: vec![],
         max_tokens: Some(1024),
         cache_config: CacheConfig::default(),
@@ -319,6 +327,12 @@ async fn overflow_falls_back_to_emergency_when_summarizer_fails() {
         error_message: Some("prompt is too long: 50000 tokens > 10000 maximum".into()),
     };
 
+    let planning_messages = messages[..messages.len() - 1].to_vec();
+    let overhead = evotengine::context::estimate_tokens(&ctx.system_prompt);
+    let expected_plan =
+        evotengine::plan_messages(&planning_messages, config.retained_tail_budget(overhead));
+    let expected_evicted = expected_plan.map(|plan| plan.first_kept);
+
     let response = ctrl
         .after_response(
             &mut messages,
@@ -331,6 +345,11 @@ async fn overflow_falls_back_to_emergency_when_summarizer_fails() {
 
     assert_eq!(response.action, AfterResponseAction::Retry);
     assert!(response.stats.is_some());
+    assert_eq!(
+        response.stats.as_ref().map(|stats| stats.messages_evicted),
+        expected_evicted,
+        "emergency degradation must preserve the active request overhead budget"
+    );
     assert!(!response.overflow_recovery_failed);
     assert!(messages.len() < original_count);
     assert!(
@@ -867,7 +886,13 @@ async fn estimate_compaction_does_not_reset_overflow_recovery() {
         messages.push(assistant_msg(&big_text(300)));
     }
     let _ = ctrl
-        .compact_on_estimate(&mut messages, 9_000, None, CancellationToken::new())
+        .compact_on_estimate(
+            &mut messages,
+            9_000,
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
         .await;
     messages.push(assistant_msg("second overflow"));
 
@@ -905,7 +930,13 @@ async fn compact_on_estimate_compacts_when_over_threshold() {
 
     // Estimate over the 8_000 threshold (window 10_000 - reserve 2_000).
     let response = ctrl
-        .compact_on_estimate(&mut messages, 9_000, None, CancellationToken::new())
+        .compact_on_estimate(
+            &mut messages,
+            9_000,
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
         .await;
 
     assert_eq!(response.action, AfterResponseAction::Continue);
@@ -923,10 +954,158 @@ async fn compact_on_estimate_skips_below_threshold() {
     let original_count = messages.len();
 
     let response = ctrl
-        .compact_on_estimate(&mut messages, 1_000, None, CancellationToken::new())
+        .compact_on_estimate(
+            &mut messages,
+            1_000,
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
         .await;
 
     assert_eq!(response.action, AfterResponseAction::Continue);
     assert!(response.stats.is_none());
     assert_eq!(messages.len(), original_count);
+}
+
+#[tokio::test]
+async fn threshold_suppression_skips_repeat_until_usage_recovers() {
+    // droid-style suppression: a threshold compaction that cannot bring usage
+    // back under the limit must not repeat every turn.
+    let mut ctrl = CompactionController::new(config_small());
+    let big_messages = || {
+        let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];
+        for _ in 0..20 {
+            messages.push(user_msg(&big_text(300)));
+            messages.push(assistant_msg(&big_text(300)));
+        }
+        messages.push(user_msg("recent"));
+        messages.push(assistant_msg("recent answer"));
+        messages
+    };
+    let over_threshold = |ts: u64| UsageSnapshot {
+        input: 9_000,
+        cache_read: 0,
+        cache_write: 0,
+        output: 100,
+        total_tokens: 0,
+        model: model_id(),
+        timestamp: ts,
+        stop_reason: StopReason::Stop,
+        error_message: None,
+    };
+    let base_ts = evotengine::context::now_ms() + 60_000;
+
+    // First over-threshold usage compacts and arms the suppression.
+    let mut messages = big_messages();
+    let first = ctrl
+        .after_response(
+            &mut messages,
+            &over_threshold(base_ts),
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(first.stats.is_some());
+
+    // Usage still over the threshold: suppressed, no second compaction.
+    let mut messages = big_messages();
+    let second = ctrl
+        .after_response(
+            &mut messages,
+            &over_threshold(base_ts + 1),
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(second.stats.is_none());
+    assert!(
+        second.reason.is_none(),
+        "suppressed threshold must be a skip"
+    );
+
+    // Usage recovered below the threshold: suppression clears...
+    let recovered = UsageSnapshot {
+        input: 500,
+        output: 100,
+        timestamp: base_ts + 2,
+        ..over_threshold(0)
+    };
+    let mut small = vec![user_msg("hello"), assistant_msg("hi")];
+    let third = ctrl
+        .after_response(
+            &mut small,
+            &recovered,
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(third.stats.is_none());
+
+    // ...so the next over-threshold usage compacts again.
+    let mut messages = big_messages();
+    let fourth = ctrl
+        .after_response(
+            &mut messages,
+            &over_threshold(base_ts + 3),
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(fourth.stats.is_some());
+}
+
+#[tokio::test]
+async fn threshold_suppression_is_scoped_to_the_model() {
+    let mut ctrl = CompactionController::new(config_small());
+    let big_messages = || {
+        let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];
+        for _ in 0..20 {
+            messages.push(user_msg(&big_text(300)));
+            messages.push(assistant_msg(&big_text(300)));
+        }
+        messages
+    };
+    let base_ts = evotengine::context::now_ms() + 60_000;
+
+    let mut messages = big_messages();
+    let first = ctrl
+        .compact_on_estimate(
+            &mut messages,
+            9_000,
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(first.stats.is_some());
+
+    // Same model, still over: suppressed.
+    let mut messages = big_messages();
+    let second = ctrl
+        .compact_on_estimate(
+            &mut messages,
+            9_000,
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(second.stats.is_none());
+
+    // A different model has its own boundary: not suppressed.
+    let other = ModelId {
+        provider: "test".into(),
+        model: "other".into(),
+    };
+    let mut messages = big_messages();
+    let third = ctrl
+        .compact_on_estimate(&mut messages, 9_000, &other, None, CancellationToken::new())
+        .await;
+    assert!(third.stats.is_some(), "suppression must be per-model");
+    let _ = base_ts;
 }

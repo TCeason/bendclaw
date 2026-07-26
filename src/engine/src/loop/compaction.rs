@@ -12,6 +12,7 @@ use crate::context::CompactionResponse;
 use crate::context::ContextTracker;
 use crate::context::ModelId;
 use crate::context::SummarizerContext;
+use crate::context::SummaryContexts;
 use crate::context::UsageSnapshot;
 use crate::types::*;
 
@@ -103,15 +104,15 @@ pub(super) async fn check_compaction(
             .to_string(),
         model: config.model.clone(),
     };
-    let summarizer_ctx = request_shape.summarizer_context(config);
+    let remote_ctx = request_shape.summarizer_context(config);
+    let llm_ctx = config.compaction_context.as_ref().unwrap_or(&remote_ctx);
+    let contexts = SummaryContexts::separate(
+        Some(&remote_ctx),
+        Some(llm_ctx),
+        config.compaction_fallback_context.as_ref(),
+    );
     let response = ctrl
-        .after_response(
-            messages,
-            &usage,
-            &current_model,
-            Some(&summarizer_ctx),
-            cancel.clone(),
-        )
+        .after_response_with_contexts(messages, &usage, &current_model, contexts, cancel.clone())
         .await;
 
     // Error/all-zero responses do not provide a direct context size. Estimate
@@ -134,8 +135,14 @@ pub(super) async fn check_compaction(
         None
     };
     let response = if let Some(estimated_tokens) = anchor_estimate {
-        ctrl.compact_on_estimate(messages, estimated_tokens, Some(&summarizer_ctx), cancel)
-            .await
+        ctrl.compact_on_estimate_with_contexts(
+            messages,
+            estimated_tokens,
+            &current_model,
+            contexts,
+            cancel,
+        )
+        .await
     } else {
         response
     };

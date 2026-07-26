@@ -1161,7 +1161,7 @@ pub(crate) fn build_agent(
 
     let model_config = options.model_config;
     let context_config =
-        evot_engine::context::ContextConfig::from_context_window(model_config.context_window());
+        evot_engine::context::ContextConfig::from_model(&model_config, options.thinking_level);
 
     let provider_agent = match (options.provider_override, &options.protocol) {
         (Some(provider), _) => evot_engine::Agent::new(provider),

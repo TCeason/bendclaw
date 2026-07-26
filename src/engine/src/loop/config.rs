@@ -49,6 +49,11 @@ pub struct AgentLoopConfig {
     /// Context window configuration (auto-compaction).
     pub context_config: Option<ContextConfig>,
 
+    /// Dedicated model for local compaction summaries. `None` follows the
+    /// active model. Remote compaction always uses the active request context.
+    pub compaction_context: Option<crate::context::SummarizerContext>,
+    pub compaction_fallback_context: Option<crate::context::SummarizerContext>,
+
     /// Cross-compaction state restored from a persisted session (previous
     /// summary, cumulative file ops). Lets in-run auto-compaction update the
     /// existing summary instead of re-summarizing it as conversation text.

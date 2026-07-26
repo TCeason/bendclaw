@@ -233,7 +233,7 @@ fn grok_provider_uses_cli_model_metadata_without_env_overrides() {
         None,
         None,
     );
-    assert_eq!(mc.context_window(), 200_000);
+    assert_eq!(mc.context_window(), 500_000);
     assert_eq!(mc.max_tokens(), 63_356);
     assert!(mc.reasoning());
     assert!(mc.honors_reasoning_effort());
@@ -255,7 +255,7 @@ fn same_named_openai_proxy_keeps_catalog_and_openai_transport_metadata() {
         None,
     );
     assert_eq!(mc.protocol(), ApiProtocol::OpenAiCompletions);
-    assert_eq!(mc.context_window(), 200_000);
+    assert_eq!(mc.context_window(), 500_000);
     assert_eq!(mc.max_tokens(), 63_356);
     assert!(mc.reasoning());
     assert!(mc

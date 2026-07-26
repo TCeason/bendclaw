@@ -1,3 +1,8 @@
+//! Curated metadata for models Evot actively supports.
+//!
+//! Provider specifications are authoritative for capacity. External agent
+//! registries only inform agent-specific policy such as compaction thresholds.
+
 mod anthropic;
 mod deepseek;
 mod glm;
@@ -61,6 +66,7 @@ pub(super) fn protocol_fallback(vision: bool) -> ModelCapabilities {
             None,
         ),
         default_verbosity: None,
+        compaction_limit: None,
         remote_compaction: false,
     }
 }

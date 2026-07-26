@@ -6,6 +6,7 @@ use evotengine::context::compaction::emergency;
 use evotengine::context::compaction::summarizer::llm;
 use evotengine::context::compaction::summarizer::mode::SummarizerContext;
 use evotengine::context::compaction::summarizer::mode::SummarizerMode;
+use evotengine::context::compaction::summarizer::prompt;
 use evotengine::context::compaction::summarizer::serialize;
 use evotengine::context::compaction::summarizer::types::SummarizerError;
 use evotengine::context::compaction::summarizer::types::SummarizerInput;
@@ -154,6 +155,47 @@ fn serialize_messages_includes_thinking() {
     let text = serialize::serialize_messages(&[msg]);
     assert!(text.contains("[Assistant thinking]: Let me analyze this"));
     assert!(text.contains("[Assistant]: Here's my answer"));
+}
+
+#[test]
+fn abbreviated_serialization_omits_thinking_arguments_and_tool_output() {
+    let messages = vec![
+        AgentMessage::Llm(Message::Assistant {
+            content: vec![
+                Content::Thinking {
+                    thinking: "private detailed reasoning".into(),
+                    metadata: None,
+                },
+                Content::ToolCall {
+                    id: "c1".into(),
+                    name: "read".into(),
+                    arguments: serde_json::json!({"path": "/secret/large.rs"}),
+                    metadata: None,
+                },
+            ],
+            stop_reason: StopReason::ToolUse,
+            model: "test".into(),
+            provider: "test".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+            response_id: None,
+        }),
+        tool_result_msg("c1", &"x".repeat(5_000)),
+    ];
+
+    let text = serialize::serialize_messages_bounded_with_options(
+        &messages,
+        usize::MAX,
+        serialize::SerializationOptions {
+            abbreviate_tools: true,
+        },
+    );
+    assert!(text.contains("[Assistant tool calls]: read"));
+    assert!(text.contains("[Tool result: read, status=ok, details omitted]"));
+    assert!(!text.contains("private detailed reasoning"));
+    assert!(!text.contains("/secret/large.rs"));
+    assert!(!text.contains(&"x".repeat(100)));
 }
 
 #[test]
@@ -457,6 +499,26 @@ async fn llm_summarize_preserves_custom_transport_model_config() {
     assert_eq!(config.base_url(), "https://api.kimi.com/coding");
 }
 
+#[test]
+fn extract_summary_parses_tags_and_falls_back_to_raw() {
+    assert_eq!(
+        prompt::extract_summary("<summary>\n## Goal\nFix bug\n</summary>"),
+        "## Goal\nFix bug"
+    );
+    assert_eq!(
+        prompt::extract_summary("<summary>## Goal\nNo closing tag"),
+        "## Goal\nNo closing tag"
+    );
+    assert_eq!(
+        prompt::extract_summary("## Goal\nNo tags at all"),
+        "## Goal\nNo tags at all"
+    );
+    assert_eq!(
+        prompt::extract_summary("Preamble\n<SUMMARY>\nInner\n</SUMMARY>\nTrailing"),
+        "Inner"
+    );
+}
+
 #[tokio::test]
 async fn llm_summarize_initial_uses_initial_prompt() {
     let (result, captured) =
@@ -482,6 +544,18 @@ async fn llm_summarize_injects_previous_summary() {
     assert!(result.is_ok());
     let prompt = first_user_prompt(&captured);
     assert!(prompt.contains("<previous-summary>\nEARLIER SUMMARY TEXT\n</previous-summary>"));
+}
+
+#[tokio::test]
+async fn llm_summarize_adds_convergence_guidance_above_soft_cap() {
+    let mut input = base_input("[User]: continue");
+    // Four ASCII chars per estimated token in the engine estimator.
+    input.previous_summary = Some("x".repeat((llm::DEFAULT_SUMMARY_SOFT_CAP_TOKENS + 1) * 4));
+    let (result, captured) = summarize_capturing(input, 4096, vec![Reply::text("condensed")]).await;
+    assert!(result.is_ok());
+    let prompt = first_user_prompt(&captured);
+    assert!(prompt.contains("Keep the updated summary near the current summary's length"));
+    assert!(prompt.contains("Condense or remove the least important details"));
 }
 
 #[tokio::test]
@@ -539,8 +613,8 @@ async fn llm_summarize_merges_turn_prefix_with_halved_budget() {
     assert_eq!(requests.len(), 2, "split turn issues two LLM calls");
     assert_eq!(
         requests[0].max_tokens,
-        Some(3276),
-        "main budget is floor(80% of reserve)"
+        Some(4096),
+        "main budget uses the configured summary reserve"
     );
     assert_eq!(
         requests[1].max_tokens,

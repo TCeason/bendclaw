@@ -45,6 +45,10 @@ pub struct Agent {
 
     // Context, limits & caching
     pub context_config: Option<ContextConfig>,
+    /// Optional dedicated local summary model. Provider-native remote
+    /// compaction still uses the active request model.
+    pub(super) compaction_context: Option<crate::context::SummarizerContext>,
+    pub(super) compaction_fallback_context: Option<crate::context::SummarizerContext>,
     /// Cross-compaction state restored from a persisted session.
     pub(super) compaction_state: Option<crate::context::CompactionState>,
     pub(super) context_management_disabled: bool,
@@ -98,6 +102,8 @@ impl Agent {
             steering_mode: QueueMode::OneAtATime,
             follow_up_mode: QueueMode::OneAtATime,
             context_config: None,
+            compaction_context: None,
+            compaction_fallback_context: None,
             compaction_state: None,
             context_management_disabled: false,
             execution_limits: Some(ExecutionLimits::default()),
@@ -172,6 +178,19 @@ impl Agent {
 
     pub fn with_context_config(mut self, config: ContextConfig) -> Self {
         self.context_config = Some(config);
+        self
+    }
+
+    /// Use an independent model for local compaction summaries. Remote
+    /// compaction remains bound to the active model because its state is
+    /// provider-native and replayed on later active-model requests.
+    pub fn with_compaction_contexts(
+        mut self,
+        primary: Option<crate::context::SummarizerContext>,
+        fallback: Option<crate::context::SummarizerContext>,
+    ) -> Self {
+        self.compaction_context = primary;
+        self.compaction_fallback_context = fallback;
         self
     }
 

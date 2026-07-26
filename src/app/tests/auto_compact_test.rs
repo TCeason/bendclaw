@@ -82,7 +82,7 @@ async fn auto_compaction_persists_structured_compact_item() -> TestResult {
             user("old message six"),
             assistant("old assistant six"),
             user("old message seven"),
-            assistant_with_usage("old assistant seven", 120_000),
+            assistant_with_usage("old assistant seven", 130_000),
         ])
         .await?;
 

@@ -55,6 +55,13 @@ const FABLE_REASONING: ReasoningProfile = ReasoningProfile {
     anthropic_wire: Some(AnthropicThinkingWire::Adaptive),
 };
 
+const MODERN: ModelProfile = ModelProfile {
+    max_input_tokens: 200_000,
+    max_output_tokens: 64_000,
+    reasoning: STANDARD_REASONING,
+    compaction_limit: Some(180_000),
+    ..BASE
+};
 const OPUS_LONG_CONTEXT_XHIGH: ModelProfile = ModelProfile {
     max_input_tokens: 867_000,
     max_output_tokens: 128_000,
@@ -85,12 +92,6 @@ const SONNET_LONG_CONTEXT_MAX: ModelProfile = ModelProfile {
     reasoning: ADAPTIVE_MAX_REASONING,
     ..BASE
 };
-const MODERN: ModelProfile = ModelProfile {
-    max_input_tokens: 200_000,
-    max_output_tokens: 64_000,
-    reasoning: STANDARD_REASONING,
-    ..BASE
-};
 
 #[rustfmt::skip]
 const PROFILES: &[(&str, ModelProfile)] = &[
@@ -100,7 +101,6 @@ const PROFILES: &[(&str, ModelProfile)] = &[
     ("claude-opus-4-7",   OPUS_LONG_CONTEXT_XHIGH),
     ("claude-opus-4-6",   OPUS_LONG_CONTEXT_MAX),
     ("claude-opus-4-5",   MODERN),
-    ("claude-opus-4-1",   MODERN),
     ("claude-sonnet-5",   SONNET_LONG_CONTEXT_XHIGH),
     ("claude-sonnet-4-6", SONNET_LONG_CONTEXT_MAX),
     ("claude-sonnet-4-5", MODERN),

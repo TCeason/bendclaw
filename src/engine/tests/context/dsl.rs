@@ -2,7 +2,8 @@
 
 use evotengine::context::compaction::config::CompactionConfig;
 use evotengine::context::compaction::executor;
-use evotengine::context::compaction::planner;
+use evotengine::context::compaction::executor::ExecutionResult;
+use evotengine::context::compaction::summary::LlmPolicy;
 use evotengine::context::SummarizerMode;
 use evotengine::types::*;
 use tokio_util::sync::CancellationToken;
@@ -14,6 +15,7 @@ fn config_for_dsl() -> CompactionConfig {
     CompactionConfig {
         context_window: 10_000,
         reserve_tokens: 2_000,
+        trigger_tokens: None,
         keep_recent_tokens: 500,
         summarizer_mode: SummarizerMode::default(),
         summary_max_bytes: 4000,
@@ -30,21 +32,35 @@ async fn compact_pattern_with_size(
         .pad(pad_chars)
         .tool_output(tool_output_chars)
         .build();
-    let plan = match planner::plan(&messages, &config) {
+    compact(messages, &config, pattern).await
+}
+
+async fn compact(
+    messages: Vec<AgentMessage>,
+    config: &CompactionConfig,
+    pattern: &str,
+) -> Vec<AgentMessage> {
+    let plan = match evotengine::plan_messages(&messages, config.keep_recent_tokens) {
         Some(plan) => plan,
         None => panic!("expected compaction plan for pattern {pattern}"),
     };
-    let outcome = executor::execute(
+    match executor::execute(
         messages,
         &plan,
-        &config,
+        config,
         None,
         None,
-        true,
-        CancellationToken::new(),
+        executor::ExecutionOptions {
+            llm_policy: LlmPolicy::Required,
+            observer: None,
+            cancel: CancellationToken::new(),
+        },
     )
-    .await;
-    outcome.messages
+    .await
+    {
+        ExecutionResult::Compacted(outcome) => outcome.messages,
+        ExecutionResult::Skipped(_) => panic!("expected compaction for pattern {pattern}"),
+    }
 }
 
 async fn compact_pattern(pattern: &str) -> Vec<AgentMessage> {
@@ -74,23 +90,10 @@ async fn dsl_compaction_removes_orphan_tool_call_created_by_boundary() {
         .pad(300)
         .tool_output(1200)
         .build();
-    let plan = match planner::plan(&messages, &config) {
-        Some(plan) => plan,
-        None => panic!("expected compaction plan"),
-    };
-    let outcome = executor::execute(
-        messages,
-        &plan,
-        &config,
-        None,
-        None,
-        true,
-        CancellationToken::new(),
-    )
-    .await;
+    let result = compact(messages, &config, "u tr u tr tr tr tr u").await;
 
-    assert_no_orphan_tool_pairs(&outcome.messages);
-    assert_eq!(count_user_markers(&outcome.messages), 1);
+    assert_no_orphan_tool_pairs(&result);
+    assert_eq!(count_user_markers(&result), 1);
 }
 
 #[tokio::test]

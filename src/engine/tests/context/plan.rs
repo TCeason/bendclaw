@@ -1,10 +1,10 @@
-//! Tests for the session-level compaction planner (`plan_session_compaction`).
+//! Tests for the unified compaction planner (`plan_compaction` / `plan_messages`).
 //!
-//! This planner operates on sequence-numbered transcript entries and returns a
-//! declarative boundary (`first_kept_seq`) rather than a rewritten message list.
-//! It is the planner the app layer (`compact/orchestrator`) actually drives.
+//! The planner operates on sequence-numbered transcript entries (manual
+//! `/compact` path) or plain message lists (automatic agent-loop path) and
+//! returns a declarative plan rather than a rewritten message list.
 
-use evotengine::plan_session_compaction;
+use evotengine::plan_compaction;
 use evotengine::types::*;
 use evotengine::CompactEntry;
 
@@ -73,13 +73,13 @@ fn transcript(messages: Vec<AgentMessage>) -> Vec<CompactEntry> {
 
 #[test]
 fn empty_returns_none() {
-    assert!(plan_session_compaction(&[], None, 100).is_none());
+    assert!(plan_compaction(&[], None, 100).is_none());
 }
 
 #[test]
 fn large_budget_returns_none_without_forced_eviction() {
     let entries = transcript(vec![user("hi"), assistant("there"), user("more")]);
-    assert!(plan_session_compaction(&entries, None, 100_000).is_none());
+    assert!(plan_compaction(&entries, None, 100_000).is_none());
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn evicts_old_messages_and_keeps_recent() {
     messages.push(assistant("recent answer"));
     let entries = transcript(messages);
 
-    let plan = match plan_session_compaction(&entries, None, 200) {
+    let plan = match plan_compaction(&entries, None, 200) {
         Some(plan) => plan,
         None => panic!("expected a compaction plan"),
     };
@@ -120,7 +120,7 @@ fn boundary_seq_skips_already_summarized_prefix() {
 
     // Pretend a prior compaction kept everything from seq 5 onward.
     let boundary_seq = 5;
-    let plan = match plan_session_compaction(&entries, Some(boundary_seq), 200) {
+    let plan = match plan_compaction(&entries, Some(boundary_seq), 200) {
         Some(plan) => plan,
         None => panic!("expected a compaction plan"),
     };
@@ -139,7 +139,7 @@ fn boundary_at_last_entry_returns_none() {
     // there is nothing new to summarize.
     let entries = transcript(vec![user("a"), assistant("b"), user("c")]);
     let last_seq = entries[entries.len() - 1].seq;
-    assert!(plan_session_compaction(&entries, Some(last_seq), 1).is_none());
+    assert!(plan_compaction(&entries, Some(last_seq), 1).is_none());
 }
 
 #[test]
@@ -156,7 +156,7 @@ fn extracts_file_ops_from_summarized_zone() {
     messages.push(assistant("recent answer"));
     let entries = transcript(messages);
 
-    let plan = match plan_session_compaction(&entries, None, 200) {
+    let plan = match plan_compaction(&entries, None, 200) {
         Some(plan) => plan,
         None => panic!("expected a compaction plan"),
     };
@@ -171,7 +171,7 @@ fn extracts_file_ops_from_summarized_zone() {
 fn keeps_adjacent_ui_metadata_with_the_retained_tail() {
     let entries = transcript(vec![user(&big(100)), extension(), assistant("a")]);
 
-    let plan = match plan_session_compaction(&entries, None, 1) {
+    let plan = match plan_compaction(&entries, None, 1) {
         Some(plan) => plan,
         None => panic!("expected old history to be evicted"),
     };
@@ -197,7 +197,7 @@ fn detects_split_turn_when_cut_lands_mid_turn() {
     let entries = transcript(messages);
 
     // Small token budget forces the cut inside the big turn.
-    if let Some(plan) = plan_session_compaction(&entries, None, 100) {
+    if let Some(plan) = plan_compaction(&entries, None, 100) {
         if let Some(split) = &plan.split_turn {
             // turn_prefix must be present and align with the split.
             let prefix = match &plan.turn_prefix {
@@ -208,4 +208,109 @@ fn detects_split_turn_when_cut_lands_mid_turn() {
             assert!(split.turn_start_seq <= split.cut_seq);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// `plan_messages` — the automatic agent-loop frontend
+// ---------------------------------------------------------------------------
+
+#[test]
+fn messages_no_plan_when_everything_fits_the_retention_budget() {
+    let messages = vec![user("hello"), assistant("hi")];
+    assert!(evotengine::plan_messages(&messages, 100_000).is_none());
+    assert!(evotengine::plan_messages(&[], 100).is_none());
+}
+
+#[test]
+fn messages_plan_evicts_old_history_and_keeps_recent() {
+    let mut messages = vec![user(&big(200)), assistant(&big(200))];
+    for _ in 0..20 {
+        messages.push(user(&big(300)));
+        messages.push(assistant(&big(300)));
+    }
+    messages.push(user("recent question"));
+    messages.push(assistant("recent answer"));
+
+    let plan = match evotengine::plan_messages(&messages, 250) {
+        Some(plan) => plan,
+        None => panic!("expected planner to evict old history"),
+    };
+    // Nothing is pinned: the summary represents all evicted history.
+    assert_eq!(plan.summarize.start, 0);
+    assert!(plan.first_kept > 0);
+    assert!(plan.first_kept < messages.len());
+    assert_eq!(plan.messages_before, messages.len());
+}
+
+#[test]
+fn messages_plan_always_retains_the_newest_message() {
+    let mut messages = vec![user("oldest")];
+    for _ in 0..10 {
+        messages.push(user(&big(300)));
+        messages.push(assistant(&big(300)));
+    }
+    messages.push(user("fresh prompt must survive preflight"));
+
+    let plan = match evotengine::plan_messages(&messages, 0) {
+        Some(plan) => plan,
+        None => panic!("expected planner to evict middle context"),
+    };
+    assert!(plan.first_kept < messages.len());
+    assert!(matches!(
+        &messages[messages.len() - 1],
+        AgentMessage::Llm(Message::User { content, .. })
+            if matches!(content.first(), Some(Content::Text { text }) if text == "fresh prompt must survive preflight")
+    ));
+}
+
+#[test]
+fn messages_plan_does_not_cut_at_tool_result() {
+    let mut messages = vec![user(&big(200)), assistant(&big(200))];
+    for i in 0..10 {
+        messages.push(user(&big(300)));
+        messages.push(tool_call("read", &format!("f{i}.rs")));
+        messages.push(tool_result(&big(300)));
+    }
+    messages.push(user("recent"));
+    messages.push(assistant("answer"));
+
+    if let Some(plan) = evotengine::plan_messages(&messages, 250) {
+        assert!(!matches!(
+            &messages[plan.first_kept],
+            AgentMessage::Llm(Message::ToolResult { .. })
+        ));
+    }
+}
+
+#[test]
+fn messages_plan_detects_split_turn() {
+    // One old turn, then a single large turn that must be split.
+    let mut messages = vec![user(&big(100))];
+    messages.push(user(&big(200)));
+    messages.push(tool_call("read", "a.rs"));
+    messages.push(tool_result(&big(2000)));
+    messages.push(tool_call("read", "b.rs"));
+    messages.push(tool_result(&big(2000)));
+    messages.push(assistant(&big(100)));
+
+    let plan = match evotengine::plan_messages(&messages, 125) {
+        Some(plan) => plan,
+        None => panic!("large turn should produce a plan"),
+    };
+    assert!(
+        plan.split_turn.is_some(),
+        "cut inside a turn should be reported as a split"
+    );
+    assert!(plan.turn_prefix.is_some());
+}
+
+fn tool_result(text: &str) -> AgentMessage {
+    AgentMessage::Llm(Message::ToolResult {
+        tool_call_id: "tc".into(),
+        tool_name: "read".into(),
+        content: vec![Content::Text { text: text.into() }],
+        is_error: false,
+        timestamp: 0,
+        retention: Retention::default(),
+    })
 }

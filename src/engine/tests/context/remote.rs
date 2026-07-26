@@ -4,9 +4,11 @@ use std::sync::Arc;
 
 use evotengine::context::compaction::config::CompactionConfig;
 use evotengine::context::compaction::executor;
+use evotengine::context::compaction::executor::ExecutionResult;
 use evotengine::context::compaction::remote;
+use evotengine::context::compaction::summary::LlmPolicy;
 use evotengine::context::compaction::types::CompactionMethod;
-use evotengine::context::compaction::types::CompactionPlan;
+use evotengine::context::CompactionPlan;
 use evotengine::context::SummarizerContext;
 use evotengine::context::SUMMARIZER_INPUT_MAX_BYTES;
 use evotengine::provider::ApiProtocol;
@@ -217,22 +219,9 @@ async fn executor_assembles_replayable_remote_item() {
         user("recent"),
         assistant("recent answer"),
     ];
-    let plan = CompactionPlan {
-        evict_zone: 0..4,
-        retained_tail: 4..6,
-        split_turn: None,
-    };
+    let plan = plan_for(&messages, 0..4, 4);
 
-    let outcome = executor::execute(
-        messages,
-        &plan,
-        &CompactionConfig::default(),
-        None,
-        Some(&ctx),
-        true,
-        CancellationToken::new(),
-    )
-    .await;
+    let outcome = run(messages, &plan, Some(&ctx), LlmPolicy::Required).await;
 
     assert_eq!(outcome.stats.method, Some(CompactionMethod::Remote));
     assert_eq!(outcome.stats.remote_blob_bytes, Some(14));
@@ -265,22 +254,9 @@ async fn executor_uses_deterministic_fallback_after_remote_failure_for_overflow(
         user("recent"),
         assistant("recent answer"),
     ];
-    let plan = CompactionPlan {
-        evict_zone: 0..3,
-        retained_tail: 3..5,
-        split_turn: None,
-    };
+    let plan = plan_for(&messages, 0..3, 3);
 
-    let outcome = executor::execute(
-        messages,
-        &plan,
-        &CompactionConfig::default(),
-        None,
-        Some(&ctx),
-        false,
-        CancellationToken::new(),
-    )
-    .await;
+    let outcome = run(messages, &plan, Some(&ctx), LlmPolicy::Skip).await;
 
     assert_eq!(
         outcome.stats.method,
@@ -311,22 +287,9 @@ async fn executor_falls_back_to_local_summary_when_remote_fails() {
         user("recent"),
         assistant("recent answer"),
     ];
-    let plan = CompactionPlan {
-        evict_zone: 0..3,
-        retained_tail: 3..5,
-        split_turn: None,
-    };
+    let plan = plan_for(&messages, 0..3, 3);
 
-    let outcome = executor::execute(
-        messages,
-        &plan,
-        &CompactionConfig::default(),
-        None,
-        Some(&ctx),
-        true,
-        CancellationToken::new(),
-    )
-    .await;
+    let outcome = run(messages, &plan, Some(&ctx), LlmPolicy::Required).await;
 
     assert_eq!(
         outcome.stats.method,
@@ -343,7 +306,49 @@ async fn executor_falls_back_to_local_summary_when_remote_fails() {
         Some(AgentMessage::Llm(Message::User { content, .. }))
             if matches!(content.first(), Some(Content::Text { text }) if text == "local fallback")
     ));
-    assert_eq!(outcome.stats.messages_evicted, plan.evict_zone.len());
+    assert_eq!(outcome.stats.messages_evicted, plan.first_kept);
+}
+
+fn plan_for(
+    messages: &[AgentMessage],
+    summarize: std::ops::Range<usize>,
+    first_kept: usize,
+) -> CompactionPlan {
+    CompactionPlan {
+        summarize,
+        turn_prefix: None,
+        first_kept,
+        first_kept_seq: first_kept as u64 + 1,
+        split_turn: None,
+        tokens_before: 0,
+        messages_before: messages.len(),
+        file_ops: Default::default(),
+    }
+}
+
+async fn run(
+    messages: Vec<AgentMessage>,
+    plan: &CompactionPlan,
+    ctx: Option<&evotengine::context::SummarizerContext>,
+    llm_policy: LlmPolicy,
+) -> evotengine::context::CompactionOutcome {
+    let result = executor::execute(
+        messages,
+        plan,
+        &CompactionConfig::default(),
+        None,
+        ctx,
+        executor::ExecutionOptions {
+            llm_policy,
+            observer: None,
+            cancel: CancellationToken::new(),
+        },
+    )
+    .await;
+    match result {
+        ExecutionResult::Compacted(outcome) => *outcome,
+        ExecutionResult::Skipped(_) => panic!("expected compaction to run"),
+    }
 }
 
 #[tokio::test]

@@ -289,8 +289,7 @@ fn test_off_thinking_disables_fable_thinking() {
 
 #[test]
 fn test_anthropic_max_tokens_falls_back_to_model_config() {
-    // No explicit max_tokens: use the model's configured output budget. Modern
-    // Claude 4.x supports 64k output, so a small default would truncate responses.
+    // No explicit max_tokens: use the profile's output budget.
     let config = StreamConfigBuilder::anthropic()
         .no_max_tokens()
         .model_config(ModelConfig::anthropic(
@@ -300,7 +299,7 @@ fn test_anthropic_max_tokens_falls_back_to_model_config() {
         .build();
 
     let body = build_request_body(&config, false);
-    assert_eq!(body["max_tokens"], 64000);
+    assert_eq!(body["max_tokens"], 64_000);
 }
 
 #[test]

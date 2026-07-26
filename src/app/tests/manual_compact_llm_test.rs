@@ -189,7 +189,7 @@ async fn manual_remote_failure_persists_fallback_reason() -> TestResult {
         .write_items(vec![
             user("old remote fallback request"),
             assistant("old answer"),
-            user(&"large recent request ".repeat(5000)),
+            user(&"large recent request ".repeat(8000)),
             assistant("recent answer"),
             user("latest retained request"),
             assistant("latest retained answer"),

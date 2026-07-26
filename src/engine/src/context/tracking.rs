@@ -223,9 +223,7 @@ pub struct ContextBudgetSnapshot {
 /// Configuration for context management
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextConfig {
-    /// Usable context tokens — the model's full context window.
-    /// Output headroom is reserved separately via
-    /// `CompactionConfig::reserve_tokens`, so this is NOT pre-discounted.
+    /// Effective request-input limit for the selected model and reasoning mode.
     pub max_context_tokens: usize,
     /// Tokens reserved for the system prompt
     pub system_prompt_tokens: usize,
@@ -233,6 +231,10 @@ pub struct ContextConfig {
     /// [`crate::context::DEFAULT_RESERVE_TOKENS`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reserve_tokens: Option<usize>,
+    /// Explicit model-specific compaction threshold. `None` derives the
+    /// threshold from `max_context_tokens - reserve_tokens`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_tokens: Option<usize>,
     /// Token budget for the retained tail. `None` uses
     /// [`crate::context::DEFAULT_KEEP_RECENT_TOKENS`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -245,19 +247,33 @@ impl Default for ContextConfig {
             max_context_tokens: 100_000,
             system_prompt_tokens: 4_000,
             reserve_tokens: None,
+            trigger_tokens: None,
             keep_recent_tokens: None,
         }
     }
 }
 
 impl ContextConfig {
+    /// Derive context management from resolved model-profile metadata.
+    pub fn from_model(
+        model: &crate::provider::ModelConfig,
+        thinking_level: crate::types::ThinkingLevel,
+    ) -> Self {
+        let max_context_tokens = model.context_window() as usize;
+        Self {
+            max_context_tokens,
+            trigger_tokens: model
+                .profile_compaction_limit(thinking_level)
+                .map(|limit| (limit as usize).min(max_context_tokens)),
+            ..Default::default()
+        }
+    }
+
     /// Derive a context config from a model's context window size.
     ///
-    /// Uses the full context window as the budget. Output headroom is the
-    /// sole responsibility of `CompactionConfig::reserve_tokens`, so the
-    /// window is not pre-discounted here (avoids double-counting headroom,
-    /// which previously made compaction trigger at ~70% of the real window
-    /// while the footer measured against the discounted 80% value).
+    /// Uses the supplied request-input limit as the budget. Output headroom is
+    /// the sole responsibility of `CompactionConfig::reserve_tokens`, so the
+    /// value is not pre-discounted here.
     pub fn from_context_window(context_window: u32) -> Self {
         Self {
             max_context_tokens: context_window as usize,

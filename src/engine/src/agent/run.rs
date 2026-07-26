@@ -226,10 +226,12 @@ impl Agent {
                 Some(self.context_config.clone().unwrap_or_else(|| {
                     self.model_config
                         .as_ref()
-                        .map(|m| ContextConfig::from_context_window(m.context_window()))
+                        .map(|model| ContextConfig::from_model(model, self.thinking_level))
                         .unwrap_or_default()
                 }))
             },
+            compaction_context: self.compaction_context.clone(),
+            compaction_fallback_context: self.compaction_fallback_context.clone(),
             initial_compaction_state: self.compaction_state.clone(),
             execution_limits: self.execution_limits.clone(),
             cache_config: self.cache_config.clone(),

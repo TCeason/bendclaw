@@ -1,22 +1,22 @@
 //! Context compaction — smart context management for long sessions.
 //!
-//! Architecture:
-//! - `trigger` — decides WHEN to compact (usage-based, overflow detection)
-//! - `planner` — decides WHAT to keep/evict (cut point algorithm)
-//! - `executor` — applies the plan (reclaim + evict + memory summary)
-//! - `memory` — extracts compacted memory/state from evicted content
+//! Architecture (WHEN / WHAT / HOW / APPLY):
+//! - `trigger` — WHEN: usage-based threshold and overflow detection
+//! - `plan` — WHAT: single planner (cut point, split turn, file ops)
+//! - `summary` — HOW: one chain (remote → LLM → deterministic emergency)
+//! - `executor` — APPLY: reclaim + assemble for in-memory message lists
 //! - `controller` — stateful integration point for the agent loop
-//! - `transforms/` — individual message transformations (reclaim)
+//! - `memory` / `transforms/` — extraction helpers and lossless reclaim
 
 pub mod config;
 pub mod controller;
 pub mod emergency;
 pub mod executor;
 pub mod memory;
-pub mod planner;
+pub mod plan;
 pub mod remote;
-pub mod session;
 pub mod summarizer;
+pub mod summary;
 pub mod transforms;
 pub mod trigger;
 pub mod types;
@@ -24,15 +24,27 @@ pub mod types;
 pub use config::truncate_summary;
 pub use config::CompactionConfig;
 pub use config::DEFAULT_KEEP_RECENT_TOKENS;
+pub use config::DEFAULT_POST_COMPACTION_TOKENS;
 pub use config::DEFAULT_RESERVE_TOKENS;
 pub use config::DEFAULT_SUMMARY_MAX_BYTES;
 pub use config::SUMMARIZER_INPUT_MAX_BYTES;
 pub use controller::CompactionController;
 pub use controller::CompactionResponse;
+pub use plan::plan_compaction;
+pub use plan::plan_messages;
+pub use plan::CompactEntry;
+pub use plan::CompactionPlan;
+pub use plan::SplitTurn;
 pub use summarizer::mode::DEFAULT_SUMMARY_RESERVE_TOKENS;
 pub use summarizer::SummarizerContext;
 pub use summarizer::SummarizerInput;
 pub use summarizer::SummarizerMode;
+pub use summary::LlmPolicy;
+pub use summary::SummaryContexts;
+pub use summary::SummaryOptions;
+pub use summary::SummaryOutcome;
+pub use summary::SummaryRequest;
+pub use summary::SummaryResult;
 pub use types::bounded_fallback_reason;
 pub use types::AfterResponseAction;
 pub use types::CompactionMethod;

@@ -1,331 +1,173 @@
-//! Executor — applies the compaction plan to produce the final message list.
+//! Executor — applies a compaction plan to an in-memory message list.
+//!
+//! Pipeline: reclaim (lossless) → summary chain → assemble. All summary
+//! generation lives in [`super::summary`]; this module only rebuilds the
+//! message list and cross-compaction state around the result.
 
 use tokio_util::sync::CancellationToken;
 
-use super::config::truncate_summary;
 use super::config::CompactionConfig;
-use super::emergency;
 use super::memory;
+use super::plan::CompactionPlan;
 use super::remote;
-use super::summarizer::mode::SummarizerContext;
-use super::summarizer::serialize;
-use super::summarizer::types::SummarizerInput;
+use super::summary;
+use super::summary::LlmPolicy;
+use super::summary::SummaryContexts;
+use super::summary::SummaryOutcome;
+use super::summary::SummaryRequest;
 use super::transforms;
-use super::types::bounded_fallback_reason;
-use super::types::notify_compaction_phase;
 use super::types::CompactionMethod;
 use super::types::CompactionObserver;
 use super::types::CompactionOutcome;
-use super::types::CompactionPhase;
-use super::types::CompactionPlan;
 use super::types::CompactionState;
 use super::types::CompactionStats;
+use crate::context::compaction::summarizer::mode::SummarizerContext;
 use crate::context::sanitize::sanitize_tool_pairs;
 use crate::context::tokens::total_tokens;
-use crate::types::*;
+use crate::types::AgentMessage;
+use crate::types::Content;
+use crate::types::Message;
 
 /// Runtime controls for one compaction execution.
 pub struct ExecutionOptions {
-    pub use_llm_fallback: bool,
+    pub llm_policy: LlmPolicy,
     pub observer: Option<CompactionObserver>,
     pub cancel: CancellationToken,
 }
 
-/// Execute a compaction plan against the given messages.
-/// If `use_llm_fallback` is false, a failed/ineligible remote attempt uses the
-/// emergency deterministic summary (overflow recovery).
-/// Execute a compaction plan without lifecycle observation.
+/// Result of applying a plan.
+pub enum ExecutionResult {
+    Compacted(Box<CompactionOutcome>),
+    /// No compaction happened (cancelled, or the required LLM summary failed).
+    /// The messages are returned unchanged so the caller can restore them.
+    Skipped(Vec<AgentMessage>),
+}
+
+/// Execute using one context for both remote and local LLM stages.
 pub async fn execute(
     messages: Vec<AgentMessage>,
     plan: &CompactionPlan,
     config: &CompactionConfig,
     prev_state: Option<&CompactionState>,
     summarizer_ctx: Option<&SummarizerContext>,
-    use_llm_fallback: bool,
-    cancel: CancellationToken,
-) -> CompactionOutcome {
-    execute_with_options(
+    options: ExecutionOptions,
+) -> ExecutionResult {
+    execute_with_contexts(
         messages,
         plan,
         config,
         prev_state,
-        summarizer_ctx,
-        ExecutionOptions {
-            use_llm_fallback,
-            observer: None,
-            cancel,
-        },
+        SummaryContexts::same(summarizer_ctx),
+        options,
     )
     .await
 }
 
-/// Execute a compaction plan and report live lifecycle phases.
-pub async fn execute_with_options(
+/// Execute with independent remote and local summary contexts.
+pub async fn execute_with_contexts(
     messages: Vec<AgentMessage>,
     plan: &CompactionPlan,
     config: &CompactionConfig,
     prev_state: Option<&CompactionState>,
-    summarizer_ctx: Option<&SummarizerContext>,
+    contexts: SummaryContexts<'_>,
     options: ExecutionOptions,
-) -> CompactionOutcome {
-    let ExecutionOptions {
-        use_llm_fallback,
-        observer,
-        cancel,
-    } = options;
-    if cancel.is_cancelled() {
-        return CompactionOutcome {
-            messages,
-            state: prev_state.cloned().unwrap_or_default(),
-            stats: CompactionStats::default(),
-        };
+) -> ExecutionResult {
+    if options.cancel.is_cancelled() {
+        return ExecutionResult::Skipped(messages);
     }
     let before_message_count = messages.len();
     let before_tokens = total_tokens(&messages);
 
-    // Step 1: Reclaim (lossless, runs on all messages)
+    // Step 1: reclaim expired tool results (lossless, index-stable).
     let (messages, current_run_reclaimed) = transforms::reclaim::run(messages);
 
-    // Step 2: Prepare summarizer input (serialize evicted zone to text)
-    let evicted = &messages[plan.evict_zone.clone()];
-    let split_prefix = plan
-        .split_turn
+    // Step 2: generate the summary via the shared chain.
+    let evicted = &messages[plan.summarize.clone()];
+    let turn_prefix = plan
+        .turn_prefix
         .as_ref()
-        .map(|st| &messages[st.turn_start..st.cut_at]);
-
-    let summarizer_input = serialize::prepare_input(evicted, split_prefix, prev_state, config);
-
-    // Step 3: Try provider-native remote compaction first (GPT models on the
-    // Responses protocol). Any failure falls back to local text summarization.
-    let mut remote_failed = false;
-    let mut fallback_reason = summarizer_ctx.and_then(remote::unavailable_reason);
-    let remote_outcome = match summarizer_ctx {
-        Some(ctx) if remote::supports(ctx) => {
-            notify_compaction_phase(&observer, CompactionPhase::Remote);
-            let previous_local_summary = prev_state.and_then(|state| {
-                state
-                    .context_summary_message
-                    .as_ref()
-                    .and(state.last_summary.as_deref())
-            });
-            let remote_input = remote::with_previous_local_summary(evicted, previous_local_summary);
-            match remote::compact(ctx, &remote_input, cancel.clone()).await {
-                Ok(outcome) => Some(outcome),
-                Err(remote::RemoteError::Cancelled) => {
-                    // User aborted — do not compact at all.
-                    return CompactionOutcome {
-                        messages,
-                        state: prev_state.cloned().unwrap_or_default(),
-                        stats: CompactionStats::default(),
-                    };
-                }
-                Err(remote::RemoteError::Failed(reason)) => {
-                    tracing::warn!("remote compaction failed, falling back to local: {reason}");
-                    remote_failed = true;
-                    fallback_reason = Some(bounded_fallback_reason(&reason));
-                    notify_compaction_phase(&observer, CompactionPhase::LocalFallback);
-                    None
-                }
-            }
-        }
-        _ => {
-            notify_compaction_phase(&observer, CompactionPhase::Local);
-            None
-        }
-    };
-
-    if let Some(remote_compaction) = remote_outcome {
-        if cancel.is_cancelled() {
-            return CompactionOutcome {
-                messages,
-                state: prev_state.cloned().unwrap_or_default(),
-                stats: CompactionStats::default(),
-            };
-        }
-        return assemble_remote(
-            messages,
-            plan,
-            config,
+        .map(|range| &messages[range.clone()]);
+    let outcome = summary::summarize(
+        SummaryRequest {
+            evicted,
+            turn_prefix,
             prev_state,
-            summarizer_ctx,
-            remote_compaction,
-            summarizer_input,
-            before_message_count,
-            before_tokens,
-            current_run_reclaimed,
-        );
-    }
-
-    // Step 4: Generate local text summary
-    let summary_text = if use_llm_fallback {
-        if let Some(ctx) = summarizer_ctx {
-            // LLM summarization for threshold/manual compaction
-            match config
-                .summarizer_mode
-                .summarize(summarizer_input, Some(ctx), cancel.clone())
-                .await
-            {
-                Ok(out) => out.summary,
-                Err(_) => {
-                    // LLM failed — compaction cannot proceed
-                    return CompactionOutcome {
-                        messages,
-                        state: prev_state.cloned().unwrap_or_default(),
-                        stats: CompactionStats::default(),
-                    };
-                }
-            }
-        } else {
-            emergency::summarize(&summarizer_input).summary
+            custom_instructions: None,
+            file_ops: plan.file_ops.clone(),
+            override_text: None,
+        },
+        contexts,
+        config,
+        summary::SummaryOptions {
+            llm_policy: options.llm_policy,
+            timeout: None,
+            observer: options.observer,
+            cancel: options.cancel.clone(),
+        },
+    )
+    .await;
+    let result = match outcome {
+        SummaryOutcome::Ready(result) => result,
+        SummaryOutcome::Aborted | SummaryOutcome::Cancelled => {
+            return ExecutionResult::Skipped(messages)
         }
-    } else {
-        // Overflow fallback is deterministic: no second model request.
-        if cancel.is_cancelled() {
-            return CompactionOutcome {
-                messages,
-                state: prev_state.cloned().unwrap_or_default(),
-                stats: CompactionStats::default(),
-            };
-        }
-        emergency::summarize(&summarizer_input).summary
     };
-
-    if cancel.is_cancelled() {
-        return CompactionOutcome {
-            messages,
-            state: prev_state.cloned().unwrap_or_default(),
-            stats: CompactionStats::default(),
-        };
+    if options.cancel.is_cancelled() {
+        return ExecutionResult::Skipped(messages);
     }
-    let summary_text = truncate_summary(&summary_text, config.summary_max_bytes);
 
-    // Step 5: Build memory summary message
-    let memory_summary_msg = AgentMessage::Llm(Message::User {
-        content: vec![Content::Text {
-            text: summary_text.clone(),
-        }],
-        timestamp: crate::context::now_ms(),
-    });
+    // Step 3: assemble — summary message + retained tail, sanitized.
+    let is_remote = result.remote.is_some();
+    let summary_message = replacement_message(&result, contexts.remote);
+    let mut rebuilt = Vec::with_capacity(1 + messages.len() - plan.first_kept);
+    rebuilt.push(summary_message);
+    rebuilt.extend_from_slice(&messages[plan.first_kept..]);
+    let rebuilt = sanitize_tool_pairs(rebuilt);
 
-    // Step 6: Build new state
-    let mut new_state = memory::build_state(evicted, split_prefix, prev_state);
-    // Store the same bounded summary used by the context and persistence event.
-    // The exact context message lets the next compaction remove this copy before
-    // supplying `last_summary` to the incremental summarizer.
-    new_state.last_summary = Some(summary_text.clone());
-    new_state.context_summary_message = Some(summary_text.clone());
-
-    // Step 7: Assemble final messages: memory_summary + retained_tail
-    let mut result = Vec::with_capacity(1 + plan.retained_tail.len());
-    result.push(memory_summary_msg);
-    result.extend_from_slice(&messages[plan.retained_tail.clone()]);
-
-    // Step 8: Sanitize orphaned tool pairs
-    let result = sanitize_tool_pairs(result);
-
-    let after_message_count = result.len();
-    let after_tokens = total_tokens(&result);
+    // Step 4: cross-compaction state. The exact context message is recorded so
+    // the next compaction can dedupe it; remote state has no text message.
+    let mut state = memory::build_state(evicted, turn_prefix, prev_state);
+    state.last_summary = Some(result.text.clone());
+    state.context_summary_message = (!is_remote).then(|| result.text.clone());
 
     let stats = CompactionStats {
-        summary: Some(summary_text.clone()),
+        summary: Some(result.text),
         before_message_count,
-        after_message_count,
+        after_message_count: rebuilt.len(),
         before_tokens,
-        after_tokens,
-        messages_evicted: plan.evict_zone.len(),
+        after_tokens: total_tokens(&rebuilt),
+        messages_evicted: plan.first_kept,
         current_run_reclaimed,
-        method: Some(if remote_failed {
-            CompactionMethod::RemoteFailedLocal
-        } else {
-            CompactionMethod::Local
-        }),
-        remote_blob_bytes: None,
-        fallback_reason,
+        method: Some(result.method),
+        remote_blob_bytes: result
+            .remote
+            .as_ref()
+            .map(|compaction| compaction.encrypted_bytes),
+        fallback_reason: result.fallback_reason,
     };
 
-    CompactionOutcome {
-        messages: result,
-        state: new_state,
+    ExecutionResult::Compacted(Box::new(CompactionOutcome {
+        messages: rebuilt,
+        state,
         stats,
-    }
+    }))
 }
 
-/// Assemble the post-compaction context around a provider-native compaction
-/// item. The opaque item replaces the evicted zone; a free rule-based summary
-/// rides along as the portability fallback for non-Responses providers and
-/// for the incremental text summarizer.
-#[allow(clippy::too_many_arguments)]
-fn assemble_remote(
-    messages: Vec<AgentMessage>,
-    plan: &CompactionPlan,
-    config: &CompactionConfig,
-    prev_state: Option<&CompactionState>,
+/// The message that replaces the evicted zone: an opaque provider-native item
+/// when remote compaction ran, otherwise a plain user summary message.
+fn replacement_message(
+    result: &summary::SummaryResult,
     summarizer_ctx: Option<&SummarizerContext>,
-    remote_compaction: remote::RemoteCompaction,
-    summarizer_input: SummarizerInput,
-    before_message_count: usize,
-    before_tokens: usize,
-    current_run_reclaimed: usize,
-) -> CompactionOutcome {
-    let evicted = &messages[plan.evict_zone.clone()];
-    let split_prefix = plan
-        .split_turn
-        .as_ref()
-        .map(|st| &messages[st.turn_start..st.cut_at]);
-
-    // Rule-based summary: zero-cost portability fallback. The Responses
-    // provider replays only the opaque item; other providers render this text.
-    let summary_text = emergency::summarize(&summarizer_input).summary;
-    let summary_text = truncate_summary(&summary_text, config.summary_max_bytes);
-
-    let encrypted_bytes = remote_compaction.encrypted_bytes;
-    let blob_message = summarizer_ctx
-        .map(|ctx| remote::replacement_message(ctx, remote_compaction, summary_text.clone()))
-        .unwrap_or_else(|| {
-            AgentMessage::Llm(Message::Assistant {
-                content: vec![Content::Text {
-                    text: summary_text.clone(),
-                }],
-                stop_reason: StopReason::Stop,
-                model: String::new(),
-                provider: String::new(),
-                usage: Usage::default(),
-                timestamp: crate::context::now_ms(),
-                error_message: None,
-                response_id: None,
-            })
-        });
-
-    let mut new_state = memory::build_state(evicted, split_prefix, prev_state);
-    new_state.last_summary = Some(summary_text.clone());
-    // No exact user text message exists in context for the next compaction to
-    // dedupe; the blob message is evicted/chained like ordinary conversation.
-    new_state.context_summary_message = None;
-
-    let mut result = Vec::with_capacity(1 + plan.retained_tail.len());
-    result.push(blob_message);
-    result.extend_from_slice(&messages[plan.retained_tail.clone()]);
-    let result = sanitize_tool_pairs(result);
-
-    let after_message_count = result.len();
-    let after_tokens = total_tokens(&result);
-
-    let stats = CompactionStats {
-        summary: Some(summary_text),
-        before_message_count,
-        after_message_count,
-        before_tokens,
-        after_tokens,
-        messages_evicted: plan.evict_zone.len(),
-        current_run_reclaimed,
-        method: Some(CompactionMethod::Remote),
-        remote_blob_bytes: Some(encrypted_bytes),
-        fallback_reason: None,
-    };
-
-    CompactionOutcome {
-        messages: result,
-        state: new_state,
-        stats,
+) -> AgentMessage {
+    if let (Some(remote_compaction), Some(ctx)) = (result.remote.clone(), summarizer_ctx) {
+        if result.method == CompactionMethod::Remote {
+            return remote::replacement_message(ctx, remote_compaction, result.text.clone());
+        }
     }
+    AgentMessage::Llm(Message::User {
+        content: vec![Content::Text {
+            text: result.text.clone(),
+        }],
+        timestamp: crate::context::now_ms(),
+    })
 }

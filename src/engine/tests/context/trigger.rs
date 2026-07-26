@@ -174,6 +174,22 @@ fn threshold_when_over_limit() {
 }
 
 #[test]
+fn threshold_triggers_at_limit() {
+    let config = default_config();
+    let mut usage = make_usage(0, 0, StopReason::Stop);
+    usage.total_tokens = config.trigger_threshold();
+    let input = TriggerInput {
+        usage: Some(usage),
+        current_model: model_id(),
+        last_compaction_ts: None,
+        overflow_recovery_attempted: false,
+    };
+    assert_eq!(evaluate(&input, &config), TriggerDecision::Threshold {
+        context_tokens: config.trigger_threshold()
+    });
+}
+
+#[test]
 fn overflow_on_error_message() {
     let config = default_config();
     let mut usage = make_usage(0, 0, StopReason::Error);

@@ -14,6 +14,10 @@ use crate::provider::StreamConfig;
 use crate::provider::StreamEvent;
 use crate::types::*;
 
+/// Previous summaries above this size get explicit convergence guidance so
+/// repeated incremental compactions do not grow without bound.
+pub const DEFAULT_SUMMARY_SOFT_CAP_TOKENS: usize = 2_000;
+
 /// Generate a summary using the LLM provider.
 pub async fn summarize(
     input: SummarizerInput,
@@ -21,7 +25,7 @@ pub async fn summarize(
     reserve_tokens: u32,
     cancel: CancellationToken,
 ) -> Result<SummarizerOutput, SummarizerError> {
-    let main_max_tokens = output_budget(ctx, reserve_tokens.saturating_mul(4) / 5);
+    let main_max_tokens = output_budget(ctx, reserve_tokens);
     let prefix_max_tokens = output_budget(ctx, reserve_tokens / 2);
 
     // A split can begin at the current turn, leaving no prior history. Match
@@ -34,6 +38,7 @@ pub async fn summarize(
                 &input.conversation,
                 previous,
                 input.custom_instructions.as_deref(),
+                crate::context::estimate_tokens(previous) > DEFAULT_SUMMARY_SOFT_CAP_TOKENS,
             ),
             None => {
                 prompt::format_initial(&input.conversation, input.custom_instructions.as_deref())
@@ -129,7 +134,7 @@ async fn call_provider(
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            Ok(text)
+            Ok(prompt::extract_summary(&text))
         }
         _ => Err(SummarizerError::Failed("Unexpected response type".into())),
     }

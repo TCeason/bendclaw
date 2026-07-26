@@ -2,8 +2,10 @@
 
 use evotengine::context::compaction::config::CompactionConfig;
 use evotengine::context::compaction::executor;
-use evotengine::context::compaction::planner;
-use evotengine::context::compaction::types::SplitTurn;
+use evotengine::context::compaction::executor::ExecutionResult;
+use evotengine::context::compaction::summary::LlmPolicy;
+use evotengine::context::compaction::types::CompactionOutcome;
+use evotengine::context::CompactionPlan;
 use evotengine::context::SummarizerMode;
 use evotengine::context::DEFAULT_SUMMARY_MAX_BYTES;
 use evotengine::types::*;
@@ -72,19 +74,65 @@ fn config_small() -> CompactionConfig {
     CompactionConfig {
         context_window: 10_000,
         reserve_tokens: 2_000,
+        trigger_tokens: None,
         keep_recent_tokens: 1_000,
         summarizer_mode: SummarizerMode::default(),
         summary_max_bytes: 4000,
     }
 }
 
-fn planned(
-    messages: &[AgentMessage],
-    config: &CompactionConfig,
-) -> evotengine::context::compaction::types::CompactionPlan {
-    match planner::plan(messages, config) {
+fn planned(messages: &[AgentMessage], config: &CompactionConfig) -> CompactionPlan {
+    match evotengine::plan_messages(messages, config.keep_recent_tokens) {
         Some(plan) => plan,
         None => panic!("expected compaction plan"),
+    }
+}
+
+/// Manual plan for tests that need explicit zone boundaries.
+fn manual_plan(
+    messages: &[AgentMessage],
+    summarize: std::ops::Range<usize>,
+    turn_prefix: Option<std::ops::Range<usize>>,
+    first_kept: usize,
+) -> CompactionPlan {
+    CompactionPlan {
+        summarize,
+        turn_prefix,
+        first_kept,
+        first_kept_seq: first_kept as u64 + 1,
+        split_turn: None,
+        tokens_before: 0,
+        messages_before: messages.len(),
+        file_ops: Default::default(),
+    }
+}
+
+async fn run(
+    messages: Vec<AgentMessage>,
+    plan: &CompactionPlan,
+    config: &CompactionConfig,
+    llm_policy: LlmPolicy,
+    cancel: CancellationToken,
+) -> ExecutionResult {
+    executor::execute(
+        messages,
+        plan,
+        config,
+        None,
+        None,
+        executor::ExecutionOptions {
+            llm_policy,
+            observer: None,
+            cancel,
+        },
+    )
+    .await
+}
+
+fn compacted(result: ExecutionResult) -> CompactionOutcome {
+    match result {
+        ExecutionResult::Compacted(outcome) => *outcome,
+        ExecutionResult::Skipped(_) => panic!("expected compaction to run"),
     }
 }
 
@@ -102,8 +150,16 @@ async fn executor_reduces_message_count() {
     let plan = planned(&messages, &config);
     let original_count = messages.len();
 
-    let cancel = CancellationToken::new();
-    let outcome = executor::execute(messages, &plan, &config, None, None, true, cancel).await;
+    let outcome = compacted(
+        run(
+            messages,
+            &plan,
+            &config,
+            LlmPolicy::Required,
+            CancellationToken::new(),
+        )
+        .await,
+    );
 
     assert!(outcome.messages.len() < original_count);
     assert!(outcome.stats.messages_evicted > 0);
@@ -126,21 +182,21 @@ async fn executor_summarizes_the_oldest_history_instead_of_pinning_it() {
     messages.push(assistant_msg("recent answer"));
 
     let plan = planned(&messages, &config);
-    assert_eq!(plan.evict_zone.start, 0);
-    let outcome = executor::execute(
-        messages,
-        &plan,
-        &config,
-        None,
-        None,
-        true,
-        CancellationToken::new(),
-    )
-    .await;
+    assert_eq!(plan.summarize.start, 0);
+    let outcome = compacted(
+        run(
+            messages,
+            &plan,
+            &config,
+            LlmPolicy::Required,
+            CancellationToken::new(),
+        )
+        .await,
+    );
 
     let summary = outcome.stats.summary.as_deref().unwrap_or_default();
     assert!(summary.contains("first user message"));
-    assert_eq!(outcome.stats.messages_evicted, plan.evict_zone.len());
+    assert_eq!(outcome.stats.messages_evicted, plan.first_kept);
     assert!(matches!(
         outcome.messages.first(),
         Some(AgentMessage::Llm(Message::User { content, .. }))
@@ -160,8 +216,16 @@ async fn executor_inserts_marker() {
     messages.push(assistant_msg("recent answer"));
 
     let plan = planned(&messages, &config);
-    let cancel = CancellationToken::new();
-    let outcome = executor::execute(messages, &plan, &config, None, None, true, cancel).await;
+    let outcome = compacted(
+        run(
+            messages,
+            &plan,
+            &config,
+            LlmPolicy::Required,
+            CancellationToken::new(),
+        )
+        .await,
+    );
 
     // There should be a marker message containing "[Context compacted"
     let has_marker = outcome.messages.iter().any(|m| {
@@ -186,19 +250,17 @@ async fn cancelled_executor_leaves_context_unchanged() {
         user_msg("recent"),
     ];
     let original = serde_json::to_value(&messages).unwrap_or(serde_json::Value::Null);
-    let plan = evotengine::context::compaction::types::CompactionPlan {
-        evict_zone: 0..2,
-        retained_tail: 2..3,
-        split_turn: None,
-    };
+    let plan = manual_plan(&messages, 0..2, None, 2);
     let cancel = CancellationToken::new();
     cancel.cancel();
 
-    let outcome = executor::execute(messages, &plan, &config, None, None, false, cancel).await;
+    let result = run(messages, &plan, &config, LlmPolicy::Skip, cancel).await;
 
-    assert!(outcome.stats.summary.is_none());
+    let ExecutionResult::Skipped(messages) = result else {
+        panic!("cancelled execution must not compact");
+    };
     assert_eq!(
-        serde_json::to_value(&outcome.messages).unwrap_or(serde_json::Value::Null),
+        serde_json::to_value(&messages).unwrap_or(serde_json::Value::Null),
         original
     );
 }
@@ -213,22 +275,18 @@ async fn executor_bounds_summary_consistently() {
     }
     messages.push(assistant_msg("latest critical conclusion must survive"));
     messages.push(user_msg("recent prompt"));
-    let plan = evotengine::context::compaction::types::CompactionPlan {
-        evict_zone: 0..32,
-        retained_tail: 32..33,
-        split_turn: None,
-    };
+    let plan = manual_plan(&messages, 0..32, None, 32);
 
-    let outcome = executor::execute(
-        messages,
-        &plan,
-        &config,
-        None,
-        None,
-        true,
-        CancellationToken::new(),
-    )
-    .await;
+    let outcome = compacted(
+        run(
+            messages,
+            &plan,
+            &config,
+            LlmPolicy::Required,
+            CancellationToken::new(),
+        )
+        .await,
+    );
     let summary = match outcome.stats.summary.as_deref() {
         Some(summary) => summary,
         None => panic!("expected summary"),
@@ -252,25 +310,18 @@ async fn overflow_fallback_does_not_reinsert_split_turn_verbatim() {
         assistant_msg("LATEST_PREFIX_CONCLUSION"),
         user_msg("retained suffix"),
     ];
-    let plan = evotengine::context::compaction::types::CompactionPlan {
-        evict_zone: 0..0,
-        retained_tail: 2..3,
-        split_turn: Some(SplitTurn {
-            turn_start: 0,
-            cut_at: 2,
-        }),
-    };
+    let plan = manual_plan(&messages, 0..0, Some(0..2), 2);
 
-    let outcome = executor::execute(
-        messages,
-        &plan,
-        &config,
-        None,
-        None,
-        false,
-        CancellationToken::new(),
-    )
-    .await;
+    let outcome = compacted(
+        run(
+            messages,
+            &plan,
+            &config,
+            LlmPolicy::Skip,
+            CancellationToken::new(),
+        )
+        .await,
+    );
     let summary = match outcome.stats.summary.as_deref() {
         Some(summary) => summary,
         None => panic!("expected emergency summary"),
@@ -305,8 +356,16 @@ async fn executor_tracks_file_ops_in_state() {
     messages.push(assistant_msg("recent answer"));
 
     let plan = planned(&messages, &config);
-    let cancel = CancellationToken::new();
-    let outcome = executor::execute(messages, &plan, &config, None, None, true, cancel).await;
+    let outcome = compacted(
+        run(
+            messages,
+            &plan,
+            &config,
+            LlmPolicy::Required,
+            CancellationToken::new(),
+        )
+        .await,
+    );
 
     // State should have tracked file edits
     assert!(!outcome.state.file_ops.edited.is_empty());

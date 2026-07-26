@@ -708,6 +708,8 @@ async fn test_retry_on_rate_limit_succeeds() {
         get_steering_messages: None,
         get_follow_up_messages: None,
         context_config: None,
+        compaction_context: None,
+        compaction_fallback_context: None,
         initial_compaction_state: None,
         execution_limits: None,
         cache_config: CacheConfig::default(),
@@ -794,6 +796,8 @@ async fn test_provider_declared_transient_error_retries_then_succeeds() {
         get_steering_messages: None,
         get_follow_up_messages: None,
         context_config: None,
+        compaction_context: None,
+        compaction_fallback_context: None,
         initial_compaction_state: None,
         execution_limits: None,
         cache_config: CacheConfig::default(),
@@ -861,6 +865,8 @@ async fn test_retry_exhausted_returns_error() {
         get_steering_messages: None,
         get_follow_up_messages: None,
         context_config: None,
+        compaction_context: None,
+        compaction_fallback_context: None,
         initial_compaction_state: None,
         execution_limits: None,
         cache_config: CacheConfig::default(),
@@ -931,6 +937,8 @@ async fn test_auth_error_not_retried() {
         get_steering_messages: None,
         get_follow_up_messages: None,
         context_config: None,
+        compaction_context: None,
+        compaction_fallback_context: None,
         initial_compaction_state: None,
         execution_limits: None,
         cache_config: CacheConfig::default(),
@@ -989,6 +997,8 @@ async fn test_retry_none_disables_retries() {
         get_steering_messages: None,
         get_follow_up_messages: None,
         context_config: None,
+        compaction_context: None,
+        compaction_fallback_context: None,
         initial_compaction_state: None,
         execution_limits: None,
         cache_config: CacheConfig::default(),
@@ -1598,6 +1608,7 @@ async fn test_compact_messages_reduces_over_budget_context() {
     let config = CompactionConfig {
         context_window: 2_000,
         reserve_tokens: 500,
+        trigger_tokens: None,
         keep_recent_tokens: 500,
         summarizer_mode: SummarizerMode::default(),
         summary_max_bytes: 4000,
@@ -1660,6 +1671,7 @@ async fn test_aborted_usage_compacts_only_before_next_explicit_prompt() {
         max_context_tokens: 1_000,
         system_prompt_tokens: 0,
         reserve_tokens: Some(125),
+        trigger_tokens: None,
         keep_recent_tokens: Some(200),
     });
 
@@ -1824,6 +1836,7 @@ async fn test_compaction_after_tool_use_waits_for_tool_results() {
         max_context_tokens: 1_000,
         system_prompt_tokens: 0,
         reserve_tokens: Some(125),
+        trigger_tokens: None,
         keep_recent_tokens: Some(200),
     });
 
@@ -1986,6 +1999,7 @@ async fn test_non_overflow_error_compacts_from_usage_anchor() {
         max_context_tokens: 1_000,
         system_prompt_tokens: 0,
         reserve_tokens: Some(125),
+        trigger_tokens: None,
         keep_recent_tokens: Some(200),
     });
 
@@ -2132,6 +2146,7 @@ async fn test_overflow_retry_removes_failed_response_from_active_context() {
         max_context_tokens: 1_000,
         system_prompt_tokens: 0,
         reserve_tokens: Some(125),
+        trigger_tokens: None,
         keep_recent_tokens: Some(200),
     });
 
@@ -2279,6 +2294,7 @@ async fn test_model_switch_sends_first_request_without_precompaction() {
         max_context_tokens: 10_000,
         system_prompt_tokens: 0,
         reserve_tokens: Some(1250),
+        trigger_tokens: None,
         keep_recent_tokens: Some(2000),
     });
 
@@ -2428,6 +2444,7 @@ async fn test_sanitized_413_compacts_and_retries_once() {
         max_context_tokens: 2_000,
         system_prompt_tokens: 0,
         reserve_tokens: Some(250),
+        trigger_tokens: None,
         keep_recent_tokens: Some(300),
     });
 
@@ -2560,6 +2577,7 @@ async fn test_overflow_recovery_survives_summarizer_failure() {
         max_context_tokens: 2_000,
         system_prompt_tokens: 0,
         reserve_tokens: Some(250),
+        trigger_tokens: None,
         keep_recent_tokens: Some(300),
     });
 
@@ -2651,6 +2669,7 @@ async fn test_unrecoverable_overflow_surfaces_visible_error() {
         max_context_tokens: 2_000,
         system_prompt_tokens: 0,
         reserve_tokens: Some(250),
+        trigger_tokens: None,
         keep_recent_tokens: Some(300),
     });
 
@@ -2709,6 +2728,7 @@ async fn test_uncompactable_context_is_still_sent_to_the_provider() {
             max_context_tokens: 1_000,
             system_prompt_tokens: 0,
             reserve_tokens: Some(125),
+            trigger_tokens: None,
             keep_recent_tokens: Some(200),
         })
         .run("continue")
@@ -2817,6 +2837,7 @@ async fn test_failed_summarizer_still_sends_the_main_request() {
         max_context_tokens: 1_000,
         system_prompt_tokens: 0,
         reserve_tokens: Some(125),
+        trigger_tokens: None,
         keep_recent_tokens: Some(200),
     });
     let mut context = AgentContext {
@@ -2871,6 +2892,7 @@ async fn test_no_usage_anchor_defers_to_provider() {
             max_context_tokens: 1_100,
             system_prompt_tokens: 0,
             reserve_tokens: Some(137),
+            trigger_tokens: None,
             keep_recent_tokens: Some(220),
         })
         .run("continue")
@@ -2916,6 +2938,7 @@ async fn test_llm_call_start_carries_budget_and_window() {
             max_context_tokens: 100_000,
             system_prompt_tokens: 10_000,
             reserve_tokens: Some(12500),
+            trigger_tokens: None,
             keep_recent_tokens: Some(20000),
         })
         .retry_policy(evotengine::RetryPolicy::disabled())
@@ -3192,6 +3215,8 @@ async fn test_empty_response_retried_then_succeeds() {
         get_steering_messages: None,
         get_follow_up_messages: None,
         context_config: None,
+        compaction_context: None,
+        compaction_fallback_context: None,
         initial_compaction_state: None,
         execution_limits: None,
         cache_config: CacheConfig::default(),
@@ -3266,6 +3291,8 @@ async fn test_empty_response_exhausts_retries() {
         get_steering_messages: None,
         get_follow_up_messages: None,
         context_config: None,
+        compaction_context: None,
+        compaction_fallback_context: None,
         initial_compaction_state: None,
         execution_limits: None,
         cache_config: CacheConfig::default(),
