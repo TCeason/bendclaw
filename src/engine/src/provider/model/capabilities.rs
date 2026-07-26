@@ -34,7 +34,7 @@ pub enum Verbosity {
 pub(crate) enum AnthropicThinkingWire {
     /// Claude: `{"type":"adaptive","display":"summarized"}` + `output_config.effort`.
     Adaptive,
-    /// Compatible endpoints (Kimi): `{"type":"enabled"}` + `output_config.effort`.
+    /// Anthropic-compatible endpoints such as Kimi: `{"type":"enabled"}`.
     Enabled,
 }
 
@@ -46,71 +46,62 @@ pub(crate) enum ThinkingLevelPolicy<'a> {
     WireValue(&'a str),
 }
 
+/// Model-level reasoning support. Presence in `levels` means supported;
+/// `None` means the protocol's canonical encoding, while `Some` is an explicit
+/// wire value. Unsupported levels are absent rather than represented by a
+/// second sentinel state.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum EffortMapping {
-    Unsupported,
-    Value(String),
-}
-
-/// Model-level reasoning support and wire-value overrides.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct ReasoningCapabilities {
-    supported: bool,
-    level_map: HashMap<ThinkingLevel, EffortMapping>,
+    levels: HashMap<ThinkingLevel, Option<String>>,
+    default_level: ThinkingLevel,
     /// Effort-based thinking wire encoding; `None` means budget-based.
     effort_wire: Option<AnthropicThinkingWire>,
 }
 
 impl ReasoningCapabilities {
     pub(super) fn new(
-        supported: bool,
-        level_map: HashMap<ThinkingLevel, Option<String>>,
+        levels: HashMap<ThinkingLevel, Option<String>>,
+        default_level: ThinkingLevel,
         effort_wire: Option<AnthropicThinkingWire>,
     ) -> Self {
+        debug_assert!(levels.is_empty() || levels.contains_key(&default_level));
         Self {
-            supported,
-            level_map: level_map
-                .into_iter()
-                .map(|(level, value)| {
-                    let mapping = match value {
-                        Some(value) => EffortMapping::Value(value),
-                        None => EffortMapping::Unsupported,
-                    };
-                    (level, mapping)
-                })
-                .collect(),
+            levels,
+            default_level,
             effort_wire,
         }
     }
 
     pub(super) fn supported(&self) -> bool {
-        self.supported
+        self.levels
+            .iter()
+            .any(|(level, _)| *level != ThinkingLevel::Off)
+    }
+
+    pub(super) fn default_level(&self) -> ThinkingLevel {
+        self.default_level
     }
 
     pub(super) fn policy(&self, level: ThinkingLevel) -> ThinkingLevelPolicy<'_> {
-        match self.level_map.get(&level) {
-            Some(EffortMapping::Unsupported) => ThinkingLevelPolicy::Unsupported,
-            Some(EffortMapping::Value(value)) => ThinkingLevelPolicy::WireValue(value),
-            None => ThinkingLevelPolicy::ProtocolDefault,
+        match self.levels.get(&level) {
+            Some(Some(value)) => ThinkingLevelPolicy::WireValue(value),
+            Some(None) => ThinkingLevelPolicy::ProtocolDefault,
+            None => ThinkingLevelPolicy::Unsupported,
         }
     }
 
     pub(super) fn has_wire_value(&self, value: &str) -> bool {
-        self.level_map
+        self.levels
             .values()
-            .any(|mapping| matches!(mapping, EffortMapping::Value(mapped) if mapped == value))
-    }
-
-    pub(super) fn insert_override(&mut self, level: ThinkingLevel, value: Option<String>) {
-        let mapping = match value {
-            Some(value) => EffortMapping::Value(value),
-            None => EffortMapping::Unsupported,
-        };
-        self.level_map.insert(level, mapping);
+            .any(|mapped| mapped.as_deref() == Some(value))
     }
 
     pub(super) fn set_supported(&mut self, supported: bool) {
-        self.supported = supported;
+        if !supported {
+            self.levels.clear();
+            self.levels.insert(ThinkingLevel::Off, None);
+            self.default_level = ThinkingLevel::Off;
+        }
     }
 
     pub(super) fn effort_wire(&self) -> Option<AnthropicThinkingWire> {
@@ -121,12 +112,10 @@ impl ReasoningCapabilities {
 /// Intrinsic capabilities resolved from the model catalog.
 #[derive(Debug, Clone)]
 pub(super) struct ModelCapabilities {
-    pub(super) context_window: u32,
+    pub(super) max_input_tokens: u32,
     pub(super) max_output_tokens: u32,
     pub(super) input: Vec<InputModality>,
     pub(super) reasoning: ReasoningCapabilities,
-    pub(super) first_party_reasoning_levels: HashMap<ThinkingLevel, Option<String>>,
-    pub(super) first_party_responses_reasoning_levels: HashMap<ThinkingLevel, Option<String>>,
     pub(super) default_verbosity: Option<Verbosity>,
     pub(super) remote_compaction: bool,
 }

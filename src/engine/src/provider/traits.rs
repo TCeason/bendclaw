@@ -61,65 +61,30 @@ pub struct StreamConfig {
     pub prompt_cache_key: Option<String>,
 }
 
-/// Headroom kept between the request's input tokens and the context window when
-/// clamping the output budget, so the model always has room to respond. Matches
-/// pi's `CONTEXT_SAFETY_TOKENS`.
-const CONTEXT_SAFETY_TOKENS: usize = 4096;
-
 impl StreamConfig {
-    /// Caller output cap before context-window clamping.
+    /// Caller output cap before applying the model's independent output limit.
     pub fn requested_max_tokens(&self) -> u32 {
         self.max_tokens
-            .or(self.model_config.as_ref().map(|m| m.max_tokens()))
+            .or(self.model_config.as_ref().map(|model| model.max_tokens()))
             .unwrap_or(8192)
             .max(1)
     }
 
-    /// Clamp an output cap to the context still available for this request.
+    /// Clamp an output cap to the model's declared maximum output size.
     ///
-    /// Keeping this separate lets providers expand an explicit output cap for
-    /// protocol overhead (for example Anthropic budget thinking) before the
-    /// final context clamp, matching pi's ordering.
-    pub fn clamp_max_tokens_to_context(&self, requested: u32) -> u32 {
-        let context_window = self
-            .model_config
+    /// `ModelConfig::context_window()` is the independent maximum input size,
+    /// so it must not be reduced by or used to reduce this output budget.
+    pub fn clamp_max_tokens_to_model(&self, requested: u32) -> u32 {
+        self.model_config
             .as_ref()
-            .map(|m| m.context_window())
-            .unwrap_or(0);
-        if context_window == 0 {
-            return requested.max(1);
-        }
-
-        let system_prompt = super::system_prompt::without_dynamic_boundary(&self.system_prompt);
-        let input_tokens = crate::context::estimate_tokens(&system_prompt)
-            + crate::context::tool_definition_tokens(&self.tools)
-            + self
-                .messages
-                .iter()
-                .map(estimate_message_tokens)
-                .sum::<usize>();
-        let available = (context_window as usize)
-            .saturating_sub(input_tokens)
-            .saturating_sub(CONTEXT_SAFETY_TOKENS)
-            .max(1);
-        (requested as usize).min(available) as u32
+            .map(|model| requested.min(model.max_tokens()))
+            .unwrap_or(requested)
+            .max(1)
     }
 
-    /// The output-token budget to send this request, clamped to what the
-    /// context window can still hold.
     pub fn resolved_max_tokens(&self) -> u32 {
-        self.clamp_max_tokens_to_context(self.requested_max_tokens())
+        self.clamp_max_tokens_to_model(self.requested_max_tokens())
     }
-}
-
-/// Token estimate for an LLM `Message`, reusing the shared content heuristic.
-fn estimate_message_tokens(msg: &Message) -> usize {
-    let content = match msg {
-        Message::User { content, .. } => content,
-        Message::Assistant { content, .. } => content,
-        Message::ToolResult { content, .. } => content,
-    };
-    crate::context::content_tokens(content) + 4
 }
 
 /// Tool definition sent to the LLM (schema only, no execute fn)

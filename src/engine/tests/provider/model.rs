@@ -193,25 +193,27 @@ fn date_suffixed_anthropic_ids_match_family_capabilities() {
 fn kimi_profiles_match_catalog_contracts() {
     for id in ["k2p7", "kimi-for-coding", "kimi-for-coding-highspeed"] {
         let config = ModelConfig::anthropic(id, id);
-        assert_eq!(config.context_window(), 262_144, "{id}");
-        assert_eq!(config.max_tokens(), 32_768, "{id}");
+        assert_eq!(config.context_window(), 196_608, "{id}");
+        assert_eq!(config.max_tokens(), 65_536, "{id}");
         assert_eq!(
             config.input(),
             [InputModality::Text, InputModality::Image],
             "{id}"
         );
+        assert_eq!(config.default_thinking_level(), ThinkingLevel::High, "{id}");
     }
 
     use evotengine::ThinkingLevel::*;
     let k3 = ModelConfig::anthropic("k3", "Kimi K3");
-    assert_eq!(k3.context_window(), 1_048_576);
-    assert_eq!(k3.max_tokens(), 131_072);
-    assert_eq!(k3.supported_thinking_levels(), vec![Low, High, Max]);
-    assert!(!k3.can_disable_thinking());
+    assert_eq!(k3.context_window(), 196_608);
+    assert_eq!(k3.max_tokens(), 65_536);
+    assert_eq!(k3.supported_thinking_levels(), vec![Off, Low, High, Max]);
+    assert!(k3.can_disable_thinking());
+    assert_eq!(k3.default_thinking_level(), High);
 
     let thinking = ModelConfig::anthropic("kimi-k2-thinking", "Kimi K2 Thinking");
-    assert_eq!(thinking.context_window(), 262_144);
-    assert_eq!(thinking.max_tokens(), 32_768);
+    assert_eq!(thinking.context_window(), 196_608);
+    assert_eq!(thinking.max_tokens(), 65_536);
     assert_eq!(thinking.input(), [InputModality::Text]);
 }
 
@@ -219,19 +221,21 @@ fn kimi_profiles_match_catalog_contracts() {
 fn current_openai_profiles_expose_limits_and_verbosity() {
     for id in [
         "gpt-5.4",
+        "gpt-5.4-pro",
         "gpt-5.5",
+        "gpt-5.5-pro",
         "gpt-5.6-luna",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
     ] {
         let config = ModelConfig::openai(id, id);
-        assert_eq!(config.context_window(), 272_000, "{id}");
+        assert_eq!(config.context_window(), 922_000, "{id}");
         assert_eq!(config.max_tokens(), 128_000, "{id}");
-    }
-    for id in ["gpt-5.4-pro", "gpt-5.5-pro"] {
-        let config = ModelConfig::openai(id, id);
-        assert_eq!(config.context_window(), 1_050_000, "{id}");
-        assert_eq!(config.max_tokens(), 128_000, "{id}");
+        assert_eq!(
+            config.default_thinking_level(),
+            ThinkingLevel::Medium,
+            "{id}"
+        );
     }
     for id in ["gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"] {
         assert_eq!(
@@ -258,7 +262,7 @@ fn unknown_openai_families_keep_reasoning_fallback_without_extensions() {
         assert!(config.reasoning(), "{id}");
         assert_eq!(
             config.supported_thinking_levels(),
-            vec![Off, Minimal, Low, Medium, High],
+            vec![Off, Low, Medium, High],
             "{id}"
         );
         assert_eq!(config.effective_verbosity(), None, "{id}");
@@ -270,8 +274,9 @@ fn unknown_openai_families_keep_reasoning_fallback_without_extensions() {
 fn anthropic_version_rules_cover_current_and_future_models() {
     for id in ["claude-opus-4-6", "claude-opus-4-8", "claude-opus-5-0"] {
         let config = ModelConfig::anthropic(id, id);
-        assert_eq!(config.context_window(), 1_000_000, "{id}");
+        assert_eq!(config.context_window(), 867_000, "{id}");
         assert_eq!(config.max_tokens(), 128_000, "{id}");
+        assert_eq!(config.default_thinking_level(), ThinkingLevel::High, "{id}");
     }
     for id in [
         "claude-sonnet-4-20250514",
@@ -355,29 +360,87 @@ fn route_capability_names_are_parsed_separately_from_transport_caps() {
 }
 
 #[test]
+fn glm_and_deepseek_profiles_are_explicit() {
+    use evotengine::ThinkingLevel::*;
+
+    let glm = ModelConfig::openai("zai/glm-5.2", "GLM 5.2");
+    assert_eq!(glm.context_window(), 908_928);
+    assert_eq!(glm.max_tokens(), 131_072);
+    assert_eq!(glm.input(), [InputModality::Text]);
+    assert_eq!(glm.supported_thinking_levels(), vec![Off, High, Max]);
+    assert_eq!(glm.default_thinking_level(), High);
+
+    let chat = resolved(
+        ApiProtocol::OpenAiCompletions,
+        "deepseek",
+        "deepseek-chat",
+        "https://api.deepseek.com",
+        Some(OpenAiCompat::deepseek()),
+        RouteCapabilities::default(),
+        ModelOverrides::default(),
+    );
+    assert!(!chat.reasoning());
+    assert_eq!(chat.supported_thinking_levels(), vec![Off]);
+    assert_eq!(chat.default_thinking_level(), Off);
+    assert!(!chat.can_disable_thinking());
+
+    let namespaced_chat = ModelConfig::openai("deepseek/deepseek-chat", "DeepSeek Chat");
+    assert_eq!(namespaced_chat.context_window(), 128_000);
+    assert_eq!(namespaced_chat.max_tokens(), 8_192);
+    assert!(!namespaced_chat.reasoning());
+
+    let reasoner = resolved(
+        ApiProtocol::OpenAiCompletions,
+        "deepseek",
+        "deepseek-reasoner",
+        "https://api.deepseek.com",
+        Some(OpenAiCompat::deepseek()),
+        RouteCapabilities::default(),
+        ModelOverrides::default(),
+    );
+    assert!(reasoner.reasoning());
+    assert_eq!(reasoner.supported_thinking_levels(), vec![Off, High]);
+    assert_eq!(reasoner.default_thinking_level(), High);
+
+    let namespaced_reasoner =
+        ModelConfig::openai("deepseek/deepseek-reasoner", "DeepSeek Reasoner");
+    assert_eq!(namespaced_reasoner.context_window(), 128_000);
+    assert_eq!(namespaced_reasoner.max_tokens(), 64_000);
+    assert_eq!(namespaced_reasoner.default_thinking_level(), High);
+}
+
+#[test]
+fn unknown_models_do_not_inherit_protocol_reasoning() {
+    let config = ModelConfig::local("http://localhost:11434/v1", "some/model");
+    assert!(!config.reasoning());
+    assert_eq!(config.supported_thinking_levels(), vec![ThinkingLevel::Off]);
+    assert_eq!(config.default_thinking_level(), ThinkingLevel::Off);
+}
+
+#[test]
 fn thinking_levels_follow_model_and_route_contracts() {
     use evotengine::ThinkingLevel::*;
 
     let opus_4_6 = ModelConfig::anthropic("claude-opus-4-6", "Opus 4.6");
     assert_eq!(opus_4_6.supported_thinking_levels(), vec![
-        Off, Minimal, Low, Medium, High, Max
+        Off, Low, Medium, High, Max
     ]);
 
     let opus_4_8 = ModelConfig::anthropic("claude-opus-4-8", "Opus 4.8");
     assert_eq!(opus_4_8.supported_thinking_levels(), vec![
-        Off, Minimal, Low, Medium, High, Xhigh, Max
+        Off, Low, Medium, High, Xhigh, Max
     ]);
 
     let opus_5 = ModelConfig::anthropic("claude-opus-5", "Opus 5");
     assert_eq!(opus_5.supported_thinking_levels(), vec![
-        Off, Minimal, Low, Medium, High, Xhigh, Max
+        Off, Low, Medium, High, Xhigh, Max
     ]);
-    assert_eq!(opus_5.context_window(), 1_000_000);
+    assert_eq!(opus_5.context_window(), 867_000);
     assert_eq!(opus_5.max_tokens(), 128_000);
 
     let gpt_5_5 = ModelConfig::openai("gpt-5.5", "GPT-5.5");
     assert_eq!(gpt_5_5.supported_thinking_levels(), vec![
-        Off, Low, Medium, High, Xhigh
+        Low, Medium, High, Xhigh
     ]);
 
     let gpt_5_5_pro = ModelConfig::openai("gpt-5.5-pro", "GPT-5.5 Pro");

@@ -13,7 +13,7 @@ pub struct ModelOverrides {
 impl ModelOverrides {
     pub(super) fn apply(self, capabilities: &mut ModelCapabilities) {
         if let Some(context_window) = self.context_window {
-            capabilities.context_window = context_window;
+            capabilities.max_input_tokens = context_window;
         }
         if let Some(max_output_tokens) = self.max_output_tokens {
             capabilities.max_output_tokens = max_output_tokens;

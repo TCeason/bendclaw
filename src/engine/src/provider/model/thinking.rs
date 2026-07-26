@@ -65,32 +65,21 @@ impl ModelConfig {
         }
         LEVEL_LADDER
             .into_iter()
-            .filter(|level| self.level_selectable(*level))
+            .filter(|level| {
+                !matches!(
+                    self.thinking_level_policy(*level),
+                    ThinkingLevelPolicy::Unsupported
+                )
+            })
             .collect()
     }
 
-    fn level_selectable(&self, level: ThinkingLevel) -> bool {
-        match self.thinking_level_policy(level) {
-            ThinkingLevelPolicy::Unsupported => false,
-            ThinkingLevelPolicy::WireValue(effort) => {
-                !(level == ThinkingLevel::Xhigh
-                    && effort == "max"
-                    && !matches!(
-                        self.thinking_level_policy(ThinkingLevel::Max),
-                        ThinkingLevelPolicy::ProtocolDefault
-                    ))
-            }
-            ThinkingLevelPolicy::ProtocolDefault => {
-                !matches!(level, ThinkingLevel::Xhigh | ThinkingLevel::Max)
-            }
-        }
-    }
-
     pub fn can_disable_thinking(&self) -> bool {
-        !matches!(
-            self.thinking_level_policy(ThinkingLevel::Off),
-            ThinkingLevelPolicy::Unsupported
-        )
+        self.reasoning()
+            && !matches!(
+                self.thinking_level_policy(ThinkingLevel::Off),
+                ThinkingLevelPolicy::Unsupported
+            )
     }
 
     /// Clamp a requested level to the nearest supported tier for this model.
@@ -142,9 +131,8 @@ pub fn effective_thinking_level(
         .unwrap_or(requested)
 }
 
-/// Map a thinking level to an Anthropic effort value. Mirrors pi's
-/// `mapThinkingLevelToEffort`: the model map wins, otherwise fall back to the
-/// protocol default (Anthropic has no `minimal` effort).
+/// Map a thinking level to an Anthropic effort value. The model map wins;
+/// absent model metadata falls back to Anthropic's canonical effort names.
 pub fn anthropic_effort(level: ThinkingLevel, model: Option<&ModelConfig>) -> Option<String> {
     if let Some(model) = model {
         match model.thinking_level_policy(level) {

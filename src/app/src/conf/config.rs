@@ -60,6 +60,61 @@ pub fn parse_protocol(value: &str) -> Result<Protocol> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_model_config(
+    protocol: Protocol,
+    provider: &str,
+    model: &str,
+    base_url: Option<&str>,
+    compat_caps: CompatCaps,
+    route_capabilities: RouteCapabilityOverrides,
+    context_window: Option<u32>,
+    max_tokens: Option<u32>,
+    supports_image: Option<bool>,
+) -> evot_engine::provider::ModelConfig {
+    use evot_engine::provider::default_base_url;
+    use evot_engine::provider::ApiProtocol;
+    use evot_engine::provider::ModelOverrides;
+    use evot_engine::provider::OpenAiCompat;
+    use evot_engine::provider::ResolveModelRequest;
+    use evot_engine::provider::RouteCapabilities;
+
+    let api = match protocol {
+        Protocol::Anthropic => ApiProtocol::AnthropicMessages,
+        Protocol::OpenAi => ApiProtocol::OpenAiCompletions,
+        Protocol::OpenAiResponses => ApiProtocol::OpenAiResponses,
+    };
+    let resolved_base = base_url
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| default_base_url(api, provider))
+        .to_string();
+    let mut compat = match protocol {
+        Protocol::Anthropic => None,
+        Protocol::OpenAi | Protocol::OpenAiResponses => Some(OpenAiCompat::for_provider(provider)),
+    };
+    if let Some(compat) = &mut compat {
+        compat.caps |= compat_caps;
+    }
+    let route_capabilities =
+        RouteCapabilities::for_route(api, provider, &resolved_base, route_capabilities);
+
+    evot_engine::provider::ModelConfig::resolve(ResolveModelRequest {
+        protocol: api,
+        provider: provider.to_string(),
+        model_id: model.to_string(),
+        base_url: resolved_base,
+        headers: Default::default(),
+        compat,
+        route_capabilities,
+        overrides: ModelOverrides {
+            context_window,
+            max_output_tokens: max_tokens,
+            supports_image,
+            reasoning: None,
+        },
+    })
+}
+
 // ---------------------------------------------------------------------------
 // ProviderProfile — static config for one provider
 // ---------------------------------------------------------------------------
@@ -101,7 +156,9 @@ impl ProviderProfile {
 pub struct LlmSelection {
     pub provider: String,
     pub model_override: Option<String>,
-    pub thinking_level: ThinkingLevel,
+    /// User-selected global override. `None` preserves the model-authored
+    /// default from the catalog.
+    pub thinking_level: Option<ThinkingLevel>,
 }
 
 // ---------------------------------------------------------------------------
@@ -116,11 +173,7 @@ pub struct LlmConfig {
     pub base_url: String,
     pub model: String,
     pub thinking_level: ThinkingLevel,
-    pub compat_caps: CompatCaps,
-    pub route_capabilities: RouteCapabilityOverrides,
-    pub context_window: Option<u32>,
-    pub max_tokens: Option<u32>,
-    pub supports_image: Option<bool>,
+    pub model_config: evot_engine::provider::ModelConfig,
 }
 
 impl LlmConfig {
@@ -129,18 +182,25 @@ impl LlmConfig {
     /// the missing configuration is surfaced at query time instead of blocking
     /// startup.
     pub fn unconfigured() -> Self {
+        let model_config = resolve_model_config(
+            Protocol::Anthropic,
+            "",
+            "",
+            None,
+            CompatCaps::default(),
+            RouteCapabilityOverrides::default(),
+            None,
+            None,
+            None,
+        );
         Self {
             provider: String::new(),
             protocol: Protocol::Anthropic,
             api_key: String::new(),
             base_url: String::new(),
             model: String::new(),
-            thinking_level: ThinkingLevel::default(),
-            compat_caps: CompatCaps::default(),
-            route_capabilities: RouteCapabilityOverrides::default(),
-            context_window: None,
-            max_tokens: None,
-            supports_image: None,
+            thinking_level: model_config.default_thinking_level(),
+            model_config,
         }
     }
 }
@@ -200,20 +260,32 @@ impl Config {
                     .join(", ")
             ))
         })?;
+        let model = model_override.unwrap_or_else(|| profile.model().to_string());
+        let model_config = resolve_model_config(
+            profile.protocol.clone(),
+            provider_name,
+            &model,
+            Some(&profile.base_url),
+            profile.compat_caps,
+            profile.route_capabilities,
+            profile.context_window,
+            profile.max_tokens,
+            profile.supports_image,
+        );
+        let requested_level = profile
+            .thinking_level
+            .or(self.llm.thinking_level)
+            .unwrap_or_else(|| model_config.default_thinking_level());
+        let thinking_level = model_config.effective_thinking_level(requested_level);
+
         Ok(LlmConfig {
             provider: provider_name.to_string(),
             protocol: profile.protocol.clone(),
             api_key: profile.api_key.clone(),
             base_url: profile.base_url.clone(),
-            model: model_override.unwrap_or_else(|| profile.model().to_string()),
-            // Per-provider thinking level wins; otherwise fall back to the
-            // global selection.
-            thinking_level: profile.thinking_level.unwrap_or(self.llm.thinking_level),
-            compat_caps: profile.compat_caps,
-            route_capabilities: profile.route_capabilities,
-            context_window: profile.context_window,
-            max_tokens: profile.max_tokens,
-            supports_image: profile.supports_image,
+            model,
+            thinking_level,
+            model_config,
         })
     }
 

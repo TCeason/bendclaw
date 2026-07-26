@@ -41,17 +41,13 @@ fn cycle_thinking_level_anthropic_walks_full_ramp_and_wraps() -> TestResult {
     let dir = TempDir::new()?;
     let agent = Agent::new(&anthropic_config(&dir), "/work")?;
 
-    // The default (medium) is a real stop, so cycling advances from there and
-    // every tier stays reachable on the way around.
-    assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::High));
-    // Opus 4.6 is max-only above high; xhigh remains a compatibility alias but
-    // is not a separate selectable stop.
+    assert_eq!(agent.llm().thinking_level, ThinkingLevel::High);
+    // Opus 4.6 defaults to high and only exposes explicitly declared stops.
     assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Max));
-    // Wraps back to the start.
     assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Off));
-    assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Minimal));
     assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Low));
     assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Medium));
+    assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::High));
     Ok(())
 }
 
@@ -109,9 +105,8 @@ fn cycle_thinking_level_openai_with_effort_capability() -> TestResult {
     config.llm.provider = "openai".into();
     let agent = Agent::new(&config, "/work")?;
 
-    // gpt-5.5 maps xhigh explicitly, so the full ramp is selectable.
+    // gpt-5.5 does not declare an off value; only its explicit effort ramp is selectable.
     assert_eq!(agent.supported_thinking_levels(), vec![
-        ThinkingLevel::Off,
         ThinkingLevel::Low,
         ThinkingLevel::Medium,
         ThinkingLevel::High,
@@ -174,7 +169,6 @@ fn cycle_thinking_level_gpt_5_6_cycles_xhigh_then_max() -> TestResult {
 
     assert_eq!(agent.supported_thinking_levels(), vec![
         ThinkingLevel::Off,
-        ThinkingLevel::Minimal,
         ThinkingLevel::Low,
         ThinkingLevel::Medium,
         ThinkingLevel::High,

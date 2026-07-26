@@ -7,35 +7,54 @@ use super::super::capabilities::ReasoningCapabilities;
 use super::super::capabilities::Verbosity;
 use crate::ThinkingLevel;
 
-pub(super) type ThinkingLevels = &'static [(ThinkingLevel, Option<&'static str>)];
+pub(super) type ReasoningLevels = &'static [(ThinkingLevel, Option<&'static str>)];
+
+/// Intrinsic reasoning contract for a model. The list is exhaustive: a level
+/// not present here is unsupported. This mirrors Droid's
+/// `supportedReasoningEfforts` + `defaultReasoningEffort` model.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ReasoningProfile {
+    pub levels: ReasoningLevels,
+    pub default: ThinkingLevel,
+    /// Anthropic effort-based wire dialect. `None` selects budget thinking.
+    pub anthropic_wire: Option<AnthropicThinkingWire>,
+}
+
+pub(super) const STANDARD_REASONING: ReasoningProfile = ReasoningProfile {
+    levels: &[
+        (ThinkingLevel::Off, None),
+        (ThinkingLevel::Minimal, None),
+        (ThinkingLevel::Low, None),
+        (ThinkingLevel::Medium, None),
+        (ThinkingLevel::High, None),
+    ],
+    default: ThinkingLevel::Medium,
+    anthropic_wire: None,
+};
+
+pub(super) const NO_REASONING: ReasoningProfile = ReasoningProfile {
+    levels: &[(ThinkingLevel::Off, None)],
+    default: ThinkingLevel::Off,
+    anthropic_wire: None,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ModelProfile {
-    pub context_window: u32,
-    pub max_tokens: u32,
-    pub reasoning: bool,
+    /// Maximum request input accepted by the model, excluding generated output.
+    pub max_input_tokens: u32,
+    /// Maximum generated output accepted by the model.
+    pub max_output_tokens: u32,
     pub vision: bool,
-    pub thinking_levels: ThinkingLevels,
-    pub first_party_thinking_levels: ThinkingLevels,
-    pub first_party_responses_thinking_levels: ThinkingLevels,
-    pub adaptive_thinking: bool,
-    /// Wire encoding when `adaptive_thinking` is set. Defaults to the Claude
-    /// dialect; compatible endpoints (e.g. Kimi) override it.
-    pub thinking_wire: AnthropicThinkingWire,
+    pub reasoning: ReasoningProfile,
     pub remote_compaction: bool,
     pub default_verbosity: Option<Verbosity>,
 }
 
 pub(super) const BASE: ModelProfile = ModelProfile {
-    context_window: 200_000,
-    max_tokens: 8_192,
-    reasoning: true,
+    max_input_tokens: 200_000,
+    max_output_tokens: 8_192,
     vision: true,
-    thinking_levels: &[],
-    first_party_thinking_levels: &[],
-    first_party_responses_thinking_levels: &[],
-    adaptive_thinking: false,
-    thinking_wire: AnthropicThinkingWire::Adaptive,
+    reasoning: STANDARD_REASONING,
     remote_compaction: false,
     default_verbosity: None,
 };
@@ -43,21 +62,17 @@ pub(super) const BASE: ModelProfile = ModelProfile {
 impl ModelProfile {
     pub(super) fn capabilities(self) -> ModelCapabilities {
         ModelCapabilities {
-            context_window: self.context_window,
-            max_output_tokens: self.max_tokens,
+            max_input_tokens: self.max_input_tokens,
+            max_output_tokens: self.max_output_tokens,
             input: if self.vision {
                 vec![InputModality::Text, InputModality::Image]
             } else {
                 vec![InputModality::Text]
             },
             reasoning: ReasoningCapabilities::new(
-                self.reasoning,
-                levels_map(self.thinking_levels),
-                self.adaptive_thinking.then_some(self.thinking_wire),
-            ),
-            first_party_reasoning_levels: levels_map(self.first_party_thinking_levels),
-            first_party_responses_reasoning_levels: levels_map(
-                self.first_party_responses_thinking_levels,
+                levels_map(self.reasoning.levels),
+                self.reasoning.default,
+                self.reasoning.anthropic_wire,
             ),
             default_verbosity: self.default_verbosity,
             remote_compaction: self.remote_compaction,
@@ -65,7 +80,7 @@ impl ModelProfile {
     }
 }
 
-pub(super) fn levels_map(levels: ThinkingLevels) -> HashMap<ThinkingLevel, Option<String>> {
+pub(super) fn levels_map(levels: ReasoningLevels) -> HashMap<ThinkingLevel, Option<String>> {
     levels
         .iter()
         .map(|(level, effort)| (*level, effort.map(str::to_string)))

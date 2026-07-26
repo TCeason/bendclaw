@@ -529,17 +529,7 @@ impl NapiAgent {
 /// capability), which tells the footer to omit the indicator — the same gate
 /// pi applies via `model.reasoning`.
 fn display_thinking_level(llm: &evot::conf::LlmConfig) -> String {
-    let model_config = evot::agent::run::runtime::build_model_config(
-        llm.protocol.clone(),
-        &llm.provider,
-        &llm.model,
-        Some(&llm.base_url),
-        llm.compat_caps,
-        llm.route_capabilities,
-        llm.context_window,
-        llm.max_tokens,
-        llm.supports_image,
-    );
+    let model_config = &llm.model_config;
     if !model_config.reasoning() || model_config.supported_thinking_levels().is_empty() {
         return String::new();
     }

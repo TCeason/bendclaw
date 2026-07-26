@@ -2330,9 +2330,9 @@ async fn test_model_switch_sends_first_request_without_precompaction() {
         .iter()
         .all(|event| !matches!(event, AgentEvent::ContextCompactionEnd { .. })));
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
-    // The provider boundary still applies pi-compatible output clamping. The
-    // important behavior is that the request is sent before any compaction.
-    assert_eq!(provider.main_budgets.lock().as_slice(), &[1]);
+    // The input limit drives compaction while the independent output limit is
+    // preserved at the provider boundary. The request is sent before compaction.
+    assert_eq!(provider.main_budgets.lock().as_slice(), &[500]);
 }
 
 #[tokio::test]

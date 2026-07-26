@@ -2,8 +2,6 @@ use crate::provider::system_prompt::without_dynamic_boundary;
 use crate::provider::traits::StreamConfig;
 use crate::types::*;
 
-const MIN_OUTPUT_TOKENS: u32 = 16;
-
 pub fn build_request_body(config: &StreamConfig) -> serde_json::Value {
     let supports_image = config
         .model_config
@@ -112,8 +110,7 @@ pub fn build_request_body(config: &StreamConfig) -> serde_json::Value {
     // they determine the output cap server-side. Other Responses-compatible
     // models retain evot's explicit budget.
     if !is_gpt_or_codex(&config.model) {
-        body["max_output_tokens"] =
-            serde_json::json!(config.resolved_max_tokens().max(MIN_OUTPUT_TOKENS));
+        body["max_output_tokens"] = serde_json::json!(config.resolved_max_tokens());
     }
 
     if !config.tools.is_empty() {

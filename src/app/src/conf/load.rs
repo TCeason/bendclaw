@@ -151,7 +151,7 @@ impl ConfigSource {
             config.llm.provider = provider;
         }
         if let Some(level) = self.llm.thinking_level {
-            config.llm.thinking_level = thinking_level_from_str(&level)?;
+            config.llm.thinking_level = Some(thinking_level_from_str(&level)?);
         }
 
         // Apply [providers.*] from TOML — preserves declaration order
@@ -626,11 +626,11 @@ fn apply_env(config: &mut Config, vars: &[(String, String)]) -> Result<()> {
         match key.as_str() {
             "EVOT_LLM_PROVIDER" => config.llm.provider = value.clone(),
             "EVOT_LLM_THINKING_LEVEL" => {
-                config.llm.thinking_level = thinking_level_from_str(value)?;
+                config.llm.thinking_level = Some(thinking_level_from_str(value)?);
             }
             // Legacy thinking level key
             "EVOT_THINKING_LEVEL" => {
-                config.llm.thinking_level = thinking_level_from_str(value)?;
+                config.llm.thinking_level = Some(thinking_level_from_str(value)?);
             }
             _ => {}
         }

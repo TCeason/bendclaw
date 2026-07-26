@@ -2,7 +2,6 @@ use super::catalog;
 use super::resolved::ModelConfig;
 use super::resolved::ModelRoute;
 use super::resolved::ResolveModelRequest;
-use crate::provider::route::is_official_openai_route;
 use crate::provider::route::ApiProtocol;
 
 pub(super) fn resolve(request: ResolveModelRequest) -> ModelConfig {
@@ -14,18 +13,6 @@ pub(super) fn resolve(request: ResolveModelRequest) -> ModelConfig {
         ))
     });
 
-    if is_official_openai_route(&request.provider, &request.base_url) {
-        for (level, effort) in std::mem::take(&mut capabilities.first_party_reasoning_levels) {
-            capabilities.reasoning.insert_override(level, effort);
-        }
-        if request.protocol == ApiProtocol::OpenAiResponses {
-            for (level, effort) in
-                std::mem::take(&mut capabilities.first_party_responses_reasoning_levels)
-            {
-                capabilities.reasoning.insert_override(level, effort);
-            }
-        }
-    }
     request.overrides.apply(&mut capabilities);
 
     ModelConfig {

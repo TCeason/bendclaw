@@ -1,10 +1,10 @@
 //! Generic, provider-agnostic model config resolution in `build_model_config`.
 //!
-//! Verifies the explicit override behavior: `context_window`, `max_tokens`, and
-//! `supports_image` are applied when provided, and left at the protocol default
-//! otherwise. These are set via `EVOT_LLM_<PROVIDER>_*` for any provider.
+//! Verifies explicit override behavior: `context_window`, `max_tokens`, and
+//! `supports_image` replace catalog values when provided. These are set via
+//! `EVOT_LLM_<PROVIDER>_*` for any provider.
 
-use evot::agent::run::runtime::build_model_config as resolve_model_config;
+use evot::conf::resolve_model_config;
 use evot::conf::Protocol;
 use evot_engine::provider::ApiProtocol;
 use evot_engine::provider::CompatCaps;
@@ -139,7 +139,7 @@ fn native_openai_gpt_5_6_metadata_applies_without_explicit_overrides() {
         None,
     );
     assert_eq!(mc.protocol(), ApiProtocol::OpenAiResponses);
-    assert_eq!(mc.context_window(), 272_000);
+    assert_eq!(mc.context_window(), 922_000);
     assert_eq!(mc.max_tokens(), 128_000);
     assert!(mc.supports_image());
 }
@@ -212,7 +212,7 @@ fn openrouter_gpt_5_6_gets_catalog_limits_without_explicit_overrides() {
         None,
         None,
     );
-    assert_eq!(mc.context_window(), 272_000);
+    assert_eq!(mc.context_window(), 922_000);
     assert_eq!(mc.max_tokens(), 128_000);
     assert!(mc
         .supported_thinking_levels()
@@ -233,8 +233,8 @@ fn grok_provider_uses_cli_model_metadata_without_env_overrides() {
         None,
         None,
     );
-    assert_eq!(mc.context_window(), 500_000);
-    assert_eq!(mc.max_tokens(), 500_000);
+    assert_eq!(mc.context_window(), 200_000);
+    assert_eq!(mc.max_tokens(), 63_356);
     assert!(mc.reasoning());
     assert!(mc.honors_reasoning_effort());
     assert_eq!(mc.supported_thinking_levels(), vec![Low, Medium, High]);
@@ -255,8 +255,8 @@ fn same_named_openai_proxy_keeps_catalog_and_openai_transport_metadata() {
         None,
     );
     assert_eq!(mc.protocol(), ApiProtocol::OpenAiCompletions);
-    assert_eq!(mc.context_window(), 500_000);
-    assert_eq!(mc.max_tokens(), 500_000);
+    assert_eq!(mc.context_window(), 200_000);
+    assert_eq!(mc.max_tokens(), 63_356);
     assert!(mc.reasoning());
     assert!(mc
         .compat()
@@ -282,11 +282,11 @@ fn openrouter_gpt_uses_model_effort_without_compat_caps() {
         None,
         None,
     );
-    assert_eq!(mc.context_window(), 272_000);
+    assert_eq!(mc.context_window(), 922_000);
     assert!(mc.reasoning());
     assert!(mc.honors_reasoning_effort());
     assert_eq!(mc.supported_thinking_levels(), vec![
-        Off, Minimal, Low, Medium, High, Xhigh, Max
+        Off, Low, Medium, High, Xhigh, Max
     ]);
 }
 
@@ -304,7 +304,7 @@ fn openai_provider_defaults_base_url_when_missing() {
     );
     assert_eq!(mc.base_url(), "https://api.openai.com/v1");
     assert_eq!(mc.protocol(), ApiProtocol::OpenAiResponses);
-    assert_eq!(mc.context_window(), 272_000);
+    assert_eq!(mc.context_window(), 922_000);
 }
 
 #[test]

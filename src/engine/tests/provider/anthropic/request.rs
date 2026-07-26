@@ -47,7 +47,7 @@ fn test_kimi_coding_request_uses_pi_catalog_limits() {
         .build();
 
     let body = build_request_body(&config, false);
-    assert_eq!(body["max_tokens"], 32_768);
+    assert_eq!(body["max_tokens"], 65_536);
     // Kimi's anthropic-compatible endpoint only understands `enabled`; the
     // proprietary `adaptive` type is silently ignored and disables thinking.
     assert_eq!(body["thinking"]["type"], "enabled");
@@ -148,7 +148,7 @@ fn test_budget_thinking_is_omitted_when_output_cap_cannot_fit_minimum() {
 }
 
 #[test]
-fn test_budget_thinking_never_reexpands_past_remaining_context() {
+fn test_budget_thinking_uses_independent_output_limit() {
     let model_config = resolved_model_config(
         evotengine::provider::ApiProtocol::AnthropicMessages,
         "anthropic",
@@ -170,12 +170,8 @@ fn test_budget_thinking_never_reexpands_past_remaining_context() {
         .build();
 
     let body = build_request_body(&config, false);
-    let max_tokens = body["max_tokens"].as_u64().unwrap();
-    assert!(
-        max_tokens < 4096,
-        "context clamp must win, got {max_tokens}"
-    );
-    assert!(body.get("thinking").is_none());
+    assert_eq!(body["max_tokens"], 20_480);
+    assert_eq!(body["thinking"]["budget_tokens"], 16_384);
 }
 
 #[test]
@@ -266,9 +262,20 @@ fn test_off_thinking_disables_anthropic_thinking() {
 }
 
 #[test]
-fn test_off_thinking_clamps_when_model_cannot_disable() {
-    // Fable maps `off` to unsupported, so the request is clamped upward to its
-    // lowest selectable level rather than silently relying on a service default.
+fn test_off_thinking_is_omitted_for_known_non_reasoning_model() {
+    let config = StreamConfigBuilder::anthropic()
+        .model("deepseek-chat")
+        .model_config(ModelConfig::anthropic("deepseek-chat", "DeepSeek Chat"))
+        .thinking(ThinkingLevel::Off)
+        .build();
+
+    let body = build_request_body(&config, false);
+    assert!(body.get("thinking").is_none());
+    assert!(body.get("output_config").is_none());
+}
+
+#[test]
+fn test_off_thinking_disables_fable_thinking() {
     let model_config = ModelConfig::anthropic("claude-fable-5", "Fable 5");
     let config = StreamConfigBuilder::anthropic()
         .model_config(model_config)
@@ -276,15 +283,14 @@ fn test_off_thinking_clamps_when_model_cannot_disable() {
         .build();
 
     let body = build_request_body(&config, false);
-    assert_eq!(body["thinking"]["type"], "adaptive");
-    assert_eq!(body["output_config"]["effort"], "low");
+    assert_eq!(body["thinking"]["type"], "disabled");
+    assert!(body.get("output_config").is_none());
 }
 
 #[test]
 fn test_anthropic_max_tokens_falls_back_to_model_config() {
-    // No explicit max_tokens: use the model's configured budget. Modern Claude
-    // 4.x supports a 64k output budget, so a small default would truncate long
-    // responses. The request builder still clamps this to the window per call.
+    // No explicit max_tokens: use the model's configured output budget. Modern
+    // Claude 4.x supports 64k output, so a small default would truncate responses.
     let config = StreamConfigBuilder::anthropic()
         .no_max_tokens()
         .model_config(ModelConfig::anthropic(
@@ -298,10 +304,7 @@ fn test_anthropic_max_tokens_falls_back_to_model_config() {
 }
 
 #[test]
-fn test_anthropic_max_tokens_clamped_to_remaining_context() {
-    // A near-full context window must shrink the output budget so the request
-    // never overflows the window (which providers reject). Mirrors pi's
-    // clampMaxTokensToContext.
+fn test_anthropic_input_limit_does_not_reduce_output_limit() {
     let model_config = resolved_model_config(
         evotengine::provider::ApiProtocol::AnthropicMessages,
         "anthropic",
@@ -314,23 +317,14 @@ fn test_anthropic_max_tokens_clamped_to_remaining_context() {
             ..Default::default()
         },
     );
-    // ~8000 tokens of input (byte-length / 4) leaves < 64k of headroom.
-    let big_message = "x".repeat(32_000);
     let config = StreamConfigBuilder::anthropic()
         .no_max_tokens()
-        .messages(vec![Message::user(big_message)])
+        .messages(vec![Message::user("x".repeat(32_000))])
         .model_config(model_config)
         .build();
 
     let body = build_request_body(&config, false);
-    let max_tokens = body["max_tokens"].as_u64().unwrap();
-    // context_window(10_000) - input(~8000) - safety(4096) is negative, so the
-    // clamp floors at 1 rather than sending a budget larger than the window.
-    assert!(max_tokens >= 1, "got {max_tokens}");
-    assert!(
-        max_tokens < 64_000,
-        "expected clamp below model cap, got {max_tokens}"
-    );
+    assert_eq!(body["max_tokens"], 64_000);
 }
 
 #[test]

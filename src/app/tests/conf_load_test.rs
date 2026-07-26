@@ -386,9 +386,9 @@ fn thinking_level_from_str_rejects_invalid() {
 }
 
 #[test]
-fn default_thinking_level_is_medium() {
+fn default_thinking_level_is_model_defined() {
     let config = Config::new(std::path::PathBuf::from("/tmp"));
-    assert_eq!(config.llm.thinking_level, ThinkingLevel::Medium);
+    assert_eq!(config.llm.thinking_level, None);
 }
 
 #[test]
@@ -422,7 +422,7 @@ model = "claude-sonnet-4-20250514"
     restore_env_var("HOME", original_home);
 
     let config = result?;
-    assert_eq!(config.llm.thinking_level, ThinkingLevel::Medium);
+    assert_eq!(config.llm.thinking_level, Some(ThinkingLevel::Medium));
     assert_eq!(config.active_llm()?.thinking_level, ThinkingLevel::Medium);
     Ok(())
 }
@@ -449,7 +449,7 @@ fn load_config_thinking_level_from_env_file() -> TestResult {
     restore_env_var("HOME", original_home);
 
     let config = result?;
-    assert_eq!(config.llm.thinking_level, ThinkingLevel::High);
+    assert_eq!(config.llm.thinking_level, Some(ThinkingLevel::High));
     Ok(())
 }
 
@@ -485,8 +485,8 @@ fn load_config_per_provider_thinking_level_from_env_file() -> TestResult {
     restore_env_var("HOME", original_home);
 
     let config = result?;
-    // Global default stays medium.
-    assert_eq!(config.llm.thinking_level, ThinkingLevel::Medium);
+    // The explicit global override stays medium.
+    assert_eq!(config.llm.thinking_level, Some(ThinkingLevel::Medium));
     // anthropic has a per-provider override.
     assert_eq!(
         config.providers["anthropic"].thinking_level,
@@ -496,11 +496,12 @@ fn load_config_per_provider_thinking_level_from_env_file() -> TestResult {
         config.build_llm("anthropic", None)?.thinking_level,
         ThinkingLevel::Xhigh
     );
-    // deepseek has no override -> falls back to the global level.
+    // deepseek-chat explicitly declares no reasoning, so the global override is
+    // clamped to the model's only valid level.
     assert_eq!(config.providers["deepseek"].thinking_level, None);
     assert_eq!(
         config.build_llm("deepseek", None)?.thinking_level,
-        ThinkingLevel::Medium
+        ThinkingLevel::Off
     );
     Ok(())
 }
@@ -545,9 +546,10 @@ fn load_config_context_window_and_max_tokens_from_env_file() -> TestResult {
     );
     assert_eq!(config.providers["openrouter"].max_tokens, Some(32_000));
     let llm = config.build_llm("openrouter", None)?;
-    assert_eq!(llm.context_window, Some(1_000_000));
-    assert_eq!(llm.max_tokens, Some(32_000));
-    // No overrides set -> None, engine uses inferred defaults.
+    assert_eq!(llm.model_config.context_window(), 1_000_000);
+    assert_eq!(llm.model_config.max_tokens(), 32_000);
+    // No overrides set: the provider profile remains unset and the resolved
+    // model receives its limits from the catalog.
     assert_eq!(config.providers["deepseek"].context_window, None);
     assert_eq!(config.providers["deepseek"].max_tokens, None);
     Ok(())
@@ -620,7 +622,7 @@ model = "claude-sonnet-4-20250514"
     restore_env_var("HOME", original_home);
 
     let config = result?;
-    assert_eq!(config.llm.thinking_level, ThinkingLevel::High);
+    assert_eq!(config.llm.thinking_level, Some(ThinkingLevel::High));
     Ok(())
 }
 
@@ -1045,23 +1047,9 @@ fn resolve_llm_config(
     model_spec: &str,
 ) -> std::result::Result<evot::conf::LlmConfig, Box<dyn std::error::Error>> {
     let (provider_name, model_override) = config.resolve_model_spec(model_spec)?;
-    let profile = config
-        .providers
-        .get(&provider_name)
-        .ok_or_else(|| format!("provider '{}' not found", provider_name))?;
-    Ok(evot::conf::LlmConfig {
-        provider: provider_name,
-        protocol: profile.protocol.clone(),
-        api_key: profile.api_key.clone(),
-        base_url: profile.base_url.clone(),
-        model: model_override.unwrap_or_else(|| profile.model().to_string()),
-        thinking_level: config.llm.thinking_level,
-        compat_caps: Default::default(),
-        route_capabilities: Default::default(),
-        context_window: None,
-        max_tokens: None,
-        supports_image: None,
-    })
+    config
+        .build_llm(&provider_name, model_override)
+        .map_err(Into::into)
 }
 
 #[test]

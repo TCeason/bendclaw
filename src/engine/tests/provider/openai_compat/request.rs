@@ -87,11 +87,10 @@ fn test_uncatalogued_gpt_and_codex_pass_medium_through() {
 }
 
 #[test]
-fn test_gpt_5_levels_map_to_matching_reasoning_effort() {
-    // Every level is a real tier that maps to the same-named effort unless the
-    // model's catalog entry overrides or rejects it.
+fn test_gpt_5_levels_use_declared_or_clamped_reasoning_effort() {
+    // Minimal is absent from the model contract and clamps upward to low.
     let cases = [
-        (ThinkingLevel::Minimal, "minimal"),
+        (ThinkingLevel::Minimal, "low"),
         (ThinkingLevel::Low, "low"),
         (ThinkingLevel::Medium, "medium"),
         (ThinkingLevel::High, "high"),
@@ -174,18 +173,18 @@ fn test_low_thinking_maps_to_low_reasoning_effort() {
 }
 
 #[test]
-fn test_off_thinking_omits_reasoning_effort() {
+fn test_off_thinking_sends_declared_none_effort() {
     let config = StreamConfigBuilder::openai()
         .model("gpt-5")
         .thinking(ThinkingLevel::Off)
         .build();
 
     let body = build_request_body(&config, &OpenAiCompat::openai());
-    assert!(body.get("reasoning_effort").is_none());
+    assert_eq!(body["reasoning_effort"], "none");
 }
 
 #[test]
-fn test_gpt_5_6_chat_completions_off_omits_reasoning_effort() {
+fn test_gpt_5_6_chat_completions_off_sends_none_effort() {
     let model_config = ModelConfig::openai("gpt-5.6-sol", "GPT-5.6 Sol");
     let config = StreamConfigBuilder::openai()
         .model("gpt-5.6-sol")
@@ -194,7 +193,7 @@ fn test_gpt_5_6_chat_completions_off_omits_reasoning_effort() {
         .build();
 
     let body = build_request_body(&config, &OpenAiCompat::openai());
-    assert!(body.get("reasoning_effort").is_none());
+    assert_eq!(body["reasoning_effort"], "none");
 }
 
 #[test]

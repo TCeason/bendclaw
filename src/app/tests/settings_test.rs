@@ -95,6 +95,22 @@ fn settings_serialize_to_expected_env_keys() {
 }
 
 #[test]
+fn blank_global_thinking_level_restores_model_default() {
+    let mut config = Config::new(std::env::temp_dir());
+    config.llm.thinking_level = Some(evot_engine::ThinkingLevel::High);
+    let mut update = sample_update();
+    update.thinking_level = None;
+
+    if let Err(error) = apply_settings(&mut config, &update) {
+        panic!("apply: {error}");
+    }
+
+    assert_eq!(config.llm.thinking_level, None);
+    let map = flat(&config_to_env_groups(&config));
+    assert!(!map.contains_key("EVOT_LLM_THINKING_LEVEL"));
+}
+
+#[test]
 fn groups_are_titled_and_separated() {
     let groups = sample_groups();
     // One global selection group + one provider group + one Feishu group.

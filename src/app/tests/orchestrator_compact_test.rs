@@ -127,6 +127,17 @@ impl StreamProvider for CapturingProvider {
 }
 
 fn test_llm() -> LlmConfig {
+    let model_config = evot::conf::resolve_model_config(
+        Protocol::OpenAi,
+        "test",
+        "gpt-4o",
+        Some("http://localhost"),
+        Default::default(),
+        Default::default(),
+        None,
+        None,
+        None,
+    );
     LlmConfig {
         provider: "test".into(),
         protocol: Protocol::OpenAi,
@@ -134,11 +145,7 @@ fn test_llm() -> LlmConfig {
         base_url: "http://localhost".into(),
         model: "gpt-4o".into(),
         thinking_level: ThinkingLevel::Off,
-        compat_caps: Default::default(),
-        route_capabilities: Default::default(),
-        context_window: None,
-        max_tokens: None,
-        supports_image: None,
+        model_config,
     }
 }
 

@@ -226,7 +226,11 @@ impl OpenAiCompat {
     }
 
     pub fn zai() -> Self {
-        Self::default()
+        Self {
+            caps: CompatCaps::USAGE_IN_STREAMING | CompatCaps::REASONING_EFFORT,
+            max_tokens_field: MaxTokensField::MaxCompletionTokens,
+            ..Default::default()
+        }
     }
 
     pub fn minimax() -> Self {

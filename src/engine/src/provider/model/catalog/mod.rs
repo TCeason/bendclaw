@@ -1,10 +1,10 @@
 mod anthropic;
+mod deepseek;
+mod glm;
 mod kimi;
 mod openai;
 mod profile;
 mod xai;
-
-use std::collections::HashMap;
 
 use super::capabilities::InputModality;
 use super::capabilities::ModelCapabilities;
@@ -17,6 +17,8 @@ pub(super) fn resolve(id: &str) -> Option<ModelCapabilities> {
 
     openai::resolve(id)
         .or_else(|| anthropic::resolve(id))
+        .or_else(|| deepseek::resolve(id))
+        .or_else(|| glm::resolve(id))
         .or_else(|| kimi::resolve(id))
         .or_else(|| xai::resolve(id))
         .or_else(|| openai::fallback(id))
@@ -31,6 +33,9 @@ pub(super) fn normalize_model_id(model_id: &str) -> String {
         "xai/",
         "x-ai/",
         "anthropic/",
+        "deepseek/",
+        "zai/",
+        "z-ai/",
         "moonshotai/",
         "moonshotai-cn/",
     ] {
@@ -43,16 +48,18 @@ pub(super) fn normalize_model_id(model_id: &str) -> String {
 
 pub(super) fn protocol_fallback(vision: bool) -> ModelCapabilities {
     ModelCapabilities {
-        context_window: if vision { 200_000 } else { 128_000 },
+        max_input_tokens: if vision { 200_000 } else { 128_000 },
         max_output_tokens: if vision { 8_192 } else { 32_768 },
         input: if vision {
             vec![InputModality::Text, InputModality::Image]
         } else {
             vec![InputModality::Text]
         },
-        reasoning: ReasoningCapabilities::new(true, HashMap::new(), None),
-        first_party_reasoning_levels: HashMap::new(),
-        first_party_responses_reasoning_levels: HashMap::new(),
+        reasoning: ReasoningCapabilities::new(
+            profile::levels_map(profile::NO_REASONING.levels),
+            profile::NO_REASONING.default,
+            None,
+        ),
         default_verbosity: None,
         remote_compaction: false,
     }

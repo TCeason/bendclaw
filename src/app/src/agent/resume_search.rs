@@ -125,17 +125,7 @@ async fn call_provider(ctx: &RankContext, user_prompt: &str) -> Result<String> {
         thinking_level: ctx.llm.thinking_level,
         api_key: ctx.llm.api_key.clone(),
         max_tokens: Some(1024),
-        model_config: Some(crate::agent::run::runtime::build_model_config(
-            ctx.llm.protocol.clone(),
-            &ctx.llm.provider,
-            &ctx.llm.model,
-            Some(&ctx.llm.base_url),
-            ctx.llm.compat_caps,
-            ctx.llm.route_capabilities,
-            ctx.llm.context_window,
-            ctx.llm.max_tokens,
-            ctx.llm.supports_image,
-        )),
+        model_config: Some(ctx.llm.model_config.clone()),
         cache_config: evot_engine::CacheConfig::default(),
         prompt_cache_key: None,
     };

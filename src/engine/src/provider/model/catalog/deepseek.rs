@@ -4,21 +4,20 @@ use super::profile::BASE;
 use super::profile::NO_REASONING;
 use crate::ThinkingLevel;
 
-const GROK_LEVELS: &[(ThinkingLevel, Option<&str>)] = &[
-    (ThinkingLevel::Low, Some("low")),
-    (ThinkingLevel::Medium, Some("medium")),
+const REASONER_LEVELS: &[(ThinkingLevel, Option<&str>)] = &[
+    (ThinkingLevel::Off, None),
     (ThinkingLevel::High, Some("high")),
 ];
-const GROK_REASONING: ReasoningProfile = ReasoningProfile {
-    levels: GROK_LEVELS,
+const REASONER: ReasoningProfile = ReasoningProfile {
+    levels: REASONER_LEVELS,
     default: ThinkingLevel::High,
     anthropic_wire: None,
 };
 
 #[rustfmt::skip]
 const PROFILES: &[(&str, ModelProfile)] = &[
-    ("grok-4.5", ModelProfile { max_input_tokens: 200_000, max_output_tokens: 63_356, reasoning: GROK_REASONING, ..BASE }),
-    ("grok-composer-2.5-fast", ModelProfile { max_input_tokens: 200_000, max_output_tokens: 200_000, vision: false, reasoning: NO_REASONING, ..BASE }),
+    ("deepseek-chat",     ModelProfile { max_input_tokens: 128_000, max_output_tokens: 8_192, vision: false, reasoning: NO_REASONING, ..BASE }),
+    ("deepseek-reasoner", ModelProfile { max_input_tokens: 128_000, max_output_tokens: 64_000, vision: false, reasoning: REASONER, ..BASE }),
 ];
 
 pub(super) fn resolve(id: &str) -> Option<ModelProfile> {

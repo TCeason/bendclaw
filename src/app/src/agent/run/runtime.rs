@@ -52,7 +52,7 @@ pub struct EngineOptions {
     pub protocol: Protocol,
     pub model: String,
     pub api_key: String,
-    pub base_url: Option<String>,
+    pub model_config: evot_engine::provider::ModelConfig,
     pub system_prompt: String,
     /// Per-section breakdown matching `system_prompt`. Guaranteed:
     /// `system_prompt == sections.iter().map(|s| s.text).join("\n\n")`.
@@ -63,11 +63,6 @@ pub struct EngineOptions {
     pub skills_dirs: Vec<std::path::PathBuf>,
     pub tools: Vec<Box<dyn evot_engine::AgentTool>>,
     pub thinking_level: evot_engine::ThinkingLevel,
-    pub compat_caps: evot_engine::provider::CompatCaps,
-    pub route_capabilities: evot_engine::provider::RouteCapabilityOverrides,
-    pub context_window: Option<u32>,
-    pub max_tokens: Option<u32>,
-    pub supports_image: Option<bool>,
     pub cwd: std::path::PathBuf,
     pub path_guard: std::sync::Arc<evot_engine::PathGuard>,
     pub spill_dir: Option<std::path::PathBuf>,
@@ -1156,74 +1151,6 @@ fn compact_record_from_result(result: &crate::types::CompactionResult) -> Option
     crate::agent::run::observability::compact_record_from_result(result)
 }
 
-/// Build the engine [`ModelConfig`] for a given protocol/provider/model.
-///
-/// Shared by [`build_agent`] (per-turn provider construction), the application
-/// [`Agent`](crate::agent::Agent), and the NAPI addon's footer rendering so the
-/// set of selectable thinking levels matches exactly what the provider will
-/// honor at request time.
-#[allow(clippy::too_many_arguments)]
-pub fn build_model_config(
-    protocol: Protocol,
-    provider: &str,
-    model: &str,
-    base_url: Option<&str>,
-    compat_caps: evot_engine::provider::CompatCaps,
-    route_capabilities: evot_engine::provider::RouteCapabilityOverrides,
-    context_window: Option<u32>,
-    max_tokens: Option<u32>,
-    supports_image: Option<bool>,
-) -> evot_engine::provider::ModelConfig {
-    use evot_engine::provider::default_base_url;
-    use evot_engine::provider::ApiProtocol;
-    use evot_engine::provider::ModelOverrides;
-    use evot_engine::provider::OpenAiCompat;
-    use evot_engine::provider::ResolveModelRequest;
-    use evot_engine::provider::RouteCapabilities;
-
-    // Layers:
-    // 1. model catalog (by model id)
-    // 2. provider transport profile
-    // 3. explicit env overrides
-    let api = match protocol {
-        Protocol::Anthropic => ApiProtocol::AnthropicMessages,
-        Protocol::OpenAiResponses => ApiProtocol::OpenAiResponses,
-        Protocol::OpenAi => ApiProtocol::OpenAiCompletions,
-    };
-    let default_base = default_base_url(api, provider);
-
-    let resolved_base = base_url
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(default_base)
-        .to_string();
-    let mut compat = match protocol {
-        Protocol::Anthropic => None,
-        Protocol::OpenAi | Protocol::OpenAiResponses => Some(OpenAiCompat::for_provider(provider)),
-    };
-    if let Some(compat) = &mut compat {
-        compat.caps |= compat_caps;
-    }
-
-    let route_capabilities =
-        RouteCapabilities::for_route(api, provider, &resolved_base, route_capabilities);
-
-    evot_engine::provider::ModelConfig::resolve(ResolveModelRequest {
-        protocol: api,
-        provider: provider.to_string(),
-        model_id: model.to_string(),
-        base_url: resolved_base,
-        headers: Default::default(),
-        compat,
-        route_capabilities,
-        overrides: ModelOverrides {
-            context_window,
-            max_output_tokens: max_tokens,
-            supports_image,
-            reasoning: None,
-        },
-    })
-}
-
 pub(crate) fn build_agent(
     options: EngineOptions,
     prior_messages: Vec<evot_engine::AgentMessage>,
@@ -1232,18 +1159,7 @@ pub(crate) fn build_agent(
     use evot_engine::provider::OpenAiCompatProvider;
     use evot_engine::provider::OpenAiResponsesProvider;
 
-    let model_config = build_model_config(
-        options.protocol.clone(),
-        &options.provider,
-        &options.model,
-        options.base_url.as_deref(),
-        options.compat_caps,
-        options.route_capabilities,
-        options.context_window,
-        options.max_tokens,
-        options.supports_image,
-    );
-
+    let model_config = options.model_config;
     let context_config =
         evot_engine::context::ContextConfig::from_context_window(model_config.context_window());
 

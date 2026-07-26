@@ -66,7 +66,8 @@ fn same_named_openai_proxy_keeps_openai_transport_but_omits_route_extensions() {
     assert_eq!(body["input"][0]["role"], "developer");
     assert_eq!(body["store"], false);
     assert_eq!(body["prompt_cache_key"], "session-123");
-    assert!(body.get("reasoning").is_none());
+    assert_eq!(body["reasoning"]["effort"], "none");
+    assert!(body["reasoning"].get("summary").is_none());
     assert!(body.get("text").is_none());
 }
 
@@ -120,6 +121,31 @@ fn non_gpt_responses_keeps_output_budget_without_temperature() {
 }
 
 #[test]
+fn non_gpt_responses_does_not_raise_output_cap_to_transport_minimum() {
+    let model = resolved_model_config(
+        evotengine::provider::ApiProtocol::OpenAiResponses,
+        "custom",
+        "small-output-model",
+        "https://example.com/v1",
+        Some(evotengine::provider::OpenAiCompat::default()),
+        Default::default(),
+        evotengine::provider::ModelOverrides {
+            max_output_tokens: Some(8),
+            reasoning: Some(false),
+            ..Default::default()
+        },
+    );
+    let config = StreamConfigBuilder::openai()
+        .model("small-output-model")
+        .model_config(model)
+        .max_tokens(32)
+        .build();
+
+    let body = build_request_body(&config);
+    assert_eq!(body["max_output_tokens"], 8);
+}
+
+#[test]
 fn first_party_gpt_5_6_responses_off_sends_none_effort() {
     let config = StreamConfigBuilder::openai()
         .model("gpt-5.6-sol")
@@ -133,9 +159,8 @@ fn first_party_gpt_5_6_responses_off_sends_none_effort() {
 }
 
 #[test]
-fn github_copilot_responses_off_omits_reasoning() {
-    // No first-party `off -> "none"` mapping is composed for non-openai
-    // providers, so Off omits the reasoning field entirely.
+fn github_copilot_responses_off_uses_model_none_effort() {
+    // Reasoning support belongs to the model profile, not the provider identity.
     let model = resolved_model_config(
         evotengine::provider::ApiProtocol::OpenAiResponses,
         "github-copilot",
@@ -152,7 +177,8 @@ fn github_copilot_responses_off_omits_reasoning() {
         .build();
 
     let body = build_request_body(&config);
-    assert!(body.get("reasoning").is_none());
+    assert_eq!(body["reasoning"]["effort"], "none");
+    assert!(body["reasoning"].get("summary").is_none());
     assert!(body.get("include").is_none());
     assert!(body.get("text").is_none());
 }
@@ -173,9 +199,8 @@ fn uncatalogued_gpt_and_codex_pass_medium_through() {
 }
 
 #[test]
-fn responses_off_outside_none_whitelist_omits_reasoning() {
-    // A first-party Responses model that is not in the `off -> "none"`
-    // whitelist must omit the field rather than send an unsupported "none".
+fn responses_off_uses_fallback_model_none_effort() {
+    // The uncatalogued GPT fallback explicitly declares `off -> "none"`.
     let config = StreamConfigBuilder::openai()
         .model("gpt-5.7-nova")
         .model_config(ModelConfig::openai_responses(
@@ -186,7 +211,8 @@ fn responses_off_outside_none_whitelist_omits_reasoning() {
         .build();
 
     let body = build_request_body(&config);
-    assert!(body.get("reasoning").is_none());
+    assert_eq!(body["reasoning"]["effort"], "none");
+    assert!(body["reasoning"].get("summary").is_none());
 }
 
 #[test]

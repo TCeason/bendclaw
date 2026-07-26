@@ -74,10 +74,9 @@ pub fn config_to_env_groups(config: &Config) -> Vec<EnvGroup> {
 
     let mut global = EnvGroup::new("Active selection");
     global.push("EVOT_LLM_PROVIDER", config.llm.provider.clone());
-    global.push(
-        "EVOT_LLM_THINKING_LEVEL",
-        config.llm.thinking_level.as_str(),
-    );
+    if let Some(level) = config.llm.thinking_level {
+        global.push("EVOT_LLM_THINKING_LEVEL", level.as_str());
+    }
     groups.push(global);
 
     for (name, p) in &config.providers {
@@ -189,9 +188,12 @@ pub fn apply_settings(config: &mut Config, update: &SettingsUpdate) -> Result<()
         )));
     }
 
-    if let Some(level) = update.thinking_level.as_deref().filter(|s| !s.is_empty()) {
-        config.llm.thinking_level = thinking_level_from_str(level)?;
-    }
+    config.llm.thinking_level = update
+        .thinking_level
+        .as_deref()
+        .filter(|level| !level.is_empty())
+        .map(thinking_level_from_str)
+        .transpose()?;
 
     if let Some(f) = &update.feishu {
         let app_id = f.app_id.trim().to_string();
@@ -281,7 +283,7 @@ pub fn settings_snapshot(config: &Config) -> serde_json::Value {
 
     serde_json::json!({
         "active_provider": config.llm.provider,
-        "thinking_level": config.llm.thinking_level.as_str(),
+        "thinking_level": config.llm.thinking_level.map(|level| level.as_str()),
         "protocols": [
             Protocol::Anthropic.to_string(),
             Protocol::OpenAi.to_string(),

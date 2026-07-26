@@ -351,10 +351,6 @@ impl Agent {
         self.limits.read().clone()
     }
 
-    pub fn set_model(&self, model: String) {
-        self.llm.write().model = model;
-    }
-
     pub fn set_llm(&self, llm: LlmConfig) {
         *self.llm.write() = llm;
     }
@@ -393,19 +389,9 @@ impl Agent {
         }
     }
 
-    /// Resolve catalog + override metadata for an LLM selection.
+    /// Return the catalog + route + override metadata resolved by configuration.
     fn model_config_for(llm: &LlmConfig) -> evot_engine::provider::ModelConfig {
-        super::run::runtime::build_model_config(
-            llm.protocol.clone(),
-            &llm.provider,
-            &llm.model,
-            Some(&llm.base_url),
-            llm.compat_caps,
-            llm.route_capabilities,
-            llm.context_window,
-            llm.max_tokens,
-            llm.supports_image,
-        )
+        llm.model_config.clone()
     }
 
     /// Replace the LLM config while inheriting the session's current thinking
@@ -1277,7 +1263,7 @@ impl Agent {
                 protocol: llm.protocol,
                 model: llm.model,
                 api_key: llm.api_key,
-                base_url: Some(llm.base_url),
+                model_config: llm.model_config,
                 system_prompt,
                 system_prompt_sections: sections,
                 limits: if mode.is_interactive() {
@@ -1288,11 +1274,6 @@ impl Agent {
                 skills_dirs: skill_dirs,
                 tools,
                 thinking_level: llm.thinking_level,
-                compat_caps: llm.compat_caps,
-                route_capabilities: llm.route_capabilities,
-                context_window: llm.context_window,
-                max_tokens: llm.max_tokens,
-                supports_image: llm.supports_image,
                 cwd: cwd_path.to_path_buf(),
                 path_guard: sandbox_rt.path_guard,
                 spill_dir: self

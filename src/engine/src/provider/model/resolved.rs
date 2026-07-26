@@ -136,16 +136,23 @@ impl ModelConfig {
         self.route.capabilities
     }
 
+    /// Maximum request input accepted by the model.
     pub fn context_window(&self) -> u32 {
-        self.capabilities.context_window
+        self.capabilities.max_input_tokens
     }
 
+    /// Maximum generated output accepted by the model.
     pub fn max_tokens(&self) -> u32 {
         self.capabilities.max_output_tokens
     }
 
     pub fn reasoning(&self) -> bool {
         self.capabilities.reasoning.supported()
+    }
+
+    /// Model-authored default reasoning effort, before route clamping.
+    pub fn default_thinking_level(&self) -> ThinkingLevel {
+        self.capabilities.reasoning.default_level()
     }
 
     pub fn input(&self) -> &[InputModality] {

@@ -469,17 +469,7 @@ fn summarizer_context(summarizer: &CompactSummarizer) -> evot_engine::Summarizer
         max_tokens: Some(summarizer.reserve_tokens),
         cache_config: evot_engine::CacheConfig::default(),
         prompt_cache_key: None,
-        model_config: Some(crate::agent::run::runtime::build_model_config(
-            summarizer.llm.protocol.clone(),
-            &summarizer.llm.provider,
-            &summarizer.llm.model,
-            Some(&summarizer.llm.base_url),
-            summarizer.llm.compat_caps,
-            summarizer.llm.route_capabilities,
-            summarizer.llm.context_window,
-            summarizer.llm.max_tokens,
-            summarizer.llm.supports_image,
-        )),
+        model_config: Some(summarizer.llm.model_config.clone()),
     }
 }
 
@@ -553,11 +543,7 @@ fn manual_summarizer_config(
 ) -> evot_engine::context::CompactionConfig {
     // Unknown model windows still receive the absolute transport ceiling. A
     // known window can only reduce that budget after reserving summary output.
-    let context_window = summarizer
-        .llm
-        .context_window
-        .map(|window| window as usize)
-        .unwrap_or(usize::MAX);
+    let context_window = summarizer.llm.model_config.context_window() as usize;
     let mut config = evot_engine::context::CompactionConfig::from_context_window(context_window);
     config.reserve_tokens = summarizer.reserve_tokens as usize;
     config

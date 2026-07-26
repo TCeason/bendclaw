@@ -141,7 +141,7 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
         .unwrap_or_else(|| config.requested_max_tokens());
 
     // Budget thinking expands an explicit visible-output cap first; the final
-    // request is then clamped to remaining context, matching pi's ordering.
+    // request remains bounded by the model's independent output limit.
     let (requested_max_tokens, requested_thinking_budget) =
         if thinking_level != ThinkingLevel::Off && thinking_wire.is_none() {
             crate::provider::thinking::adjust_max_tokens_for_thinking(
@@ -152,7 +152,7 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
         } else {
             (config.requested_max_tokens(), 0)
         };
-    let max_tokens = config.clamp_max_tokens_to_context(requested_max_tokens);
+    let max_tokens = config.clamp_max_tokens_to_model(requested_max_tokens);
     let thinking_budget = requested_thinking_budget
         .min(max_tokens.saturating_sub(crate::provider::thinking::MIN_OUTPUT_AFTER_THINKING));
 
@@ -209,8 +209,6 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
                     "type": "adaptive",
                     "display": "summarized",
                 }),
-                // Anthropic-compatible endpoints (e.g. Kimi) reject or ignore
-                // the proprietary "adaptive" type; they expect "enabled".
                 crate::provider::model::AnthropicThinkingWire::Enabled => {
                     serde_json::json!({ "type": "enabled" })
                 }
@@ -222,9 +220,8 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
                 body["output_config"] = serde_json::json!({ "effort": effort });
             }
         } else if thinking_budget >= crate::provider::thinking::MIN_THINKING_BUDGET {
-            // Older Claude models use budget-based thinking. If the remaining
-            // context cannot fit the API's minimum budget plus visible output,
-            // omit thinking rather than send an invalid request.
+            // Older Claude models use budget-based thinking. If the output cap
+            // cannot fit the minimum budget plus visible output, omit thinking.
             body["thinking"] = serde_json::json!({
                 "type": "enabled",
                 "budget_tokens": thinking_budget,

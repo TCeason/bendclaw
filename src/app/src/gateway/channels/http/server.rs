@@ -223,14 +223,16 @@ impl Server {
     /// write lock for the whole operation so concurrent edits cannot interleave.
     fn apply_and_persist(&self, update: SettingsUpdate) -> Result<()> {
         let mut config = self.config.write();
-        crate::conf::apply_settings(&mut config, &update)?;
+        let mut candidate = config.clone();
+        crate::conf::apply_settings(&mut candidate, &update)?;
         // Surface resolution errors (e.g. missing key) before writing the file.
-        let llm = config.active_llm()?;
-        let env_path = config.env_file_path.clone();
-        // Generate the managed block from the resolved config so secrets and
-        // every field live inside it — the block is the single source of truth.
-        let groups = crate::conf::config_to_env_groups(&config);
+        let llm = candidate.active_llm()?;
+        let env_path = candidate.env_file_path.clone();
+        // Persist before publishing the candidate so a write failure leaves the
+        // live config and running agent on the last durable configuration.
+        let groups = crate::conf::config_to_env_groups(&candidate);
         crate::conf::env_writer::write_grouped(&env_path, &groups)?;
+        *config = candidate;
         self.agent.set_llm(llm);
         Ok(())
     }
