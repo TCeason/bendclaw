@@ -52,7 +52,10 @@ fn test_kimi_coding_request_uses_pi_catalog_limits() {
     // proprietary `adaptive` type is silently ignored and disables thinking.
     assert_eq!(body["thinking"]["type"], "enabled");
     assert!(body["thinking"].get("display").is_none());
-    assert!(body["thinking"].get("budget_tokens").is_none());
+    // Enabled wire carries budget_tokens alongside output_config.effort.
+    assert!(body["thinking"]["budget_tokens"]
+        .as_u64()
+        .is_some_and(|budget| budget >= 1024));
     assert_eq!(body["output_config"]["effort"], "high");
 }
 
@@ -66,9 +69,40 @@ fn test_kimi_k3_thinking_uses_enabled_wire_with_effort() {
 
     let body = build_request_body(&config, false);
     assert_eq!(body["thinking"]["type"], "enabled");
-    assert!(body["thinking"].get("budget_tokens").is_none());
+    assert!(body["thinking"]["budget_tokens"]
+        .as_u64()
+        .is_some_and(|budget| budget >= 1024));
     // K3's catalog maps High to an explicit "high" wire value.
     assert_eq!(body["output_config"]["effort"], "high");
+}
+
+#[test]
+fn test_glm_5_2_thinking_uses_enabled_wire_with_effort_and_budget() {
+    let config = StreamConfigBuilder::anthropic()
+        .model("glm-5.2")
+        .model_config(ModelConfig::anthropic("glm-5.2", "GLM 5.2"))
+        .thinking(ThinkingLevel::High)
+        .build();
+
+    let body = build_request_body(&config, false);
+    assert_eq!(body["thinking"]["type"], "enabled");
+    assert!(body["thinking"]["budget_tokens"]
+        .as_u64()
+        .is_some_and(|budget| budget >= 1024));
+    assert_eq!(body["output_config"]["effort"], "high");
+}
+
+#[test]
+fn test_glm_5_2_xhigh_maps_to_max_effort() {
+    let config = StreamConfigBuilder::anthropic()
+        .model("glm-5.2")
+        .model_config(ModelConfig::anthropic("glm-5.2", "GLM 5.2"))
+        .thinking(ThinkingLevel::Xhigh)
+        .build();
+
+    let body = build_request_body(&config, false);
+    assert_eq!(body["thinking"]["type"], "enabled");
+    assert_eq!(body["output_config"]["effort"], "max");
 }
 
 #[test]

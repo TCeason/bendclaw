@@ -204,13 +204,21 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
 
     if thinking_level != ThinkingLevel::Off {
         if let Some(wire) = thinking_wire {
+            // Effort-based thinking: the model accepts `output_config.effort`.
+            // The wire variant in the model profile fully describes the shape;
+            // the request builder only assembles what the variant prescribes.
             body["thinking"] = match wire {
                 crate::provider::model::AnthropicThinkingWire::Adaptive => serde_json::json!({
                     "type": "adaptive",
                     "display": "summarized",
                 }),
                 crate::provider::model::AnthropicThinkingWire::Enabled => {
-                    serde_json::json!({ "type": "enabled" })
+                    let budget =
+                        crate::provider::thinking::anthropic_thinking_budget(thinking_level);
+                    serde_json::json!({
+                        "type": "enabled",
+                        "budget_tokens": budget,
+                    })
                 }
             };
             if let Some(effort) = crate::provider::thinking::anthropic_effort(

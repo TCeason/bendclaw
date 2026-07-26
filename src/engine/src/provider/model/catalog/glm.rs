@@ -11,10 +11,12 @@ const GLM_5_2_LEVELS: &[(ThinkingLevel, Option<&str>)] = &[
     (ThinkingLevel::High, Some("high")),
     (ThinkingLevel::Xhigh, Some("max")),
 ];
+// GLM-5.2's Anthropic-compatible endpoint accepts `output_config.effort`
+// alongside `thinking.type=enabled` — same dialect as Kimi.
 const GLM_5_2_REASONING: ReasoningProfile = ReasoningProfile {
     levels: GLM_5_2_LEVELS,
     default: ThinkingLevel::High,
-    anthropic_wire: None,
+    anthropic_wire: Some(super::super::capabilities::AnthropicThinkingWire::Enabled),
 };
 
 // 1M total window (docs.z.ai) minus the 131_072 output budget.

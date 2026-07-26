@@ -27,15 +27,17 @@ pub enum Verbosity {
 ///
 /// Anthropic-compatible endpoints do not all speak the same dialect: Claude
 /// accepts the proprietary `{"type":"adaptive"}` extension, while
-/// compatible third-party endpoints (e.g. Kimi) only accept
+/// compatible third-party endpoints (e.g. Kimi, GLM-5.2) only accept
 /// `{"type":"enabled"}` and silently ignore unknown types — which would
 /// disable thinking entirely.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AnthropicThinkingWire {
     /// Claude: `{"type":"adaptive","display":"summarized"}` + `output_config.effort`.
     Adaptive,
-    /// Anthropic-compatible effort mode: enabled thinking with a token budget
-    /// plus `output_config.effort` (used by Kimi and Claude Opus 4.5).
+    /// Third-party Anthropic-compatible endpoints (Kimi, GLM-5.2):
+    /// `{"type":"enabled","budget_tokens":N}` + `output_config.effort`.
+    /// Both fields are sent together — omitting `budget_tokens` can cause
+    /// some endpoints to reject the request or silently disable thinking.
     Enabled,
 }
 
