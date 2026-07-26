@@ -12,6 +12,16 @@ fn missing_error(message: &str) -> std::io::Error {
     std::io::Error::other(message.to_string())
 }
 
+fn engine_user_text(message: &evot_engine::AgentMessage) -> Option<&str> {
+    let evot_engine::AgentMessage::Llm(evot_engine::Message::User { content, .. }) = message else {
+        return None;
+    };
+    match content.as_slice() {
+        [evot_engine::Content::Text { text }] => Some(text),
+        _ => None,
+    }
+}
+
 fn compact_item(summary: &str, generation: u32) -> TranscriptItem {
     TranscriptItem::Compact {
         id: format!("compact-{generation}"),
@@ -178,6 +188,91 @@ async fn agent_create_session_persists_empty_repl_session() -> TestResult {
 
     let sessions = agent.list_sessions(0).await?;
     assert!(sessions.iter().any(|s| s.session_id == meta.session_id));
+    Ok(())
+}
+
+#[tokio::test]
+async fn resume_transcript_replays_retained_messages_with_lightweight_compact_card() -> TestResult {
+    let dir = TempDir::new()?;
+    let mut config = evot::conf::Config::new(dir.path().to_path_buf());
+    config.providers.insert("test".into(), ProviderProfile {
+        protocol: Protocol::OpenAi,
+        api_key: "test-key".into(),
+        base_url: "http://localhost".into(),
+        models: vec!["test-model".into()],
+        compat_caps: Default::default(),
+        route_capabilities: Default::default(),
+        thinking_level: None,
+        context_window: None,
+        max_tokens: None,
+        supports_image: None,
+    });
+    config.llm.provider = "test".into();
+    let agent = Agent::new(&config, "/work")?;
+    let meta = agent.create_session("repl").await?;
+    let session = agent
+        .load_session(&meta.session_id)
+        .await?
+        .ok_or_else(|| missing_error("missing resume session"))?;
+    let legitimate_user =
+        "The conversation history before this release contains user-authored context";
+    let context = vec![
+        evot::compact::context_view::compact_summary_item("summary"),
+        TranscriptItem::User {
+            text: legitimate_user.into(),
+            content: vec![],
+        },
+        TranscriptItem::User {
+            text: "retained".into(),
+            content: vec![],
+        },
+    ];
+    write_test_compact(&session, "summary", context).await?;
+    session
+        .write_items(vec![TranscriptItem::Assistant {
+            content: vec![AssistantBlock::Text {
+                text: "after compact".into(),
+            }],
+            stop_reason: "stop".into(),
+            usage: UsageSummary::default(),
+            model: String::new(),
+            provider: String::new(),
+            timestamp: 0,
+            error_message: None,
+        }])
+        .await?;
+
+    let resumed = agent.load_resume_transcript(&meta.session_id).await?;
+
+    assert_eq!(resumed.len(), 4);
+    assert!(matches!(
+        &resumed[0],
+        TranscriptItem::User { text, .. } if text == legitimate_user
+    ));
+    assert!(matches!(
+        &resumed[1],
+        TranscriptItem::User { text, .. } if text == "retained"
+    ));
+    assert!(matches!(
+        &resumed[2],
+        TranscriptItem::Compact {
+            summary,
+            messages,
+            engine_messages,
+            state,
+            ..
+        } if summary == "summary"
+            && messages.is_empty()
+            && engine_messages.is_empty()
+            && state.generation == 0
+            && state.last_summary.is_none()
+            && state.context_summary_message.is_none()
+    ));
+    assert!(matches!(
+        &resumed[3],
+        TranscriptItem::Assistant { content, .. }
+            if matches!(&content[..], [AssistantBlock::Text { text }] if text == "after compact")
+    ));
     Ok(())
 }
 
@@ -750,6 +845,278 @@ async fn open_resumes_from_last_compact_entry() -> TestResult {
     assert!(
         matches!(&transcript[3], TranscriptItem::User { text, .. } if text == "new message after compact")
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn write_compact_bounds_summary_without_touching_retained_user() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+    let session = Session::new(
+        "sess-bounded-compact-write".into(),
+        "/tmp".into(),
+        "model".into(),
+        storage,
+    )
+    .await?;
+    let limit = evot_engine::context::DEFAULT_SUMMARY_MAX_BYTES;
+    let summary = format!(
+        "SUMMARY_HEAD\n{}\nSUMMARY_TAIL",
+        "s".repeat(limit.saturating_mul(2))
+    );
+    let retained_user = format!("LIVE_USER_HEAD\n{}\nLIVE_USER_TAIL", "u".repeat(limit));
+    let replacement = vec![
+        evot::compact::context_view::compact_summary_item(&summary),
+        TranscriptItem::User {
+            text: retained_user.clone(),
+            content: vec![],
+        },
+    ];
+    let mut item = compact_item(&summary, 1);
+    if let TranscriptItem::Compact {
+        messages,
+        engine_messages,
+        ..
+    } = &mut item
+    {
+        *messages = replacement.clone();
+        *engine_messages = evot::agent::run::convert::into_agent_messages(&replacement);
+    }
+
+    session.write_compact(item, replacement, 0).await?;
+
+    let entries = session.load_all_entries().await?;
+    let (stored_summary, stored_messages, stored_engine, stored_state) = entries
+        .iter()
+        .find_map(|entry| match &entry.item {
+            TranscriptItem::Compact {
+                summary,
+                messages,
+                engine_messages,
+                state,
+                ..
+            } => Some((summary, messages, engine_messages, state)),
+            _ => None,
+        })
+        .ok_or_else(|| missing_error("missing persisted compact item"))?;
+    assert!(stored_summary.len() <= limit);
+    assert!(stored_summary.starts_with("SUMMARY_HEAD"));
+    assert!(stored_summary.ends_with("SUMMARY_TAIL"));
+
+    let stored_boundary = stored_messages
+        .first()
+        .and_then(TranscriptItem::as_user_text)
+        .ok_or_else(|| missing_error("missing stored summary boundary"))?;
+    assert!(stored_boundary.len() <= limit);
+    assert_eq!(
+        stored_messages
+            .get(1)
+            .and_then(TranscriptItem::as_user_text),
+        Some(retained_user.clone())
+    );
+    let engine_boundary = stored_engine
+        .first()
+        .and_then(engine_user_text)
+        .ok_or_else(|| missing_error("missing stored engine summary boundary"))?;
+    assert!(engine_boundary.len() <= limit);
+    assert_eq!(
+        stored_engine.get(1).and_then(engine_user_text),
+        Some(retained_user.as_str())
+    );
+    assert_eq!(
+        stored_state.last_summary.as_deref(),
+        Some(stored_summary.as_str())
+    );
+    assert_eq!(
+        stored_state.context_summary_message.as_deref(),
+        Some(engine_boundary)
+    );
+
+    let transcript = session.transcript().await;
+    assert_eq!(
+        transcript.get(1).and_then(TranscriptItem::as_user_text),
+        Some(retained_user)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn open_bounds_legacy_poisoned_summary_without_touching_live_user() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+    let session_id = "sess-legacy-poisoned-summary";
+    let session = Session::new(
+        session_id.into(),
+        "/tmp".into(),
+        "model".into(),
+        storage.clone(),
+    )
+    .await?;
+    drop(session);
+
+    let limit = evot_engine::context::DEFAULT_SUMMARY_MAX_BYTES;
+    let summary = format!(
+        "LEGACY_SUMMARY_HEAD\n{}\nLEGACY_SUMMARY_TAIL",
+        "p".repeat(limit.saturating_mul(2))
+    );
+    let live_user = format!("LIVE_PROMPT_HEAD\n{}\nLIVE_PROMPT_TAIL", "q".repeat(limit));
+    let compact_context = vec![evot::compact::context_view::compact_summary_item(&summary)];
+    let mut item = compact_item(&summary, 1);
+    if let TranscriptItem::Compact {
+        messages,
+        engine_messages,
+        ..
+    } = &mut item
+    {
+        *messages = compact_context.clone();
+        *engine_messages = evot::agent::run::convert::into_agent_messages(&compact_context);
+    }
+    // Bypass Session::write_compact to emulate a poisoned item persisted by an
+    // older release before write-time bounds existed.
+    storage
+        .append_entries(vec![
+            TranscriptEntry::new(session_id.into(), None, 1, 0, item),
+            TranscriptEntry::new(session_id.into(), None, 2, 0, TranscriptItem::User {
+                text: live_user.clone(),
+                content: vec![],
+            }),
+        ])
+        .await?;
+
+    let reopened = Session::open(session_id, storage)
+        .await?
+        .ok_or_else(|| missing_error("missing reopened poisoned session"))?;
+    let transcript = reopened.transcript().await;
+    let transcript_boundary = transcript
+        .first()
+        .and_then(TranscriptItem::as_user_text)
+        .ok_or_else(|| missing_error("missing repaired transcript boundary"))?;
+    assert!(transcript_boundary.len() <= limit);
+    assert_eq!(
+        transcript.get(1).and_then(TranscriptItem::as_user_text),
+        Some(live_user.clone())
+    );
+
+    let (engine, state, seq) = reopened.context_snapshot().await;
+    assert_eq!(seq, 2);
+    let engine_boundary = engine
+        .first()
+        .and_then(engine_user_text)
+        .ok_or_else(|| missing_error("missing repaired engine boundary"))?;
+    assert!(engine_boundary.len() <= limit);
+    assert_eq!(engine_boundary, transcript_boundary);
+    assert_eq!(
+        engine.get(1).and_then(engine_user_text),
+        Some(live_user.as_str())
+    );
+    let state = state.ok_or_else(|| missing_error("missing repaired compaction state"))?;
+    assert!(state
+        .last_summary
+        .as_ref()
+        .is_some_and(|summary| summary.len() <= limit));
+    assert_eq!(
+        state.context_summary_message.as_deref(),
+        Some(engine_boundary)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn open_bounds_remote_fallback_without_mutating_opaque_state() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+    let session_id = "sess-legacy-remote-summary";
+    let session = Session::new(
+        session_id.into(),
+        "/tmp".into(),
+        "configured-model".into(),
+        storage.clone(),
+    )
+    .await?;
+    drop(session);
+
+    let limit = evot_engine::context::DEFAULT_SUMMARY_MAX_BYTES;
+    let fallback = format!(
+        "REMOTE_FALLBACK_HEAD\n{}\nREMOTE_FALLBACK_TAIL",
+        "r".repeat(limit.saturating_mul(2))
+    );
+    let opaque_item = serde_json::json!({
+        "type": "compaction",
+        "id": "cmp_legacy",
+        "encrypted_content": "opaque-state"
+    });
+    let remote_message = evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant {
+        content: vec![evot_engine::Content::Thinking {
+            thinking: fallback.clone(),
+            metadata: Some(evot_engine::ThinkingMetadata::OpenAiResponses {
+                item: opaque_item.clone(),
+            }),
+        }],
+        stop_reason: evot_engine::StopReason::Stop,
+        model: "gpt-5.6-sol".into(),
+        provider: "explicit-provider".into(),
+        usage: evot_engine::Usage::default(),
+        timestamp: 7,
+        error_message: None,
+        response_id: None,
+    });
+    let transcript_context = vec![evot::compact::context_view::compact_summary_item(&fallback)];
+    let mut item = compact_item(&fallback, 1);
+    if let TranscriptItem::Compact {
+        messages,
+        engine_messages,
+        state,
+        ..
+    } = &mut item
+    {
+        *messages = transcript_context;
+        *engine_messages = vec![remote_message];
+        // Older data may have incorrectly retained a local context pointer for
+        // a provider-native replacement. Resume must clear it.
+        state.context_summary_message = Some(fallback.clone());
+    }
+    storage
+        .append_entry(TranscriptEntry::new(session_id.into(), None, 1, 0, item))
+        .await?;
+
+    let reopened = Session::open(session_id, storage)
+        .await?
+        .ok_or_else(|| missing_error("missing reopened remote session"))?;
+    assert_eq!(reopened.meta().await.model, "configured-model");
+    let (engine, state, _) = reopened.context_snapshot().await;
+    match engine.first() {
+        Some(evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant {
+            content,
+            model,
+            provider,
+            timestamp,
+            ..
+        })) => {
+            assert_eq!(model, "gpt-5.6-sol");
+            assert_eq!(provider, "explicit-provider");
+            assert_eq!(*timestamp, 7);
+            match content.as_slice() {
+                [evot_engine::Content::Thinking { thinking, metadata }] => {
+                    assert!(thinking.len() <= limit);
+                    assert!(thinking.starts_with("REMOTE_FALLBACK_HEAD"));
+                    assert!(thinking.ends_with("REMOTE_FALLBACK_TAIL"));
+                    assert!(matches!(
+                        metadata,
+                        Some(evot_engine::ThinkingMetadata::OpenAiResponses { item })
+                            if item == &opaque_item
+                    ));
+                }
+                _ => return Err(missing_error("unexpected remote replacement content").into()),
+            }
+        }
+        _ => return Err(missing_error("missing remote replacement message").into()),
+    }
+    let state = state.ok_or_else(|| missing_error("missing remote compaction state"))?;
+    assert!(state
+        .last_summary
+        .as_ref()
+        .is_some_and(|summary| summary.len() <= limit));
+    assert!(state.context_summary_message.is_none());
     Ok(())
 }
 
@@ -1664,112 +2031,6 @@ async fn structured_compact_entry_rebuilds_context() -> TestResult {
         matches!(&transcript[0], TranscriptItem::User { text, .. } if text.contains("compacted summary"))
     );
     assert!(matches!(&transcript[1], TranscriptItem::User { text, .. } if text == "after compact"));
-    Ok(())
-}
-
-#[tokio::test]
-async fn opens_legacy_compact_from_its_last_active_baseline() -> TestResult {
-    let dir = TempDir::new()?;
-    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
-    let session_id = "sess-legacy-compact";
-    storage
-        .save_session(SessionMeta::new(
-            session_id.into(),
-            "/tmp".into(),
-            "model".into(),
-        ))
-        .await?;
-    let session_dir = dir.path().join("sessions").join(session_id);
-    let lines = [
-        format!(
-            r#"{{"session_id":"{session_id}","run_id":null,"seq":1,"turn":0,"item":{{"type":"user","text":"discarded"}},"created_at":"2026-01-01T00:00:01Z"}}"#
-        ),
-        format!(
-            r#"{{"session_id":"{session_id}","run_id":null,"seq":2,"turn":0,"item":{{"type":"user","text":"retained"}},"created_at":"2026-01-01T00:00:02Z"}}"#
-        ),
-        format!(
-            r#"{{"session_id":"{session_id}","run_id":null,"seq":3,"turn":0,"item":{{"type":"assistant","text":"retained reply","tool_calls":[],"stop_reason":"stop"}},"created_at":"2026-01-01T00:00:03Z"}}"#
-        ),
-        format!(
-            r#"{{"session_id":"{session_id}","run_id":null,"seq":4,"turn":0,"item":{{"type":"compact","id":"old-compact","created_at":1,"reason":"threshold","summary":"old summary","first_kept_seq":2,"tokens_before":100,"tokens_after":20,"messages_before":3,"messages_after":3,"details":{{}}}},"created_at":"2026-01-01T00:00:04Z"}}"#
-        ),
-        format!(
-            r#"{{"session_id":"{session_id}","run_id":null,"seq":5,"turn":0,"item":{{"type":"user","text":"after compact"}},"created_at":"2026-01-01T00:00:05Z"}}"#
-        ),
-    ];
-    std::fs::write(
-        session_dir.join("transcript.jsonl"),
-        format!("{}\n", lines.join("\n")),
-    )?;
-
-    let session = Session::open(session_id, storage.clone())
-        .await?
-        .ok_or_else(|| missing_error("missing legacy compact session"))?;
-    let context = session.transcript().await;
-    assert_eq!(context.len(), 4);
-    assert!(
-        matches!(&context[0], TranscriptItem::User { text, .. } if text.contains("old summary"))
-    );
-    assert!(matches!(&context[1], TranscriptItem::User { text, .. } if text == "retained"));
-    assert!(
-        matches!(&context[2], TranscriptItem::Assistant { content, .. } if assistant_text(content) == "retained reply")
-    );
-    assert!(matches!(&context[3], TranscriptItem::User { text, .. } if text == "after compact"));
-    let (engine_context, seed, next_seq) = session.context_snapshot().await;
-    assert_eq!(engine_context.len(), 4);
-    assert_eq!(next_seq, 4);
-    assert!(seed.is_none());
-
-    session
-        .write_items(vec![TranscriptItem::User {
-            text: "continued".into(),
-            content: vec![],
-        }])
-        .await?;
-    let raw = session.load_all_entries().await?;
-    assert_eq!(raw.last().map(|entry| entry.seq), Some(5));
-    Ok(())
-}
-
-#[tokio::test]
-async fn opens_legacy_compact_marker_snapshot() -> TestResult {
-    let dir = TempDir::new()?;
-    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
-    let session_id = "sess-legacy-marker";
-    storage
-        .save_session(SessionMeta::new(
-            session_id.into(),
-            "/tmp".into(),
-            "model".into(),
-        ))
-        .await?;
-    let marker = format!(
-        r#"{{"session_id":"{session_id}","run_id":null,"seq":10,"turn":0,"item":{{"type":"marker","kind":"compact","messages":[{{"type":"user","text":"snapshot"}},{{"type":"assistant","text":"snapshot reply","tool_calls":[],"stop_reason":"stop"}}]}},"created_at":"2026-01-01T00:00:10Z"}}"#
-    );
-    let after = format!(
-        r#"{{"session_id":"{session_id}","run_id":null,"seq":11,"turn":0,"item":{{"type":"user","text":"after marker"}},"created_at":"2026-01-01T00:00:11Z"}}"#
-    );
-    std::fs::write(
-        dir.path()
-            .join("sessions")
-            .join(session_id)
-            .join("transcript.jsonl"),
-        format!("{marker}\n{after}\n"),
-    )?;
-
-    let session = Session::open(session_id, storage)
-        .await?
-        .ok_or_else(|| missing_error("missing legacy marker session"))?;
-    let context = session.transcript().await;
-    assert_eq!(context.len(), 3);
-    assert!(matches!(&context[0], TranscriptItem::User { text, .. } if text == "snapshot"));
-    assert!(
-        matches!(&context[1], TranscriptItem::Assistant { content, .. } if assistant_text(content) == "snapshot reply")
-    );
-    assert!(matches!(&context[2], TranscriptItem::User { text, .. } if text == "after marker"));
-    let (engine_context, _, next_seq) = session.context_snapshot().await;
-    assert_eq!(engine_context.len(), 3);
-    assert_eq!(next_seq, 3);
     Ok(())
 }
 

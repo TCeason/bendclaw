@@ -8,6 +8,7 @@ use super::prompt;
 use super::types::SummarizerError;
 use super::types::SummarizerInput;
 use super::types::SummarizerOutput;
+use crate::context::compaction::config::truncate_summary;
 use crate::context::compaction::types::FileOps;
 use crate::provider::StreamConfig;
 use crate::provider::StreamEvent;
@@ -38,11 +39,13 @@ pub async fn summarize(
                 prompt::format_initial(&input.conversation, input.custom_instructions.as_deref())
             }
         };
+        let user_prompt = truncate_summary(&user_prompt, input.request_max_bytes);
         call_provider(ctx, &user_prompt, main_max_tokens, cancel.clone()).await?
     };
 
     if let Some(prefix_text) = &input.turn_prefix {
         let prefix_prompt = prompt::format_turn_prefix(prefix_text);
+        let prefix_prompt = truncate_summary(&prefix_prompt, input.request_max_bytes);
         let prefix_summary = call_provider(ctx, &prefix_prompt, prefix_max_tokens, cancel).await?;
         summary.push_str("\n\n---\n\n**Turn Context (split turn):**\n\n");
         summary.push_str(&prefix_summary);

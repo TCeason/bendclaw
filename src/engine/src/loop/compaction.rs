@@ -20,6 +20,11 @@ const OVERFLOW_EXHAUSTED_MESSAGE: &str =
     "Context overflow recovery failed after one compact-and-retry attempt. \
      Try reducing context or switching to a larger-context model.";
 
+/// User-visible message emitted when overflow recovery could not compact.
+const OVERFLOW_RECOVERY_FAILED_MESSAGE: &str =
+    "Context overflow recovery failed: could not compact the context. \
+     Try reducing context or switching to a larger-context model.";
+
 pub(super) struct CompactionRequestShape<'a> {
     pub(super) system_prompt: &'a str,
     pub(super) tools: &'a [crate::provider::ToolDefinition],
@@ -109,15 +114,22 @@ pub(super) async fn check_compaction(
         )
         .await;
 
-    // Error/all-zero responses do not provide a direct context size. Match pi
-    // by estimating only from the latest valid provider usage plus its trailing
-    // messages; without a real anchor there is no compaction decision.
+    // Error/all-zero responses do not provide a direct context size. Estimate
+    // only from the selected model's latest real usage plus trailing messages;
+    // without that model-specific anchor there is no compaction decision. This
+    // prevents a model switch from compacting against the old model's boundary.
+    // Any response the trigger already classified (overflow, exhausted, failed
+    // recovery) must not re-enter through the estimate fallback.
     let anchor_estimate = if response.action == AfterResponseAction::Continue
         && response.stats.is_none()
-        && !response.overflow_exhausted
+        && response.reason.is_none()
         && needs_usage_anchor_estimate(assistant_message)
     {
-        tracker.estimate_context_tokens_from_anchor_for_model(messages, None, None)
+        tracker.estimate_context_tokens_from_anchor_for_model(
+            messages,
+            Some(&current_model.provider),
+            Some(&current_model.model),
+        )
     } else {
         None
     };
@@ -176,6 +188,16 @@ fn emit_compaction_events(
             error: AgentErrorInfo {
                 kind: AgentErrorKind::Runtime,
                 message: OVERFLOW_EXHAUSTED_MESSAGE.to_string(),
+            },
+        })
+        .ok();
+    }
+
+    if response.overflow_recovery_failed {
+        tx.send(AgentEvent::Error {
+            error: AgentErrorInfo {
+                kind: AgentErrorKind::Runtime,
+                message: OVERFLOW_RECOVERY_FAILED_MESSAGE.to_string(),
             },
         })
         .ok();

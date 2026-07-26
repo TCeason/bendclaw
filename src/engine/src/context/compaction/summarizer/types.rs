@@ -13,6 +13,8 @@ pub struct SummarizerInput {
     pub previous_summary: Option<String>,
     /// Optional user instructions appended to the summarization task prompt.
     pub custom_instructions: Option<String>,
+    /// Maximum UTF-8 bytes for each final user prompt, including templates.
+    pub request_max_bytes: usize,
     /// File operations extracted from evicted zone (rule-based, always present).
     pub file_ops: FileOps,
     /// Number of evicted messages (for summary header).

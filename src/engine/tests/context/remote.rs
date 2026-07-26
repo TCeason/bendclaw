@@ -8,6 +8,7 @@ use evotengine::context::compaction::remote;
 use evotengine::context::compaction::types::CompactionMethod;
 use evotengine::context::compaction::types::CompactionPlan;
 use evotengine::context::SummarizerContext;
+use evotengine::context::SUMMARIZER_INPUT_MAX_BYTES;
 use evotengine::provider::ApiProtocol;
 use evotengine::provider::MockProvider;
 use evotengine::provider::ModelConfig;
@@ -343,6 +344,25 @@ async fn executor_falls_back_to_local_summary_when_remote_fails() {
             if matches!(content.first(), Some(Content::Text { text }) if text == "local fallback")
     ));
     assert_eq!(outcome.stats.messages_evicted, plan.evict_zone.len());
+}
+
+#[tokio::test]
+async fn oversized_remote_request_is_rejected_before_network_send() {
+    let server = MockServer::start().await;
+    let ctx = context(ApiProtocol::OpenAiResponses, "gpt-5.6-sol", &server.uri());
+    let oversized = "x".repeat(SUMMARIZER_INPUT_MAX_BYTES);
+
+    let result = remote::compact(&ctx, &[user(&oversized)], CancellationToken::new()).await;
+    assert!(matches!(
+        result,
+        Err(remote::RemoteError::Failed(message))
+            if message.contains("safety limit") && message.contains("remote compaction request")
+    ));
+    let request_count = server
+        .received_requests()
+        .await
+        .map_or(0, |requests| requests.len());
+    assert_eq!(request_count, 0, "oversized body reached the network");
 }
 
 #[tokio::test]

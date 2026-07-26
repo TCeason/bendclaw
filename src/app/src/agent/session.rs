@@ -90,19 +90,12 @@ impl Session {
             None => return Ok(None),
         };
 
-        let entries = storage
-            .list_entries(ListTranscriptEntries {
-                session_id: session_id.to_string(),
-                run_id: None,
-                after_seq: None,
-                limit: None,
-            })
-            .await?;
+        let entries = storage.load_active_entries(session_id).await?;
 
         let next_seq = entries.last().map(|e| e.seq).unwrap_or(0);
         let transcript = crate::compact::context_view::resolve_context_items(&entries);
-        let engine_transcript = crate::compact::context_view::resolve_engine_context(&entries);
-        let compact_seed = compact_seed_from_entries(&entries);
+        let (engine_transcript, compact_seed) =
+            crate::compact::context_view::resolve_engine_context_with_state(&entries);
 
         Ok(Some(Self::init(
             storage,
@@ -278,8 +271,8 @@ impl Session {
     /// the stale plan is rejected before its marker is persisted.
     pub async fn write_compact(
         &self,
-        item: TranscriptItem,
-        new_context: Vec<TranscriptItem>,
+        mut item: TranscriptItem,
+        mut new_context: Vec<TranscriptItem>,
         expected_seq: u64,
     ) -> Result<()> {
         if !matches!(item, TranscriptItem::Compact { .. }) {
@@ -287,6 +280,7 @@ impl Session {
                 "write_compact requires a compact item".to_string(),
             ));
         }
+        crate::compact::context_view::normalize_compact_item(&mut item, &mut new_context);
         self.commit_items(vec![item], Some(new_context), Some(expected_seq), true)
             .await?;
         Ok(())
@@ -396,9 +390,10 @@ impl Session {
             // logical batches. Context-replacing compactions remain strict.
             state.next_seq = persisted_seq;
             state.transcript = crate::compact::context_view::resolve_context_items(&persisted);
-            state.engine_transcript =
-                crate::compact::context_view::resolve_engine_context(&persisted);
-            state.compact_seed = compact_seed_from_entries(&persisted);
+            let (engine_transcript, compact_seed) =
+                crate::compact::context_view::resolve_engine_context_with_state(&persisted);
+            state.engine_transcript = engine_transcript;
+            state.compact_seed = compact_seed;
         }
 
         Err(crate::error::EvotError::Session(
@@ -543,22 +538,6 @@ fn update_compact_seed(seed: &mut Option<evot_engine::CompactionState>, items: &
             _ => {}
         }
     }
-}
-
-/// Build the engine compaction seed from the active transcript branch.
-/// A clear marker breaks the summary chain; compact entries before it must not
-/// be reintroduced into later auto-compactions after a restart.
-fn compact_seed_from_entries(entries: &[TranscriptEntry]) -> Option<evot_engine::CompactionState> {
-    let active_start = entries
-        .iter()
-        .rposition(|entry| matches!(entry.item, TranscriptItem::Marker { .. }))
-        .map(|index| index.saturating_add(1))
-        .unwrap_or(0);
-    let active = &entries[active_start..];
-    active.iter().rev().find_map(|entry| match &entry.item {
-        TranscriptItem::Compact { state, .. } => Some(state.as_ref().clone()),
-        _ => None,
-    })
 }
 
 fn build_title(items: &[TranscriptItem]) -> Option<String> {

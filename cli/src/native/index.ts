@@ -311,6 +311,11 @@ export class Agent {
     return JSON.parse(json) as TranscriptItem[]
   }
 
+  async loadResumeTranscript(sessionId: string): Promise<TranscriptItem[]> {
+    const json = await this.raw.loadResumeTranscript(sessionId)
+    return JSON.parse(json) as TranscriptItem[]
+  }
+
   async findSession(sessionId: string): Promise<SessionMeta | null> {
     const json = await this.raw.findSession(sessionId)
     return json ? JSON.parse(json) as SessionMeta : null

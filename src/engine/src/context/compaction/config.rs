@@ -52,9 +52,8 @@ pub struct CompactionConfig {
     // — Summarizer —
     /// Summarization strategy for summary generation.
     pub summarizer_mode: SummarizerMode,
-    /// Maximum UTF-8 bytes retained in a generated summary. The historical
-    /// field name is kept to avoid churn in callers.
-    pub summary_max_chars: usize,
+    /// Maximum UTF-8 bytes retained in a generated summary.
+    pub summary_max_bytes: usize,
 }
 
 /// Tokens reserved for output + system prompt + tool defs. Fixed rather than a
@@ -64,6 +63,15 @@ pub struct CompactionConfig {
 pub const DEFAULT_RESERVE_TOKENS: usize = 16_384;
 /// Token budget for the retained tail. Also fixed, for the same reason.
 pub const DEFAULT_KEEP_RECENT_TOKENS: usize = 20_000;
+/// Maximum UTF-8 bytes for a summary inserted back into model context. Provider
+/// output limits are token-based and do not protect deterministic fallbacks or
+/// oversized summaries restored from older sessions.
+pub const DEFAULT_SUMMARY_MAX_BYTES: usize = 64 * 1024;
+/// Absolute byte ceiling for each complete summarizer user prompt. The effective
+/// budget is also bounded by the model's context window via
+/// `summarizer_input_max_bytes()`.
+pub const SUMMARIZER_INPUT_MAX_BYTES: usize = 512 * 1024;
+const ESTIMATED_BYTES_PER_TOKEN: usize = 4;
 
 impl CompactionConfig {
     /// Derive config from a context config (uses max_context_tokens as the window).
@@ -73,9 +81,7 @@ impl CompactionConfig {
             reserve_tokens: DEFAULT_RESERVE_TOKENS,
             keep_recent_tokens: DEFAULT_KEEP_RECENT_TOKENS,
             summarizer_mode: SummarizerMode::default(),
-            // The provider output budget already bounds generated summaries;
-            // match pi by retaining that summary without a second byte cap.
-            summary_max_chars: usize::MAX,
+            summary_max_bytes: DEFAULT_SUMMARY_MAX_BYTES,
         }
     }
 
@@ -92,6 +98,19 @@ impl CompactionConfig {
             cfg.keep_recent_tokens = keep_recent;
         }
         cfg
+    }
+
+    /// Input budget for each complete summarizer user prompt. This follows pi's
+    /// branch-summary budget (`context window - reserve`) and adds a transport
+    /// ceiling so compaction cannot emit another multi-megabyte request.
+    pub fn summarizer_input_max_bytes(&self) -> usize {
+        if self.context_window == 0 {
+            return SUMMARIZER_INPUT_MAX_BYTES;
+        }
+        self.context_window
+            .saturating_sub(self.reserve_tokens)
+            .saturating_mul(ESTIMATED_BYTES_PER_TOKEN)
+            .min(SUMMARIZER_INPUT_MAX_BYTES)
     }
 
     /// Token threshold that triggers compaction.

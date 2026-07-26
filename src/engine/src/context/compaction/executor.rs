@@ -73,6 +73,13 @@ pub async fn execute_with_options(
         observer,
         cancel,
     } = options;
+    if cancel.is_cancelled() {
+        return CompactionOutcome {
+            messages,
+            state: prev_state.cloned().unwrap_or_default(),
+            stats: CompactionStats::default(),
+        };
+    }
     let before_message_count = messages.len();
     let before_tokens = total_tokens(&messages);
 
@@ -86,7 +93,7 @@ pub async fn execute_with_options(
         .as_ref()
         .map(|st| &messages[st.turn_start..st.cut_at]);
 
-    let summarizer_input = serialize::prepare_input(evicted, split_prefix, prev_state);
+    let summarizer_input = serialize::prepare_input(evicted, split_prefix, prev_state, config);
 
     // Step 3: Try provider-native remote compaction first (GPT models on the
     // Responses protocol). Any failure falls back to local text summarization.
@@ -128,6 +135,13 @@ pub async fn execute_with_options(
     };
 
     if let Some(remote_compaction) = remote_outcome {
+        if cancel.is_cancelled() {
+            return CompactionOutcome {
+                messages,
+                state: prev_state.cloned().unwrap_or_default(),
+                stats: CompactionStats::default(),
+            };
+        }
         return assemble_remote(
             messages,
             plan,
@@ -148,7 +162,7 @@ pub async fn execute_with_options(
             // LLM summarization for threshold/manual compaction
             match config
                 .summarizer_mode
-                .summarize(summarizer_input, Some(ctx), cancel)
+                .summarize(summarizer_input, Some(ctx), cancel.clone())
                 .await
             {
                 Ok(out) => out.summary,
@@ -166,10 +180,24 @@ pub async fn execute_with_options(
         }
     } else {
         // Overflow fallback is deterministic: no second model request.
+        if cancel.is_cancelled() {
+            return CompactionOutcome {
+                messages,
+                state: prev_state.cloned().unwrap_or_default(),
+                stats: CompactionStats::default(),
+            };
+        }
         emergency::summarize(&summarizer_input).summary
     };
 
-    let summary_text = truncate_summary(&summary_text, config.summary_max_chars);
+    if cancel.is_cancelled() {
+        return CompactionOutcome {
+            messages,
+            state: prev_state.cloned().unwrap_or_default(),
+            stats: CompactionStats::default(),
+        };
+    }
+    let summary_text = truncate_summary(&summary_text, config.summary_max_bytes);
 
     // Step 5: Build memory summary message
     let memory_summary_msg = AgentMessage::Llm(Message::User {
@@ -248,7 +276,7 @@ fn assemble_remote(
     // Rule-based summary: zero-cost portability fallback. The Responses
     // provider replays only the opaque item; other providers render this text.
     let summary_text = emergency::summarize(&summarizer_input).summary;
-    let summary_text = truncate_summary(&summary_text, config.summary_max_chars);
+    let summary_text = truncate_summary(&summary_text, config.summary_max_bytes);
 
     let encrypted_bytes = remote_compaction.encrypted_bytes;
     let blob_message = summarizer_ctx

@@ -16,7 +16,7 @@ fn config_for_dsl() -> CompactionConfig {
         reserve_tokens: 2_000,
         keep_recent_tokens: 500,
         summarizer_mode: SummarizerMode::default(),
-        summary_max_chars: 4000,
+        summary_max_bytes: 4000,
     }
 }
 

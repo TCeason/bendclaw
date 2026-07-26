@@ -820,7 +820,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   async function resumeSession(session: SessionMeta) {
     try {
-      const transcript = await agent.loadTranscript(session.session_id)
+      const transcript = await agent.loadResumeTranscript(session.session_id)
       // Fields may be missing when the caller passes a partial SessionMeta
       // (e.g. the resume selector only knows the id); fetch the full record.
       let model = session.model

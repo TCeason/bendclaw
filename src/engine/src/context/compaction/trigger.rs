@@ -35,16 +35,23 @@ pub fn evaluate(input: &TriggerInput, config: &CompactionConfig) -> TriggerDecis
     }
 
     let context_tokens = calculate_context_tokens(usage);
-    let same_model = usage.model == input.current_model;
+    // A model change is not a compaction signal. The old model's usage and
+    // errors describe a different context boundary; wait for the selected
+    // model's own usage or an explicit overflow from that model.
+    if usage.model != input.current_model {
+        return TriggerDecision::Skip;
+    }
+    // pi gates every window-relative signal behind `contextWindow &&`. With an
+    // unknown window (custom/proxy models), only explicit overflow errors may
+    // trigger; otherwise any successful usage would read as a silent overflow.
+    let window_known = config.context_window > 0;
 
-    // Case 1: Explicit overflow errors from the current model compact and retry.
-    // An old model's error must not force compaction after a model switch.
+    // Case 1: Explicit overflow errors from the selected model compact and retry.
     if usage.stop_reason == StopReason::Error {
-        if same_model
-            && usage
-                .error_message
-                .as_deref()
-                .is_some_and(is_context_overflow)
+        if usage
+            .error_message
+            .as_deref()
+            .is_some_and(is_context_overflow)
         {
             if input.overflow_recovery_attempted {
                 return TriggerDecision::OverflowExhausted { context_tokens };
@@ -61,7 +68,7 @@ pub fn evaluate(input: &TriggerInput, config: &CompactionConfig) -> TriggerDecis
     // Case 2: Successful silent overflow. pi detects this from input tokens,
     // not total usage. The completed answer is retained and compaction does not
     // retry from an assistant message.
-    if same_model
+    if window_known
         && usage.stop_reason == StopReason::Stop
         && usage.input + usage.cache_read > config.context_window
     {
@@ -74,7 +81,7 @@ pub fn evaluate(input: &TriggerInput, config: &CompactionConfig) -> TriggerDecis
     // Case 3: Length-stop silent overflow. Providers such as MiMo may truncate
     // input to the window and return no output. Partial output is not an
     // overflow signal; it falls through to ordinary threshold compaction.
-    if same_model && usage.stop_reason == StopReason::Length && usage.output == 0 {
+    if window_known && usage.stop_reason == StopReason::Length && usage.output == 0 {
         let input_tokens = usage.input + usage.cache_read;
         if input_tokens >= config.context_window * 99 / 100 {
             if input.overflow_recovery_attempted {
@@ -88,7 +95,7 @@ pub fn evaluate(input: &TriggerInput, config: &CompactionConfig) -> TriggerDecis
     }
 
     // Case 4: Threshold — context approaching limit.
-    if context_tokens > config.trigger_threshold() {
+    if window_known && context_tokens > config.trigger_threshold() {
         return TriggerDecision::Threshold { context_tokens };
     }
 

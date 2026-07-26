@@ -77,7 +77,7 @@ fn config_small() -> CompactionConfig {
         reserve_tokens: 2_000,
         keep_recent_tokens: 1_000,
         summarizer_mode: SummarizerMode::default(),
-        summary_max_chars: 4000,
+        summary_max_bytes: 4000,
     }
 }
 
@@ -186,7 +186,7 @@ fn detects_split_turn() {
         reserve_tokens: 2_000,
         keep_recent_tokens: 500,
         summarizer_mode: SummarizerMode::default(),
-        summary_max_chars: 4000,
+        summary_max_bytes: 4000,
     };
 
     // user, assistant(tool_call), tool_result, tool_call, tool_result (big turn)

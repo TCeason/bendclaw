@@ -27,6 +27,7 @@ use crate::storage::open_storage;
 use crate::storage::MemoryStorage;
 use crate::storage::Storage;
 use crate::types::ListSessions;
+use crate::types::ListTranscriptEntries;
 use crate::types::PromptDump;
 use crate::types::SectionDump;
 use crate::types::SessionMeta;
@@ -34,6 +35,7 @@ use crate::types::SkillInstructionDump;
 use crate::types::SystemPromptDump;
 use crate::types::TokenTotals;
 use crate::types::ToolDump;
+use crate::types::TranscriptEntry;
 use crate::types::TranscriptItem;
 
 // ---------------------------------------------------------------------------
@@ -1011,13 +1013,18 @@ impl Agent {
 
     pub async fn load_transcript(&self, id: &str) -> Result<Vec<TranscriptItem>> {
         let storage = self.storage.read().clone();
-        match Session::open(id, storage).await? {
-            Some(session) => {
-                let entries = session.load_all_entries().await?;
-                Ok(entries.into_iter().map(|e| e.item).collect())
-            }
-            None => Ok(Vec::new()),
+        if storage.get_session(id).await?.is_none() {
+            return Ok(Vec::new());
         }
+        let entries = storage
+            .list_entries(ListTranscriptEntries {
+                session_id: id.to_string(),
+                run_id: None,
+                after_seq: None,
+                limit: None,
+            })
+            .await?;
+        Ok(entries.into_iter().map(|entry| entry.item).collect())
     }
 
     pub async fn load_context_transcript(&self, id: &str) -> Result<Vec<TranscriptItem>> {
@@ -1026,6 +1033,19 @@ impl Agent {
             Some(session) => Ok(session.transcript().await),
             None => Ok(Vec::new()),
         }
+    }
+
+    /// Load the current branch for terminal replay without serializing all
+    /// superseded history or the Engine-only payload embedded in a compact
+    /// snapshot. Retained messages are replayed before a lightweight compact
+    /// card, followed by entries written after that compact point.
+    pub async fn load_resume_transcript(&self, id: &str) -> Result<Vec<TranscriptItem>> {
+        let storage = self.storage.read().clone();
+        if storage.get_session(id).await?.is_none() {
+            return Ok(Vec::new());
+        }
+        let entries = storage.load_active_entries(id).await?;
+        Ok(resume_transcript_items(entries))
     }
 
     pub async fn load_session(&self, id: &str) -> Result<Option<Arc<Session>>> {
@@ -1411,6 +1431,63 @@ fn mode_label(mode: ToolMode) -> &'static str {
 }
 
 /// Distil the runtime [`ToolMode`] into the prompt-layer [`PromptMode`].
+fn resume_transcript_items(entries: Vec<TranscriptEntry>) -> Vec<TranscriptItem> {
+    let mut items = Vec::new();
+    for entry in entries {
+        match entry.item {
+            TranscriptItem::Compact {
+                id,
+                created_at,
+                reason,
+                summary,
+                tokens_before,
+                tokens_after,
+                messages_before,
+                messages_after,
+                messages,
+                details,
+                ..
+            } => {
+                let skip = usize::from(messages.first().is_some_and(|message| {
+                    matches!(
+                        message,
+                        TranscriptItem::User { text, .. }
+                            if crate::compact::context_view::is_summary_boundary_text(text, &summary)
+                    )
+                }));
+                items.extend(
+                    messages
+                        .into_iter()
+                        .skip(skip)
+                        .filter(TranscriptItem::is_context_item),
+                );
+                items.push(TranscriptItem::Compact {
+                    id,
+                    created_at,
+                    reason,
+                    summary: evot_engine::truncate_summary(
+                        &summary,
+                        evot_engine::context::DEFAULT_SUMMARY_MAX_BYTES,
+                    ),
+                    tokens_before,
+                    tokens_after,
+                    messages_before,
+                    messages_after,
+                    messages: Vec::new(),
+                    engine_messages: Vec::new(),
+                    state: Box::default(),
+                    details,
+                });
+            }
+            TranscriptItem::Marker { messages, .. } => {
+                items.extend(messages.into_iter().filter(TranscriptItem::is_context_item));
+            }
+            item => items.push(item),
+        }
+    }
+    items
+}
+
 fn prompt_mode(mode: ToolMode) -> PromptMode {
     match mode {
         ToolMode::Interactive => PromptMode::Interactive,

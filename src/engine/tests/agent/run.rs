@@ -1600,7 +1600,7 @@ async fn test_compact_messages_reduces_over_budget_context() {
         reserve_tokens: 500,
         keep_recent_tokens: 500,
         summarizer_mode: SummarizerMode::default(),
-        summary_max_chars: 4000,
+        summary_max_bytes: 4000,
     };
 
     let mut ctrl = CompactionController::new(config);
@@ -2290,9 +2290,11 @@ async fn test_model_switch_sends_first_request_without_precompaction() {
         model: "old-model".into(),
         provider: "local".into(),
         usage: Usage {
-            input: 100,
-            output: 10,
-            total_tokens: 110,
+            // Deliberately above the new model's 8,750-token threshold. This
+            // belongs to old-model and must not trigger pre-prompt compaction.
+            input: 9_000,
+            output: 100,
+            total_tokens: 9_100,
             ..Default::default()
         },
         timestamp: 1,
@@ -2478,6 +2480,214 @@ async fn test_sanitized_413_compacts_and_retries_once() {
         AgentMessage::Llm(Message::Assistant { content, .. })
             if content.iter().any(|block| matches!(block, Content::Text { text } if text == "recovered after compaction"))
     )));
+}
+
+#[tokio::test]
+async fn test_overflow_recovery_survives_summarizer_failure() {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    use evotengine::context::ContextConfig;
+
+    // The relay rejects oversized payloads by bytes. Both the main request and
+    // the LLM summarize request hit the same limit; only the compacted retry
+    // fits. Mirrors the claude-fable-5@droid 11MB incident.
+    struct RejectsMainAndSummarizer {
+        main_calls: AtomicUsize,
+        summary_calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl StreamProvider for RejectsMainAndSummarizer {
+        async fn stream(
+            &self,
+            config: StreamConfig,
+            tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+            _cancel: tokio_util::sync::CancellationToken,
+        ) -> Result<StreamOutcome, ProviderError> {
+            let is_summary = config
+                .system_prompt
+                .starts_with("You are a context summarization");
+            if is_summary {
+                self.summary_calls.fetch_add(1, Ordering::SeqCst);
+                return Err(ProviderError::classify(
+                    413,
+                    r#"HTTP 413: {"type":"error","error":{"type":"api_error","message":"Upstream request failed."}}"#,
+                    None,
+                ));
+            }
+            let call = self.main_calls.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                return Err(ProviderError::classify(
+                    413,
+                    r#"HTTP 413: {"type":"error","error":{"type":"api_error","message":"Upstream request failed."}}"#,
+                    None,
+                ));
+            }
+
+            let message = Message::Assistant {
+                content: vec![Content::Text {
+                    text: "recovered after emergency compaction".into(),
+                }],
+                stop_reason: StopReason::Stop,
+                model: config.model,
+                provider: "openai".into(),
+                usage: Usage::default(),
+                timestamp: evotengine::now_ms() + 60_000,
+                error_message: None,
+                response_id: None,
+            };
+            let _ = tx.send(StreamEvent::Start);
+            let _ = tx.send(StreamEvent::TextDelta {
+                content_index: 0,
+                delta: "recovered after emergency compaction".into(),
+            });
+            let _ = tx.send(StreamEvent::Done {
+                message: message.clone(),
+            });
+            Ok(StreamOutcome::complete(message))
+        }
+    }
+
+    let provider = std::sync::Arc::new(RejectsMainAndSummarizer {
+        main_calls: AtomicUsize::new(0),
+        summary_calls: AtomicUsize::new(0),
+    });
+    let mut config = make_config(MockProvider::text("unused"));
+    config.provider = provider.clone();
+    config.retry_policy = evotengine::RetryPolicy::disabled();
+    config.context_config = Some(ContextConfig {
+        max_context_tokens: 2_000,
+        system_prompt_tokens: 0,
+        reserve_tokens: Some(250),
+        keep_recent_tokens: Some(300),
+    });
+
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: (0..12)
+            .map(|index| {
+                AgentMessage::Llm(Message::user(format!(
+                    "old history {index} {}",
+                    "x".repeat(1_000)
+                )))
+            })
+            .collect(),
+        tools: vec![],
+        cwd: std::path::PathBuf::new(),
+        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+        prompt_cache_key: None,
+    };
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    let new_messages = agent_loop(
+        vec![AgentMessage::Llm(Message::user("continue"))],
+        &mut context,
+        &config,
+        tx,
+        CancellationToken::new(),
+    )
+    .await;
+    let events = collect_events(rx);
+
+    assert_eq!(provider.main_calls.load(Ordering::SeqCst), 2);
+    assert!(
+        provider.summary_calls.load(Ordering::SeqCst) >= 1,
+        "the LLM summarizer must be attempted before the emergency fallback"
+    );
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::ContextCompactionEnd {
+            reason: evotengine::context::CompactReason::Overflow,
+            will_retry: true,
+            ..
+        })));
+    assert!(events.iter().all(|event| !matches!(
+        event,
+        AgentEvent::Error { error } if error.message.contains("recovery failed")
+    )));
+    assert!(new_messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::Llm(Message::Assistant { content, .. })
+            if content.iter().any(|block| matches!(block, Content::Text { text } if text == "recovered after emergency compaction"))
+    )));
+}
+
+#[tokio::test]
+async fn test_unrecoverable_overflow_surfaces_visible_error() {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    use evotengine::context::ContextConfig;
+
+    struct AlwaysRequestTooLarge {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl StreamProvider for AlwaysRequestTooLarge {
+        async fn stream(
+            &self,
+            _config: StreamConfig,
+            _tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+            _cancel: tokio_util::sync::CancellationToken,
+        ) -> Result<StreamOutcome, ProviderError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(ProviderError::classify(
+                413,
+                r#"HTTP 413: {"type":"error","error":{"type":"api_error","message":"Upstream request failed."}}"#,
+                None,
+            ))
+        }
+    }
+
+    let provider = std::sync::Arc::new(AlwaysRequestTooLarge {
+        calls: AtomicUsize::new(0),
+    });
+    let mut config = make_config(MockProvider::text("unused"));
+    config.provider = provider.clone();
+    config.retry_policy = evotengine::RetryPolicy::disabled();
+    config.context_config = Some(ContextConfig {
+        max_context_tokens: 2_000,
+        system_prompt_tokens: 0,
+        reserve_tokens: Some(250),
+        keep_recent_tokens: Some(300),
+    });
+
+    // A single oversized message leaves the planner nothing to evict, so
+    // recovery cannot compact. The failure must be user-visible.
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: vec![AgentMessage::Llm(Message::user("x".repeat(4_000)))],
+        tools: vec![],
+        cwd: std::path::PathBuf::new(),
+        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+        prompt_cache_key: None,
+    };
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    agent_loop(
+        vec![AgentMessage::Llm(Message::user("continue"))],
+        &mut context,
+        &config,
+        tx,
+        CancellationToken::new(),
+    )
+    .await;
+    let events = collect_events(rx);
+
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert!(events
+        .iter()
+        .all(|event| !matches!(event, AgentEvent::ContextCompactionEnd { .. })));
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Error { error }
+                if error.message.contains("Context overflow recovery failed: could not compact")
+        )),
+        "a failed overflow recovery must not end the run silently"
+    );
 }
 
 /// A context that cannot be compacted below the window is still sent: the

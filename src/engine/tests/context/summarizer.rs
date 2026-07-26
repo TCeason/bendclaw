@@ -10,7 +10,11 @@ use evotengine::context::compaction::summarizer::serialize;
 use evotengine::context::compaction::summarizer::types::SummarizerError;
 use evotengine::context::compaction::summarizer::types::SummarizerInput;
 use evotengine::context::compaction::summarizer::types::SummarizerOutput;
+use evotengine::context::compaction::types::CompactionState;
 use evotengine::context::compaction::types::FileOps;
+use evotengine::context::CompactionConfig;
+use evotengine::context::DEFAULT_SUMMARY_MAX_BYTES;
+use evotengine::context::SUMMARIZER_INPUT_MAX_BYTES;
 use evotengine::types::*;
 use tokio_util::sync::CancellationToken;
 
@@ -160,7 +164,8 @@ fn prepare_input_extracts_all_fields() {
         tool_result_msg("c1", "ok"),
         assistant_msg("Config has been fixed with the new approach"),
     ];
-    let input = serialize::prepare_input(&messages, None, None);
+    let config = CompactionConfig::default();
+    let input = serialize::prepare_input(&messages, None, None, &config);
 
     assert_eq!(input.evicted_count, 4);
     assert!(!input.completed_requests.is_empty());
@@ -176,12 +181,44 @@ fn prepare_input_extracts_all_fields() {
 fn prepare_input_with_split_prefix() {
     let messages = vec![user_msg("task 1"), assistant_msg("done")];
     let prefix = vec![user_msg("big task"), tool_call_msg("c1", "read", "/a.rs")];
-    let input = serialize::prepare_input(&messages, Some(&prefix), None);
+    let config = CompactionConfig::default();
+    let input = serialize::prepare_input(&messages, Some(&prefix), None, &config);
 
     match input.turn_prefix.as_ref() {
         Some(prefix) => assert!(prefix.contains("big task")),
         None => panic!("expected split turn prefix"),
     }
+}
+
+#[test]
+fn prepare_input_bounds_multi_megabyte_history_and_legacy_state() {
+    let first = format!("FIRST_GOAL\n{}", "a".repeat(2_300_000));
+    let latest = format!("LATEST_PROGRESS\n{}", "z".repeat(2_300_000));
+    let messages = vec![user_msg(&first), assistant_msg(&latest)];
+    let state = CompactionState {
+        last_summary: Some(format!("PREVIOUS_CONTEXT\n{}", "p".repeat(200_000))),
+        ..CompactionState::default()
+    };
+
+    let config = CompactionConfig::from_context_window(1_000_000);
+    let input = serialize::prepare_input(&messages, Some(&messages), Some(&state), &config);
+    let previous = match input.previous_summary.as_deref() {
+        Some(previous) => previous,
+        None => panic!("expected previous summary"),
+    };
+    let prefix = match input.turn_prefix.as_deref() {
+        Some(prefix) => prefix,
+        None => panic!("expected turn prefix"),
+    };
+
+    assert!(previous.len() <= DEFAULT_SUMMARY_MAX_BYTES);
+    assert!(input.conversation.len() + previous.len() <= SUMMARIZER_INPUT_MAX_BYTES);
+    assert!(prefix.len() <= SUMMARIZER_INPUT_MAX_BYTES);
+    assert!(input.conversation.contains("FIRST_GOAL"));
+    assert!(input.conversation.contains("LATEST_PROGRESS"));
+    assert!(input.conversation.contains("middle messages omitted"));
+    assert!(prefix.contains("FIRST_GOAL"));
+    assert!(prefix.contains("LATEST_PROGRESS"));
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +232,7 @@ fn emergency_includes_message_count() {
         turn_prefix: None,
         previous_summary: None,
         custom_instructions: None,
+        request_max_bytes: SUMMARIZER_INPUT_MAX_BYTES,
         file_ops: FileOps::default(),
         evicted_count: 15,
         completed_requests: vec![],
@@ -212,6 +250,7 @@ fn emergency_includes_completed_requests() {
         turn_prefix: None,
         previous_summary: None,
         custom_instructions: None,
+        request_max_bytes: SUMMARIZER_INPUT_MAX_BYTES,
         file_ops: FileOps::default(),
         evicted_count: 5,
         completed_requests: vec!["Fix bug #123".into(), "Add tests".into()],
@@ -235,6 +274,7 @@ fn emergency_includes_file_ops() {
         turn_prefix: None,
         previous_summary: None,
         custom_instructions: None,
+        request_max_bytes: SUMMARIZER_INPUT_MAX_BYTES,
         file_ops,
         evicted_count: 5,
         completed_requests: vec![],
@@ -255,6 +295,7 @@ fn emergency_includes_conclusion() {
         turn_prefix: None,
         previous_summary: None,
         custom_instructions: None,
+        request_max_bytes: SUMMARIZER_INPUT_MAX_BYTES,
         file_ops: FileOps::default(),
         evicted_count: 3,
         completed_requests: vec![],
@@ -275,6 +316,7 @@ fn emergency_includes_turn_prefix() {
         ),
         previous_summary: None,
         custom_instructions: None,
+        request_max_bytes: SUMMARIZER_INPUT_MAX_BYTES,
         file_ops: FileOps::default(),
         evicted_count: 10,
         completed_requests: vec![],
@@ -297,6 +339,7 @@ async fn mode_llm_without_context_returns_error() {
         turn_prefix: None,
         previous_summary: None,
         custom_instructions: None,
+        request_max_bytes: SUMMARIZER_INPUT_MAX_BYTES,
         file_ops: FileOps::default(),
         evicted_count: 2,
         completed_requests: vec![],
@@ -321,6 +364,7 @@ fn base_input(conversation: &str) -> SummarizerInput {
         turn_prefix: None,
         previous_summary: None,
         custom_instructions: None,
+        request_max_bytes: SUMMARIZER_INPUT_MAX_BYTES,
         file_ops: FileOps::default(),
         evicted_count: 1,
         completed_requests: vec![],
@@ -438,6 +482,40 @@ async fn llm_summarize_injects_previous_summary() {
     assert!(result.is_ok());
     let prompt = first_user_prompt(&captured);
     assert!(prompt.contains("<previous-summary>\nEARLIER SUMMARY TEXT\n</previous-summary>"));
+}
+
+#[tokio::test]
+async fn llm_summarize_bounds_complete_prompts() {
+    let limit = 4_096;
+    let mut input = base_input(&format!("CONVERSATION_HEAD\n{}", "会".repeat(20_000)));
+    input.previous_summary = Some(format!("PREVIOUS_HEAD\n{}", "旧".repeat(20_000)));
+    input.custom_instructions = Some(format!("FOCUS_HEAD\n{}", "重".repeat(20_000)));
+    input.turn_prefix = Some(format!("PREFIX_HEAD\n{}", "前".repeat(20_000)));
+    input.request_max_bytes = limit;
+
+    let (result, captured) = summarize_capturing(input, 4_096, vec![
+        Reply::text("main"),
+        Reply::text("prefix"),
+    ])
+    .await;
+
+    assert!(result.is_ok());
+    let requests = captured.lock();
+    assert_eq!(requests.len(), 2);
+    for request in requests.iter() {
+        let prompt = match request.messages.first() {
+            Some(Message::User { content, .. }) => content
+                .iter()
+                .filter_map(|block| match block {
+                    Content::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<String>(),
+            _ => panic!("expected summarizer user prompt"),
+        };
+        assert!(prompt.len() <= limit, "prompt was {} bytes", prompt.len());
+        assert!(std::str::from_utf8(prompt.as_bytes()).is_ok());
+    }
 }
 
 #[tokio::test]

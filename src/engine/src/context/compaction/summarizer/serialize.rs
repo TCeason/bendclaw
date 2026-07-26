@@ -1,10 +1,15 @@
 //! Serialize messages to text for LLM summarization.
 
 use super::types::SummarizerInput;
+use crate::context::compaction::config::truncate_summary;
+use crate::context::compaction::config::CompactionConfig;
 use crate::context::compaction::memory;
 use crate::context::compaction::types::CompactionState;
 use crate::types::*;
 
+/// Conversation serialization follows pi's newest-biased branch-summary
+/// budgeting while preserving the original goal at the head.
+const SUMMARIZER_OMISSION_MARKER: &str = "[... middle messages omitted for summarization ...]";
 /// Max chars per tool result in serialized output (prevents bloat).
 const TOOL_RESULT_MAX_CHARS: usize = 2000;
 
@@ -14,10 +19,17 @@ pub fn prepare_input(
     evicted: &[AgentMessage],
     split_prefix: Option<&[AgentMessage]>,
     prev_state: Option<&CompactionState>,
+    config: &CompactionConfig,
 ) -> SummarizerInput {
-    let conversation = serialize_messages(evicted);
-    let turn_prefix = split_prefix.map(serialize_messages);
-    let previous_summary = prev_state.and_then(|s| s.last_summary.clone());
+    let input_max_bytes = config.summarizer_input_max_bytes();
+    let previous_summary = prev_state
+        .and_then(|state| state.last_summary.as_deref())
+        .map(|summary| truncate_summary(summary, config.summary_max_bytes));
+    let conversation_budget = input_max_bytes
+        .saturating_sub(previous_summary.as_ref().map_or(0, |summary| summary.len()));
+    let conversation = serialize_messages_bounded(evicted, conversation_budget);
+    let turn_prefix =
+        split_prefix.map(|messages| serialize_messages_bounded(messages, input_max_bytes));
     let file_ops = memory::extract_file_ops(evicted, prev_state);
     let completed_requests = memory::extract_user_requests(evicted);
     let env_discoveries = memory::extract_env_discoveries(evicted, prev_state);
@@ -28,6 +40,7 @@ pub fn prepare_input(
         turn_prefix,
         previous_summary,
         custom_instructions: None,
+        request_max_bytes: input_max_bytes,
         file_ops,
         evicted_count: evicted.len(),
         completed_requests,
@@ -36,16 +49,47 @@ pub fn prepare_input(
     }
 }
 
+/// Serialize messages while preserving the initial goal and favoring recent
+/// progress within a strict byte budget. The output is plain summarizer input,
+/// so omitting whole middle messages cannot break provider tool-call pairing.
+pub fn serialize_messages_bounded(messages: &[AgentMessage], max_bytes: usize) -> String {
+    let parts = serialize_message_parts(messages);
+    let full = parts.join("\n\n");
+    if full.len() <= max_bytes {
+        return full;
+    }
+    if parts.len() <= 1 || max_bytes <= SUMMARIZER_OMISSION_MARKER.len() + 4 {
+        return truncate_summary(&full, max_bytes);
+    }
+
+    let content_budget = max_bytes - SUMMARIZER_OMISSION_MARKER.len() - 4;
+    let head_budget = content_budget / 3;
+    let tail_budget = content_budget - head_budget;
+    let (head, consumed) = take_prefix(&parts, head_budget);
+    let tail = take_suffix(&parts[consumed..], tail_budget);
+
+    [head.as_str(), SUMMARIZER_OMISSION_MARKER, tail.as_str()]
+        .into_iter()
+        .filter(|section| !section.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 /// Serialize messages to a text representation for the LLM.
 pub fn serialize_messages(messages: &[AgentMessage]) -> String {
+    serialize_message_parts(messages).join("\n\n")
+}
+
+fn serialize_message_parts(messages: &[AgentMessage]) -> Vec<String> {
     let mut parts: Vec<String> = Vec::new();
 
     for msg in messages {
+        let mut message_parts = Vec::new();
         match msg {
             AgentMessage::Llm(Message::User { content, .. }) => {
                 let text = extract_text_content(content);
                 if !text.is_empty() {
-                    parts.push(format!("[User]: {text}"));
+                    message_parts.push(format!("[User]: {text}"));
                 }
             }
             AgentMessage::Llm(Message::Assistant { content, .. }) => {
@@ -68,30 +112,71 @@ pub fn serialize_messages(messages: &[AgentMessage]) -> String {
                 }
 
                 if !thinking_parts.is_empty() {
-                    parts.push(format!(
+                    message_parts.push(format!(
                         "[Assistant thinking]: {}",
                         thinking_parts.join("\n")
                     ));
                 }
                 if !text_parts.is_empty() {
-                    parts.push(format!("[Assistant]: {}", text_parts.join("\n")));
+                    message_parts.push(format!("[Assistant]: {}", text_parts.join("\n")));
                 }
                 if !tool_calls.is_empty() {
-                    parts.push(format!("[Assistant tool calls]: {}", tool_calls.join("; ")));
+                    message_parts
+                        .push(format!("[Assistant tool calls]: {}", tool_calls.join("; ")));
                 }
             }
             AgentMessage::Llm(Message::ToolResult { content, .. }) => {
                 let text = extract_text_content(content);
                 if !text.is_empty() {
                     let truncated = truncate_for_summary(&text, TOOL_RESULT_MAX_CHARS);
-                    parts.push(format!("[Tool result]: {truncated}"));
+                    message_parts.push(format!("[Tool result]: {truncated}"));
                 }
             }
             _ => {}
         }
+        if !message_parts.is_empty() {
+            parts.push(message_parts.join("\n\n"));
+        }
     }
 
-    parts.join("\n\n")
+    parts
+}
+
+fn take_prefix(parts: &[String], budget: usize) -> (String, usize) {
+    let mut selected = Vec::new();
+    let mut used = 0;
+    for part in parts {
+        let separator = usize::from(!selected.is_empty()) * 2;
+        if used + separator + part.len() > budget {
+            if selected.is_empty() && budget > 0 {
+                selected.push(truncate_summary(part, budget));
+                return (selected.join("\n\n"), 1);
+            }
+            break;
+        }
+        used += separator + part.len();
+        selected.push(part.clone());
+    }
+    let consumed = selected.len();
+    (selected.join("\n\n"), consumed)
+}
+
+fn take_suffix(parts: &[String], budget: usize) -> String {
+    let mut selected = Vec::new();
+    let mut used = 0;
+    for part in parts.iter().rev() {
+        let separator = usize::from(!selected.is_empty()) * 2;
+        if used + separator + part.len() > budget {
+            if selected.is_empty() && budget > 0 {
+                selected.push(truncate_summary(part, budget));
+            }
+            break;
+        }
+        used += separator + part.len();
+        selected.push(part.clone());
+    }
+    selected.reverse();
+    selected.join("\n\n")
 }
 
 fn extract_text_content(content: &[Content]) -> String {

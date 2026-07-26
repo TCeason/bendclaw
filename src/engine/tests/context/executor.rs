@@ -3,7 +3,9 @@
 use evotengine::context::compaction::config::CompactionConfig;
 use evotengine::context::compaction::executor;
 use evotengine::context::compaction::planner;
+use evotengine::context::compaction::types::SplitTurn;
 use evotengine::context::SummarizerMode;
+use evotengine::context::DEFAULT_SUMMARY_MAX_BYTES;
 use evotengine::types::*;
 use tokio_util::sync::CancellationToken;
 
@@ -72,7 +74,7 @@ fn config_small() -> CompactionConfig {
         reserve_tokens: 2_000,
         keep_recent_tokens: 1_000,
         summarizer_mode: SummarizerMode::default(),
-        summary_max_chars: 4000,
+        summary_max_bytes: 4000,
     }
 }
 
@@ -176,9 +178,35 @@ async fn executor_inserts_marker() {
 }
 
 #[tokio::test]
+async fn cancelled_executor_leaves_context_unchanged() {
+    let config = config_small();
+    let messages = vec![
+        user_msg(&big_text(2_000)),
+        assistant_msg(&big_text(2_000)),
+        user_msg("recent"),
+    ];
+    let original = serde_json::to_value(&messages).unwrap_or(serde_json::Value::Null);
+    let plan = evotengine::context::compaction::types::CompactionPlan {
+        evict_zone: 0..2,
+        retained_tail: 2..3,
+        split_turn: None,
+    };
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+
+    let outcome = executor::execute(messages, &plan, &config, None, None, false, cancel).await;
+
+    assert!(outcome.stats.summary.is_none());
+    assert_eq!(
+        serde_json::to_value(&outcome.messages).unwrap_or(serde_json::Value::Null),
+        original
+    );
+}
+
+#[tokio::test]
 async fn executor_bounds_summary_consistently() {
     let mut config = config_small();
-    config.summary_max_chars = 256;
+    config.summary_max_bytes = 256;
     let mut messages = vec![user_msg("pinned")];
     for i in 0..30 {
         messages.push(user_msg(&format!("request {i} {}", "x".repeat(300))));
@@ -205,10 +233,53 @@ async fn executor_bounds_summary_consistently() {
         Some(summary) => summary,
         None => panic!("expected summary"),
     };
-    assert!(summary.len() <= config.summary_max_chars);
+    assert!(summary.len() <= config.summary_max_bytes);
     assert!(summary.contains("compaction summary truncated"));
     assert!(summary.contains("latest critical conclusion must survive"));
     assert_eq!(outcome.state.last_summary.as_deref(), Some(summary));
+    assert!(matches!(
+        outcome.messages.first(),
+        Some(AgentMessage::Llm(Message::User { content, .. }))
+            if matches!(content.first(), Some(Content::Text { text }) if text == summary)
+    ));
+}
+
+#[tokio::test]
+async fn overflow_fallback_does_not_reinsert_split_turn_verbatim() {
+    let config = CompactionConfig::from_context_window(1_000_000);
+    let messages = vec![
+        user_msg(&format!("ORIGINAL_REQUEST\n{}", "x".repeat(200_000))),
+        assistant_msg("LATEST_PREFIX_CONCLUSION"),
+        user_msg("retained suffix"),
+    ];
+    let plan = evotengine::context::compaction::types::CompactionPlan {
+        evict_zone: 0..0,
+        retained_tail: 2..3,
+        split_turn: Some(SplitTurn {
+            turn_start: 0,
+            cut_at: 2,
+        }),
+    };
+
+    let outcome = executor::execute(
+        messages,
+        &plan,
+        &config,
+        None,
+        None,
+        false,
+        CancellationToken::new(),
+    )
+    .await;
+    let summary = match outcome.stats.summary.as_deref() {
+        Some(summary) => summary,
+        None => panic!("expected emergency summary"),
+    };
+
+    assert!(summary.len() <= DEFAULT_SUMMARY_MAX_BYTES);
+    assert!(summary.contains("ORIGINAL_REQUEST"));
+    assert!(summary.contains("LATEST_PREFIX_CONCLUSION"));
+    assert!(summary.contains("compaction summary truncated"));
     assert!(matches!(
         outcome.messages.first(),
         Some(AgentMessage::Llm(Message::User { content, .. }))

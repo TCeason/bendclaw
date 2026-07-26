@@ -104,13 +104,25 @@ impl CompactionController {
                     messages.pop();
                 }
 
-                // Match pi: overflow uses the normal compaction pipeline. The
-                // provider request is retried only after compaction completed;
-                // cancellation, summarizer failure, or no plan leaves the turn
-                // terminal instead of resending the same oversized context.
-                let stats = self
-                    .run_compaction(messages, summarizer_ctx, true, cancel)
+                // Match pi: overflow first uses the normal compaction pipeline.
+                // The provider request is retried only after compaction
+                // completed; cancellation or no plan leaves the turn terminal
+                // instead of resending the same oversized context.
+                let mut stats = self
+                    .run_compaction(messages, summarizer_ctx, true, cancel.clone())
                     .await;
+                if will_retry && stats.is_none() && !cancel.is_cancelled() {
+                    // Recovery must not depend on a second model call: the
+                    // summarize request goes to the same provider that just
+                    // rejected the oversized payload and can fail for the
+                    // same reason (e.g. a relay byte limit). Divergence from
+                    // pi, which gives up here: evot falls back to the
+                    // deterministic emergency summary so one compact-and-retry
+                    // still happens.
+                    stats = self
+                        .run_compaction(messages, None, false, cancel.clone())
+                        .await;
+                }
                 let retry_after_compaction = will_retry && stats.is_some();
                 if retry_after_compaction {
                     self.overflow_recovery_attempted = true;
@@ -126,6 +138,9 @@ impl CompactionController {
                     reason: Some(CompactReason::Overflow),
                     context_tokens: Some(context_tokens),
                     overflow_exhausted: false,
+                    overflow_recovery_failed: will_retry
+                        && !retry_after_compaction
+                        && !cancel.is_cancelled(),
                 }
             }
 
@@ -139,6 +154,7 @@ impl CompactionController {
                     reason: Some(CompactReason::Overflow),
                     context_tokens: Some(context_tokens),
                     overflow_exhausted: true,
+                    overflow_recovery_failed: false,
                 }
             }
 
@@ -152,6 +168,7 @@ impl CompactionController {
                     reason: Some(CompactReason::Threshold),
                     context_tokens: Some(context_tokens),
                     overflow_exhausted: false,
+                    overflow_recovery_failed: false,
                 }
             }
         }
@@ -168,7 +185,7 @@ impl CompactionController {
         summarizer_ctx: Option<&SummarizerContext>,
         cancel: CancellationToken,
     ) -> CompactionResponse {
-        if estimated_tokens > self.config.trigger_threshold() {
+        if self.config.context_window > 0 && estimated_tokens > self.config.trigger_threshold() {
             let stats = self
                 .run_compaction(messages, summarizer_ctx, true, cancel)
                 .await;
@@ -178,6 +195,7 @@ impl CompactionController {
                 reason: Some(CompactReason::Threshold),
                 context_tokens: Some(estimated_tokens),
                 overflow_exhausted: false,
+                overflow_recovery_failed: false,
             };
         }
 
@@ -284,6 +302,10 @@ pub struct CompactionResponse {
     /// Set when overflow recovery was already attempted this turn and the
     /// context still overflows. The loop should surface this to the user.
     pub overflow_exhausted: bool,
+    /// Set when an overflow demanded a compact-and-retry but compaction could
+    /// not run (nothing to evict). The loop should surface this to the user
+    /// instead of failing silently.
+    pub overflow_recovery_failed: bool,
 }
 
 impl CompactionResponse {
@@ -294,6 +316,7 @@ impl CompactionResponse {
             reason: None,
             context_tokens: None,
             overflow_exhausted: false,
+            overflow_recovery_failed: false,
         }
     }
 }

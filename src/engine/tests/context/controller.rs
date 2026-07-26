@@ -22,6 +22,9 @@ use wiremock::Mock;
 use wiremock::MockServer;
 use wiremock::ResponseTemplate;
 
+use super::fixtures::recording_provider::RecordingProvider;
+use super::fixtures::recording_provider::Reply;
+
 fn responses_model(base_url: &str) -> ModelConfig {
     ModelConfig::resolve(evotengine::provider::ResolveModelRequest {
         protocol: ApiProtocol::OpenAiResponses,
@@ -90,7 +93,7 @@ fn config_small() -> CompactionConfig {
         reserve_tokens: 2_000,
         keep_recent_tokens: 1_000,
         summarizer_mode: SummarizerMode::default(),
-        summary_max_chars: 4000,
+        summary_max_bytes: 4000,
     }
 }
 
@@ -273,6 +276,134 @@ async fn controller_retries_on_overflow() {
 }
 
 #[tokio::test]
+async fn overflow_falls_back_to_emergency_when_summarizer_fails() {
+    let mut ctrl = CompactionController::new(config_small());
+    let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];
+    for _ in 0..20 {
+        messages.push(user_msg(&big_text(300)));
+        messages.push(assistant_msg(&big_text(300)));
+    }
+    messages.push(user_msg("recent"));
+    messages.push(assistant_msg("overflow error"));
+    let original_count = messages.len();
+
+    // The summarize request goes to the same provider that just rejected the
+    // oversized payload and fails the same way.
+    let provider = Arc::new(RecordingProvider::new(vec![
+        Reply::error("HTTP 413: request too large"),
+        Reply::error("HTTP 413: request too large"),
+    ]));
+    let captured = provider.captured();
+    let ctx = SummarizerContext {
+        provider,
+        model: "test".into(),
+        api_key: "key".into(),
+        thinking_level: ThinkingLevel::Off,
+        system_prompt: String::new(),
+        tools: vec![],
+        max_tokens: Some(1024),
+        cache_config: CacheConfig::default(),
+        prompt_cache_key: None,
+        model_config: None,
+    };
+
+    let usage = UsageSnapshot {
+        input: 0,
+        cache_read: 0,
+        cache_write: 0,
+        output: 0,
+        total_tokens: 0,
+        model: model_id(),
+        timestamp: evotengine::context::now_ms() + 60_000,
+        stop_reason: StopReason::Error,
+        error_message: Some("prompt is too long: 50000 tokens > 10000 maximum".into()),
+    };
+
+    let response = ctrl
+        .after_response(
+            &mut messages,
+            &usage,
+            &model_id(),
+            Some(&ctx),
+            CancellationToken::new(),
+        )
+        .await;
+
+    assert_eq!(response.action, AfterResponseAction::Retry);
+    assert!(response.stats.is_some());
+    assert!(!response.overflow_recovery_failed);
+    assert!(messages.len() < original_count);
+    assert!(
+        !captured.lock().is_empty(),
+        "the LLM summarizer must be attempted before the emergency fallback"
+    );
+}
+
+#[tokio::test]
+async fn cancelled_summarizer_does_not_fall_back_or_compact() {
+    let mut ctrl = CompactionController::new(config_small());
+    let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];
+    for _ in 0..20 {
+        messages.push(user_msg(&big_text(300)));
+        messages.push(assistant_msg(&big_text(300)));
+    }
+    messages.push(user_msg("recent"));
+    messages.push(assistant_msg("overflow error"));
+
+    let provider = Arc::new(RecordingProvider::new(vec![Reply::Cancel]));
+    let captured = provider.captured();
+    let ctx = SummarizerContext {
+        provider,
+        model: "test".into(),
+        api_key: "key".into(),
+        thinking_level: ThinkingLevel::Off,
+        system_prompt: String::new(),
+        tools: vec![],
+        max_tokens: Some(1024),
+        cache_config: CacheConfig::default(),
+        prompt_cache_key: None,
+        model_config: None,
+    };
+    let usage = UsageSnapshot {
+        input: 0,
+        cache_read: 0,
+        cache_write: 0,
+        output: 0,
+        total_tokens: 0,
+        model: model_id(),
+        timestamp: evotengine::context::now_ms() + 60_000,
+        stop_reason: StopReason::Error,
+        error_message: Some("prompt is too long: 50000 tokens > 10000 maximum".into()),
+    };
+    let cancel = CancellationToken::new();
+
+    let response = ctrl
+        .after_response(
+            &mut messages,
+            &usage,
+            &model_id(),
+            Some(&ctx),
+            cancel.clone(),
+        )
+        .await;
+
+    assert!(cancel.is_cancelled());
+    assert_eq!(response.action, AfterResponseAction::Continue);
+    assert!(response.stats.is_none());
+    assert!(!response.overflow_recovery_failed);
+    assert_eq!(
+        captured.lock().len(),
+        1,
+        "must not issue a fallback request"
+    );
+    assert!(matches!(
+        messages.last(),
+        Some(AgentMessage::Llm(Message::User { content, .. }))
+            if matches!(content.first(), Some(Content::Text { text }) if text == "recent")
+    ));
+}
+
+#[tokio::test]
 async fn controller_does_not_retry_when_overflow_cannot_be_compacted() {
     let mut ctrl = CompactionController::new(config_small());
     let mut messages = vec![user_msg("recent"), assistant_msg("overflow")];
@@ -301,6 +432,10 @@ async fn controller_does_not_retry_when_overflow_cannot_be_compacted() {
     assert_eq!(response.action, AfterResponseAction::Continue);
     assert!(response.stats.is_none());
     assert!(!response.overflow_exhausted);
+    assert!(
+        response.overflow_recovery_failed,
+        "an unrecoverable overflow must be surfaced, not silently dropped"
+    );
 }
 
 #[tokio::test]

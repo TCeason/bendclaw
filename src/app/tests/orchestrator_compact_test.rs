@@ -367,6 +367,77 @@ async fn manual_compaction_uses_shared_pi_style_serialization() -> TestResult {
 }
 
 #[tokio::test]
+async fn manual_llm_compaction_bounds_multi_megabyte_input_and_output() -> TestResult {
+    let session = new_session().await?;
+    let first = format!("FIRST_GOAL\n{}", "a".repeat(1_200_000));
+    let latest = format!("LATEST_PROGRESS\n{}", "z".repeat(1_200_000));
+    session
+        .write_items(vec![user(&first), assistant(&latest), user("live request")])
+        .await?;
+
+    let output_limit = evot_engine::context::DEFAULT_SUMMARY_MAX_BYTES;
+    let oversized_output = format!(
+        "SUMMARY_OUTPUT_HEAD\n{}\nSUMMARY_OUTPUT_TAIL",
+        "s".repeat(output_limit.saturating_mul(2))
+    );
+    let provider = Arc::new(CapturingProvider::new(vec![&oversized_output]));
+    let captured = provider.captured();
+    let item = compact_session(
+        &session,
+        ManualCompactRequest {
+            reason: CompactReason::Manual,
+            custom_instructions: None,
+            summary_override: None,
+            summarizer: Some(summarizer(provider)),
+            settings: settings(),
+            observer: None,
+        },
+        CancellationToken::new(),
+    )
+    .await?
+    .ok_or_else(|| std::io::Error::other("expected bounded compaction"))?;
+
+    let prompt = first_user_prompt(&captured)?;
+    assert!(
+        prompt.len() <= evot_engine::context::SUMMARIZER_INPUT_MAX_BYTES + 4_096,
+        "summarizer prompt was not bounded: {} bytes",
+        prompt.len()
+    );
+    assert!(prompt.contains("FIRST_GOAL"));
+    assert!(prompt.contains("LATEST_PROGRESS"));
+    assert!(prompt.contains("middle messages omitted"));
+
+    let TranscriptItem::Compact {
+        summary,
+        messages,
+        engine_messages,
+        state,
+        ..
+    } = item
+    else {
+        return Err(std::io::Error::other("expected compact item").into());
+    };
+    assert!(summary.len() <= output_limit);
+    assert!(summary.starts_with("SUMMARY_OUTPUT_HEAD"));
+    assert!(summary.ends_with("SUMMARY_OUTPUT_TAIL"));
+    assert_eq!(state.last_summary.as_deref(), Some(summary.as_str()));
+    assert!(state
+        .context_summary_message
+        .as_ref()
+        .is_some_and(|text| text.len() <= output_limit));
+    assert!(matches!(
+        messages.get(1),
+        Some(TranscriptItem::User { text, .. }) if text == "live request"
+    ));
+    assert!(matches!(
+        engine_messages.get(1),
+        Some(AgentMessage::Llm(Message::User { content, .. }))
+            if matches!(content.as_slice(), [Content::Text { text }] if text == "live request")
+    ));
+    Ok(())
+}
+
+#[tokio::test]
 async fn llm_compaction_injects_custom_instructions() -> TestResult {
     let session = new_session().await?;
     session

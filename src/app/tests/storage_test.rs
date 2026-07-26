@@ -96,55 +96,47 @@ async fn list_sessions_uses_transcript_activity_for_running_sessions() -> TestRe
 }
 
 #[tokio::test]
-async fn list_entries_reads_legacy_object_lines_and_skips_corruption() -> TestResult {
-    // Historical transcripts stored one entry per line. Current transcripts
-    // store an atomic array batch per line; both shapes must remain readable.
+async fn unsupported_transcript_format_returns_clear_error() -> TestResult {
     let root = TempDir::new()?;
-    let session_dir = root.path().join("sessions").join("sess-legacy");
+    let session_id = "sess-unsupported";
+    let session_dir = root.path().join("sessions").join(session_id);
     std::fs::create_dir_all(&session_dir)?;
-
-    let assistant = r#"{"session_id":"sess-legacy","run_id":null,"seq":1,"turn":0,"item":{"type":"assistant","text":"hi","thinking":"plan","tool_calls":[],"stop_reason":"stop","usage":{"input":0,"output":0,"cache_read":0,"cache_write":0},"model":"model","provider":"provider","timestamp":1},"created_at":"2026-04-23T07:10:17Z"}"#;
-    let corrupt = r#"[{ this batch was interrupted "#;
-    let user_line = r#"{"session_id":"sess-legacy","run_id":null,"seq":2,"turn":0,"item":{"type":"user","text":"hello"},"created_at":"2026-04-23T07:10:18Z"}"#;
-    std::fs::write(
-        session_dir.join("transcript.jsonl"),
-        format!("{assistant}\n{corrupt}\n{user_line}\n"),
-    )?;
+    let transcript_path = session_dir.join("transcript.jsonl");
+    let original = br#"{"session_id":"sess-unsupported","seq":1}"#;
+    std::fs::write(&transcript_path, original)?;
 
     let storage = open_storage(&StorageConfig::fs(root.path().to_path_buf()))?;
-    let loaded = storage
+    let error = storage
         .list_entries(ListTranscriptEntries {
-            session_id: "sess-legacy".into(),
+            session_id: session_id.into(),
             run_id: None,
             after_seq: None,
             limit: None,
         })
-        .await?;
-
-    assert_eq!(loaded.len(), 2);
-    assert!(matches!(
-        &loaded[0].item,
-        TranscriptItem::Assistant { content, .. }
-            if matches!(
-                &content[..],
-                [AssistantBlock::Thinking { text: thinking, .. }, AssistantBlock::Text { text }]
-                    if thinking == "plan" && text == "hi"
-            )
-    ));
-    assert!(matches!(&loaded[1].item, TranscriptItem::User { text, .. } if text == "hello"));
+        .await
+        .expect_err("invalid legacy data must be rejected");
+    assert!(error.to_string().contains("unsupported transcript"));
+    assert_eq!(std::fs::read(&transcript_path)?, original);
     Ok(())
 }
 
 #[tokio::test]
-async fn append_continues_after_legacy_object_entries() -> TestResult {
+async fn legacy_object_lines_are_migrated_before_append() -> TestResult {
     let root = TempDir::new()?;
     let session_id = "sess-legacy-append";
     let session_dir = root.path().join("sessions").join(session_id);
     std::fs::create_dir_all(&session_dir)?;
-    let legacy = format!(
-        "{{\"session_id\":\"{session_id}\",\"run_id\":null,\"seq\":41,\"turn\":0,\"item\":{{\"type\":\"user\",\"text\":\"old\"}},\"created_at\":\"2026-04-23T07:10:18Z\"}}\n"
-    );
-    std::fs::write(session_dir.join("transcript.jsonl"), legacy)?;
+    let transcript_path = session_dir.join("transcript.jsonl");
+    let legacy = serde_json::json!({
+        "session_id": session_id,
+        "run_id": null,
+        "seq": 41,
+        "turn": 0,
+        "item": { "type": "user", "text": "old" },
+        "created_at": "2026-04-23T07:10:18Z"
+    })
+    .to_string();
+    std::fs::write(&transcript_path, legacy)?;
 
     let storage = open_storage(&StorageConfig::fs(root.path().to_path_buf()))?;
     let loaded = storage
@@ -159,8 +151,8 @@ async fn append_continues_after_legacy_object_entries() -> TestResult {
     assert_eq!(loaded[0].seq, 1);
     assert!(session_dir.join("transcript.jsonl.v1.bak").exists());
 
-    let accepted = storage
-        .compare_and_append_entries(1, vec![TranscriptEntry::new(
+    storage
+        .append_entry(TranscriptEntry::new(
             session_id.into(),
             None,
             2,
@@ -169,10 +161,8 @@ async fn append_continues_after_legacy_object_entries() -> TestResult {
                 text: "new".into(),
                 content: vec![],
             },
-        )])
+        ))
         .await?;
-    assert!(accepted);
-
     let loaded = storage
         .list_entries(ListTranscriptEntries {
             session_id: session_id.into(),
@@ -189,55 +179,38 @@ async fn append_continues_after_legacy_object_entries() -> TestResult {
 }
 
 #[tokio::test]
-async fn mixed_transcript_is_migrated_and_reset_sequences_are_repaired() -> TestResult {
+async fn load_active_entries_starts_at_latest_control_without_decoding_large_prefix() -> TestResult
+{
     let root = TempDir::new()?;
-    let session_id = "sess-mixed-reset";
+    let session_id = "sess-active-tail";
     let session_dir = root.path().join("sessions").join(session_id);
     std::fs::create_dir_all(&session_dir)?;
-    let legacy = format!(
-        "{{\"session_id\":\"{session_id}\",\"run_id\":null,\"seq\":100,\"turn\":0,\"item\":{{\"type\":\"user\",\"text\":\"old\"}},\"created_at\":\"2026-04-23T07:10:18Z\"}}\n"
-    );
-    let reset_batch = format!(
-        "[{{\"session_id\":\"{session_id}\",\"run_id\":null,\"seq\":1,\"turn\":0,\"item\":{{\"type\":\"user\",\"text\":\"new one\"}},\"created_at\":\"2026-04-23T07:10:19Z\"}},{{\"session_id\":\"{session_id}\",\"run_id\":null,\"seq\":2,\"turn\":0,\"item\":{{\"type\":\"user\",\"text\":\"new two\"}},\"created_at\":\"2026-04-23T07:10:20Z\"}}]\n"
-    );
-    std::fs::write(
-        session_dir.join("transcript.jsonl"),
-        format!("{legacy}{reset_batch}"),
-    )?;
+    let transcript_path = session_dir.join("transcript.jsonl");
+
+    let obsolete = TranscriptEntry::new(session_id.into(), None, 1, 0, TranscriptItem::User {
+        text: "x".repeat(2 * 1024 * 1024),
+        content: vec![],
+    });
+    let control = TranscriptEntry::new(session_id.into(), None, 2, 0, TranscriptItem::Marker {
+        kind: MarkerKind::Clear,
+        messages: vec![],
+    });
+    let tail = TranscriptEntry::new(session_id.into(), None, 3, 0, TranscriptItem::User {
+        text: "active".into(),
+        content: vec![],
+    });
+    let mut bytes = serde_json::to_vec(&vec![obsolete])?;
+    bytes.push(b'\n');
+    bytes.extend(serde_json::to_vec(&vec![control, tail])?);
+    bytes.push(b'\n');
+    std::fs::write(&transcript_path, bytes)?;
 
     let storage = open_storage(&StorageConfig::fs(root.path().to_path_buf()))?;
-    let loaded = storage
-        .list_entries(ListTranscriptEntries {
-            session_id: session_id.into(),
-            run_id: None,
-            after_seq: None,
-            limit: None,
-        })
-        .await?;
+    let active = storage.load_active_entries(session_id).await?;
+
     assert_eq!(
-        loaded.iter().map(|entry| entry.seq).collect::<Vec<_>>(),
-        vec![1, 2, 3]
-    );
-    assert!(session_dir.join("transcript.jsonl.v1.bak").exists());
-    let first_line = std::fs::read_to_string(session_dir.join("transcript.jsonl"))?
-        .lines()
-        .next()
-        .ok_or_else(|| std::io::Error::other("missing migrated batch"))?
-        .to_string();
-    assert!(serde_json::from_str::<serde_json::Value>(&first_line)?.is_array());
-    assert!(
-        storage
-            .compare_and_append_entries(3, vec![TranscriptEntry::new(
-                session_id.into(),
-                None,
-                4,
-                0,
-                TranscriptItem::User {
-                    text: "continued".into(),
-                    content: vec![],
-                },
-            )],)
-            .await?
+        active.iter().map(|entry| entry.seq).collect::<Vec<_>>(),
+        vec![2, 3]
     );
     Ok(())
 }
@@ -268,6 +241,53 @@ async fn compare_and_append_rejects_non_contiguous_first_sequence() -> TestResul
         })
         .await?;
     assert!(entries.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn append_to_large_current_transcript_uses_tail_sequence() -> TestResult {
+    let root = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(root.path().to_path_buf()))?;
+    let session_id = "sess-large-append";
+    storage
+        .save_session(SessionMeta::new(
+            session_id.into(),
+            "/tmp".into(),
+            "model".into(),
+        ))
+        .await?;
+
+    let session_dir = root.path().join("sessions").join(session_id);
+    let transcript_path = session_dir.join("transcript.jsonl");
+    let first = TranscriptEntry::new(session_id.into(), None, 1, 0, TranscriptItem::User {
+        text: "x".repeat(2 * 1024 * 1024),
+        content: vec![],
+    });
+    let mut bytes = serde_json::to_vec(&vec![first])?;
+    bytes.push(b'\n');
+    std::fs::write(&transcript_path, bytes)?;
+
+    let accepted = storage
+        .compare_and_append_entries(1, vec![TranscriptEntry::new(
+            session_id.into(),
+            None,
+            2,
+            0,
+            TranscriptItem::User {
+                text: "tail".into(),
+                content: vec![],
+            },
+        )])
+        .await?;
+
+    assert!(accepted);
+    let tail = std::fs::read_to_string(&transcript_path)?
+        .lines()
+        .next_back()
+        .ok_or_else(|| std::io::Error::other("missing appended batch"))?
+        .to_string();
+    let batch: Vec<TranscriptEntry> = serde_json::from_str(&tail)?;
+    assert_eq!(batch.last().map(|entry| entry.seq), Some(2));
     Ok(())
 }
 

@@ -226,6 +226,19 @@ pub async fn compact(
     // even when the reasoning config would otherwise omit it.
     body["include"] = serde_json::json!(["reasoning.encrypted_content"]);
 
+    // Provider-native compaction is still a standalone HTTP request. Do not
+    // discover a relay body limit by sending the same multi-megabyte history
+    // that triggered compaction; hand control back to the bounded local path.
+    let body_bytes = serde_json::to_vec(&body)
+        .map_err(|error| RemoteError::Failed(format!("failed to size request body: {error}")))?
+        .len();
+    if body_bytes > super::config::SUMMARIZER_INPUT_MAX_BYTES {
+        return Err(RemoteError::Failed(format!(
+            "remote compaction request is {body_bytes} bytes, exceeding the {}-byte safety limit",
+            super::config::SUMMARIZER_INPUT_MAX_BYTES
+        )));
+    }
+
     let url = format!(
         "{}/responses",
         model_config.base_url().trim_end_matches('/')

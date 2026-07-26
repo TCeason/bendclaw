@@ -108,33 +108,11 @@ impl FsStorage {
                 .open(lock_path)?;
             lock_file.lock_exclusive()?;
 
-            let content = match std::fs::read(&path) {
-                Ok(content) => content,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-                Err(error) => return Err(EvotError::Io(error)),
-            };
-            let valid_len = if content.is_empty() || content.last() == Some(&b'\n') {
-                content.len()
-            } else {
-                content
-                    .iter()
-                    .rposition(|byte| *byte == b'\n')
-                    .map(|index| index.saturating_add(1))
-                    .unwrap_or(0)
-            };
-            if valid_len != content.len() {
-                let file = std::fs::OpenOptions::new().write(true).open(&path)?;
-                file.set_len(valid_len as u64)?;
-            }
-
-            let content = super::migrate::migrate_if_needed(&path, content[..valid_len].to_vec())?;
+            ensure_current_transcript_format(&path)?;
+            truncate_incomplete_tail(&path)?;
+            let persisted_seq = read_current_tail_seq(&path)?;
 
             if let Some(expected) = expected_seq {
-                let persisted_seq = parse_current_transcript(&content)?
-                    .iter()
-                    .map(|entry| entry.seq)
-                    .max()
-                    .unwrap_or(0);
                 let first_seq = entries.first().map(|entry| entry.seq).unwrap_or(0);
                 if persisted_seq != expected || first_seq != expected.saturating_add(1) {
                     FileExt::unlock(&lock_file)?;
@@ -169,18 +147,260 @@ impl FsStorage {
                 .write(true)
                 .open(parent.join("transcript.lock"))?;
             FileExt::lock_exclusive(&lock_file)?;
+            ensure_current_transcript_format(&path)?;
+            truncate_incomplete_tail(&path)?;
             let content = match std::fs::read(&path) {
                 Ok(content) => content,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
                 Err(error) => return Err(EvotError::Io(error)),
             };
-            let content = super::migrate::migrate_if_needed(&path, content)?;
             let entries = parse_current_transcript(&content)?;
             FileExt::unlock(&lock_file)?;
             Ok(entries)
         })
         .await
         .map_err(|error| EvotError::Store(format!("transcript reader task failed: {error}")))?
+    }
+
+    async fn read_active_transcript(&self, path: PathBuf) -> Result<Vec<TranscriptEntry>> {
+        tokio::task::spawn_blocking(move || -> Result<Vec<TranscriptEntry>> {
+            let Some(parent) = path.parent() else {
+                return Err(EvotError::Store(
+                    "transcript path has no parent directory".to_string(),
+                ));
+            };
+            std::fs::create_dir_all(parent)?;
+            let lock_file = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(parent.join("transcript.lock"))?;
+            FileExt::lock_exclusive(&lock_file)?;
+
+            ensure_current_transcript_format(&path)?;
+            truncate_incomplete_tail(&path)?;
+            let entries = read_current_active_tail(&path)?;
+
+            FileExt::unlock(&lock_file)?;
+            Ok(entries)
+        })
+        .await
+        .map_err(|error| {
+            EvotError::Store(format!("active transcript reader task failed: {error}"))
+        })?
+    }
+}
+
+const ACTIVE_TAIL_INITIAL_BYTES: u64 = 64 * 1024;
+
+fn unsupported_transcript(error: impl std::fmt::Display) -> EvotError {
+    EvotError::Store(format!(
+        "unsupported transcript format (expected JSON array batches): {error}"
+    ))
+}
+
+fn ensure_current_transcript_format(path: &Path) -> Result<()> {
+    use std::io::Read;
+
+    let mut file = match std::fs::OpenOptions::new().read(true).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(EvotError::Io(error)),
+    };
+    let mut buffer = [0_u8; 4096];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(());
+        }
+        if let Some(first) = buffer[..read]
+            .iter()
+            .copied()
+            .find(|byte| !byte.is_ascii_whitespace())
+        {
+            if first == b'[' {
+                return Ok(());
+            }
+            drop(file);
+            let content = std::fs::read(path)?;
+            super::migrate::migrate_if_needed(path, content)?;
+            return Ok(());
+        }
+    }
+}
+
+/// Remove a final partial batch left by an interrupted append. Current writers
+/// always terminate complete batches with a newline, so non-newline data after
+/// the last newline is unambiguously incomplete.
+fn truncate_incomplete_tail(path: &Path) -> Result<()> {
+    use std::io::Read;
+    use std::io::Seek;
+    use std::io::SeekFrom;
+
+    let mut file = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(EvotError::Io(error)),
+    };
+    let file_len = file.metadata()?.len();
+    if file_len == 0 {
+        return Ok(());
+    }
+    file.seek(SeekFrom::End(-1))?;
+    let mut last = [0_u8; 1];
+    file.read_exact(&mut last)?;
+    if last[0] == b'\n' {
+        return Ok(());
+    }
+
+    let mut end = file_len;
+    let mut buffer = vec![0_u8; ACTIVE_TAIL_INITIAL_BYTES as usize];
+    loop {
+        let start = end.saturating_sub(buffer.len() as u64);
+        let len = usize::try_from(end - start).map_err(|_| {
+            EvotError::Store("transcript tail is too large for this platform".to_string())
+        })?;
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut buffer[..len])?;
+        if let Some(index) = buffer[..len].iter().rposition(|byte| *byte == b'\n') {
+            file.set_len(start + index as u64 + 1)?;
+            return Ok(());
+        }
+        if start == 0 {
+            file.set_len(0)?;
+            return Ok(());
+        }
+        end = start;
+    }
+}
+
+/// Read the sequence number from the final complete batch only.
+fn read_current_tail_seq(path: &Path) -> Result<u64> {
+    use std::io::Read;
+    use std::io::Seek;
+    use std::io::SeekFrom;
+
+    let mut file = match std::fs::OpenOptions::new().read(true).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(EvotError::Io(error)),
+    };
+    let file_len = file.metadata()?.len();
+    if file_len == 0 {
+        return Ok(0);
+    }
+
+    let mut window = ACTIVE_TAIL_INITIAL_BYTES.min(file_len);
+    loop {
+        let start = file_len - window;
+        let len = usize::try_from(window).map_err(|_| {
+            EvotError::Store("transcript tail is too large for this platform".to_string())
+        })?;
+        let mut content = vec![0_u8; len];
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut content)?;
+        let end = content
+            .iter()
+            .rposition(|byte| !byte.is_ascii_whitespace())
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        if end == 0 {
+            if start == 0 {
+                return Ok(0);
+            }
+        } else {
+            let line_start = content[..end]
+                .iter()
+                .rposition(|byte| *byte == b'\n')
+                .map(|index| index + 1);
+            if let Some(line_start) = line_start.or((start == 0).then_some(0)) {
+                let batch: Vec<TranscriptEntry> = serde_json::from_slice(&content[line_start..end])
+                    .map_err(unsupported_transcript)?;
+                validate_stored_batch(&batch)?;
+                return Ok(batch.last().map(|entry| entry.seq).unwrap_or(0));
+            }
+        }
+        if start == 0 {
+            return Ok(0);
+        }
+        window = window.saturating_mul(2).min(file_len);
+    }
+}
+
+/// Read backwards in geometrically growing windows until the latest control
+/// point is found. A compact snapshot makes every earlier byte irrelevant to
+/// session resume, so a large append-only transcript normally needs only its
+/// final few lines decoded.
+fn read_current_active_tail(path: &Path) -> Result<Vec<TranscriptEntry>> {
+    use std::io::Read;
+    use std::io::Seek;
+    use std::io::SeekFrom;
+
+    let mut file = match std::fs::OpenOptions::new().read(true).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(EvotError::Io(error)),
+    };
+    let file_len = file.metadata()?.len();
+    if file_len == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut window = ACTIVE_TAIL_INITIAL_BYTES.min(file_len);
+    loop {
+        let offset = file_len.saturating_sub(window);
+        // Include the preceding byte so an offset exactly at a line boundary
+        // does not cause that complete line to be discarded as partial.
+        let read_start = offset.saturating_sub(1);
+        let read_len = usize::try_from(file_len.saturating_sub(read_start)).map_err(|_| {
+            EvotError::Store("transcript tail is too large for this platform".to_string())
+        })?;
+        let mut content = vec![0_u8; read_len];
+        file.seek(SeekFrom::Start(read_start))?;
+        file.read_exact(&mut content)?;
+
+        let complete_start = if read_start == 0 {
+            0
+        } else if content.first() == Some(&b'\n') {
+            1
+        } else {
+            content
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map(|index| index + 1)
+                .unwrap_or(content.len())
+        };
+
+        let mut entries = Vec::new();
+        for line in content[complete_start..].split(|byte| *byte == b'\n') {
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            let batch: Vec<TranscriptEntry> =
+                serde_json::from_slice(line).map_err(unsupported_transcript)?;
+            validate_stored_batch(&batch)?;
+            entries.extend(batch);
+        }
+        validate_stored_sequence(&entries)?;
+
+        if let Some(control_index) = entries.iter().rposition(|entry| {
+            matches!(
+                entry.item,
+                crate::types::TranscriptItem::Compact { .. }
+                    | crate::types::TranscriptItem::Marker { .. }
+            )
+        }) {
+            return Ok(entries.split_off(control_index));
+        }
+        if offset == 0 {
+            return Ok(entries);
+        }
+        window = window.saturating_mul(2).min(file_len);
     }
 }
 
@@ -190,18 +410,33 @@ fn parse_current_transcript(content: &[u8]) -> Result<Vec<TranscriptEntry>> {
         if line.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) else {
-            continue;
-        };
-        let serde_json::Value::Array(_) = value else {
-            return Err(EvotError::Store(
-                "legacy transcript was not migrated".to_string(),
-            ));
-        };
-        let batch: Vec<TranscriptEntry> = serde_json::from_value(value)?;
+        let batch: Vec<TranscriptEntry> =
+            serde_json::from_slice(line).map_err(unsupported_transcript)?;
+        validate_stored_batch(&batch)?;
         entries.extend(batch);
     }
+    validate_stored_sequence(&entries)?;
     Ok(entries)
+}
+
+fn validate_stored_batch(entries: &[TranscriptEntry]) -> Result<()> {
+    if entries.is_empty() {
+        return Err(unsupported_transcript("empty transcript batch"));
+    }
+    let session_id = &entries[0].session_id;
+    validate_transcript_batch(entries, session_id)
+}
+
+fn validate_stored_sequence(entries: &[TranscriptEntry]) -> Result<()> {
+    if entries
+        .windows(2)
+        .any(|pair| pair[1].seq != pair[0].seq.saturating_add(1))
+    {
+        return Err(unsupported_transcript(
+            "transcript sequence numbers are not contiguous",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_transcript_batch(entries: &[TranscriptEntry], session_id: &str) -> Result<()> {
@@ -347,6 +582,11 @@ impl Storage for FsStorage {
         }
 
         Ok(entries)
+    }
+
+    async fn load_active_entries(&self, session_id: &str) -> Result<Vec<TranscriptEntry>> {
+        self.read_active_transcript(self.transcript_path(session_id)?)
+            .await
     }
 
     async fn load_variables(&self) -> Result<Vec<VariableRecord>> {

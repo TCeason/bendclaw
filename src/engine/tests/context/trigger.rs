@@ -34,6 +34,44 @@ fn make_usage(input: usize, output: usize, stop: StopReason) -> UsageSnapshot {
 }
 
 #[test]
+fn unknown_window_only_recovers_explicit_overflow() {
+    let mut config = default_config();
+    config.context_window = 0;
+
+    // A successful response must not read as silent overflow or threshold
+    // when the window is unknown; pi gates both behind `contextWindow &&`.
+    let stop = TriggerInput {
+        usage: Some(make_usage(500_000, 1_000, StopReason::Stop)),
+        current_model: model_id(),
+        last_compaction_ts: None,
+        overflow_recovery_attempted: false,
+    };
+    assert_eq!(evaluate(&stop, &config), TriggerDecision::Skip);
+
+    let length = TriggerInput {
+        usage: Some(make_usage(500_000, 0, StopReason::Length)),
+        current_model: model_id(),
+        last_compaction_ts: None,
+        overflow_recovery_attempted: false,
+    };
+    assert_eq!(evaluate(&length, &config), TriggerDecision::Skip);
+
+    // Explicit overflow errors carry their own signal and still recover.
+    let mut overflow = make_usage(0, 0, StopReason::Error);
+    overflow.error_message = Some("prompt is too long".into());
+    let error = TriggerInput {
+        usage: Some(overflow),
+        current_model: model_id(),
+        last_compaction_ts: None,
+        overflow_recovery_attempted: false,
+    };
+    assert_eq!(evaluate(&error, &config), TriggerDecision::Overflow {
+        context_tokens: 0,
+        will_retry: true,
+    });
+}
+
+#[test]
 fn native_total_takes_precedence() {
     let config = default_config();
     let mut usage = make_usage(1_000, 100, StopReason::Stop);
@@ -77,24 +115,23 @@ fn aborted_usage_can_trigger_before_prompt_threshold() {
 }
 
 #[test]
-fn model_mismatch_only_skips_overflow_detection() {
+fn model_mismatch_skips_all_automatic_compaction_signals() {
     let config = default_config();
     let current_model = ModelId {
         provider: "openai".into(),
         model: "gpt-4".into(),
     };
 
-    // pi still uses a successful previous response's real usage for threshold
-    // compaction after a model switch.
+    // A previous model being near its own boundary says nothing about the newly
+    // selected model's boundary. The first request goes to the selected model
+    // unchanged, matching Droid's response-driven policy.
     let successful = TriggerInput {
         usage: Some(make_usage(120_000, 1_000, StopReason::Stop)),
         current_model: current_model.clone(),
         last_compaction_ts: None,
         overflow_recovery_attempted: false,
     };
-    assert_eq!(evaluate(&successful, &config), TriggerDecision::Threshold {
-        context_tokens: 121_000
-    });
+    assert_eq!(evaluate(&successful, &config), TriggerDecision::Skip);
 
     // An overflow from the old model must not compact for the new model.
     let mut overflow = make_usage(0, 0, StopReason::Error);

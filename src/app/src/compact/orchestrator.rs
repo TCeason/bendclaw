@@ -282,7 +282,8 @@ pub async fn compact_session_with_status(
         summary
     } else if remote_result.is_some() {
         // Remote state is authoritative for compatible future turns. Keep a
-        // deterministic readable summary for exports and model switching.
+        // deterministic readable summary for exports and user-initiated model
+        // changes.
         build_summary(
             &compact_entries,
             &plan,
@@ -339,6 +340,8 @@ pub async fn compact_session_with_status(
             request.custom_instructions.as_deref(),
         )
     };
+    let summary =
+        evot_engine::truncate_summary(&summary, evot_engine::context::DEFAULT_SUMMARY_MAX_BYTES);
     let summary_item = compact_summary_item(&summary);
     let remote_blob_bytes = remote_result
         .as_ref()
@@ -403,7 +406,7 @@ pub async fn compact_session_with_status(
         new_engine_context.first().and_then(exact_user_text)
     };
 
-    let item = TranscriptItem::Compact {
+    let mut item = TranscriptItem::Compact {
         id: crate::types::new_id(),
         created_at: state.timestamp,
         reason: request.reason,
@@ -417,6 +420,7 @@ pub async fn compact_session_with_status(
         state: Box::new(state),
         details,
     };
+    crate::compact::context_view::normalize_compact_item(&mut item, &mut new_context);
 
     if cancel.is_cancelled() {
         return Ok(CompactSessionOutcome {
@@ -487,22 +491,34 @@ async fn summarize_with_llm(
     summarizer: &CompactSummarizer,
     cancel: CancellationToken,
 ) -> Option<String> {
-    let conversation = serialize_entries(entries, plan.summarize.clone());
+    let evicted = entries[plan.summarize.clone()]
+        .iter()
+        .map(|entry| entry.message.clone())
+        .collect::<Vec<_>>();
+    let turn_prefix = plan.turn_prefix.as_ref().map(|range| {
+        entries[range.clone()]
+            .iter()
+            .map(|entry| entry.message.clone())
+            .collect::<Vec<_>>()
+    });
+    let previous_state = previous_summary.map(|summary| evot_engine::CompactionState {
+        last_summary: Some(summary.to_string()),
+        ..evot_engine::CompactionState::default()
+    });
+    let mut input = evot_engine::context::compaction::summarizer::serialize::prepare_input(
+        &evicted,
+        turn_prefix.as_deref(),
+        previous_state.as_ref(),
+        &manual_summarizer_config(summarizer),
+    );
+    input.custom_instructions = custom_instructions.map(|instructions| {
+        evot_engine::truncate_summary(
+            instructions,
+            evot_engine::context::DEFAULT_SUMMARY_MAX_BYTES,
+        )
+    });
+    input.file_ops = plan.file_ops.clone();
 
-    let input = evot_engine::SummarizerInput {
-        conversation,
-        turn_prefix: plan
-            .turn_prefix
-            .as_ref()
-            .map(|range| serialize_entries(entries, range.clone())),
-        previous_summary: previous_summary.map(str::to_string),
-        custom_instructions: custom_instructions.map(str::to_string),
-        file_ops: plan.file_ops.clone(),
-        evicted_count: plan.summarize.len(),
-        completed_requests: Vec::new(),
-        env_discoveries: Vec::new(),
-        last_conclusion: None,
-    };
     let ctx = summarizer_context(summarizer);
     let mode = evot_engine::SummarizerMode::Llm {
         reserve_tokens: summarizer.reserve_tokens,
@@ -532,15 +548,19 @@ async fn summarize_with_llm(
     }
 }
 
-fn serialize_entries(
-    entries: &[evot_engine::CompactEntry],
-    range: std::ops::Range<usize>,
-) -> String {
-    let messages = entries[range]
-        .iter()
-        .map(|entry| entry.message.clone())
-        .collect::<Vec<_>>();
-    evot_engine::context::compaction::summarizer::serialize::serialize_messages(&messages)
+fn manual_summarizer_config(
+    summarizer: &CompactSummarizer,
+) -> evot_engine::context::CompactionConfig {
+    // Unknown model windows still receive the absolute transport ceiling. A
+    // known window can only reduce that budget after reserving summary output.
+    let context_window = summarizer
+        .llm
+        .context_window
+        .map(|window| window as usize)
+        .unwrap_or(usize::MAX);
+    let mut config = evot_engine::context::CompactionConfig::from_context_window(context_window);
+    config.reserve_tokens = summarizer.reserve_tokens as usize;
+    config
 }
 
 fn build_summary(

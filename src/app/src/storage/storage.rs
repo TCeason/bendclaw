@@ -31,6 +31,30 @@ pub trait Storage: Send + Sync {
         entries: Vec<TranscriptEntry>,
     ) -> Result<bool>;
     async fn list_entries(&self, params: ListTranscriptEntries) -> Result<Vec<TranscriptEntry>>;
+    /// Load only the persisted branch that can affect the current conversation:
+    /// the latest compact/marker control point and every entry after it. Storage
+    /// backends may override this to avoid decoding superseded history.
+    async fn load_active_entries(&self, session_id: &str) -> Result<Vec<TranscriptEntry>> {
+        let entries = self
+            .list_entries(ListTranscriptEntries {
+                session_id: session_id.to_string(),
+                run_id: None,
+                after_seq: None,
+                limit: None,
+            })
+            .await?;
+        let start = entries
+            .iter()
+            .rposition(|entry| {
+                matches!(
+                    entry.item,
+                    crate::types::TranscriptItem::Compact { .. }
+                        | crate::types::TranscriptItem::Marker { .. }
+                )
+            })
+            .unwrap_or(0);
+        Ok(entries.into_iter().skip(start).collect())
+    }
 
     async fn load_variables(&self) -> Result<Vec<VariableRecord>>;
     async fn save_variables(&self, variables: Vec<VariableRecord>) -> Result<()>;

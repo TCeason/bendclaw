@@ -238,6 +238,19 @@ impl NapiAgent {
         serde_json::to_string(&items).map_err(|e| Error::from_reason(format!("serialize: {e}")))
     }
 
+    /// Load a bounded resume view without superseded history or Engine-only
+    /// compact snapshot fields.
+    #[napi]
+    pub async fn load_resume_transcript(&self, session_id: String) -> Result<String> {
+        let items = self
+            .agent
+            .load_resume_transcript(&session_id)
+            .await
+            .map_err(|e| Error::from_reason(format!("load resume transcript: {e}")))?;
+
+        serde_json::to_string(&items).map_err(|e| Error::from_reason(format!("serialize: {e}")))
+    }
+
     /// Find a single session by ID.
     #[napi]
     pub async fn find_session(&self, session_id: String) -> Result<Option<String>> {
