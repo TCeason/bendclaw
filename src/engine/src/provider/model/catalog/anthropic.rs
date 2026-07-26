@@ -41,8 +41,9 @@ const ADAPTIVE_XHIGH_REASONING: ReasoningProfile = ReasoningProfile {
     default: ThinkingLevel::High,
     anthropic_wire: Some(AnthropicThinkingWire::Adaptive),
 };
+// Fable 5's adaptive thinking is always on (Anthropic models overview);
+// there is no Off tier, unlike Opus/Sonnet 5.
 const FABLE_LEVELS: &[(ThinkingLevel, Option<&str>)] = &[
-    (ThinkingLevel::Off, None),
     (ThinkingLevel::Low, Some("low")),
     (ThinkingLevel::Medium, Some("medium")),
     (ThinkingLevel::High, Some("high")),

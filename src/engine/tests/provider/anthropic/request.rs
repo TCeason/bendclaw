@@ -275,7 +275,9 @@ fn test_off_thinking_is_omitted_for_known_non_reasoning_model() {
 }
 
 #[test]
-fn test_off_thinking_disables_fable_thinking() {
+fn test_off_thinking_clamps_to_low_for_fable() {
+    // Fable 5's adaptive thinking is always on: an Off request clamps to the
+    // lowest supported tier instead of disabling thinking.
     let model_config = ModelConfig::anthropic("claude-fable-5", "Fable 5");
     let config = StreamConfigBuilder::anthropic()
         .model_config(model_config)
@@ -283,8 +285,8 @@ fn test_off_thinking_disables_fable_thinking() {
         .build();
 
     let body = build_request_body(&config, false);
-    assert_eq!(body["thinking"]["type"], "disabled");
-    assert!(body.get("output_config").is_none());
+    assert_eq!(body["thinking"]["type"], "adaptive");
+    assert_eq!(body["output_config"]["effort"], "low");
 }
 
 #[test]

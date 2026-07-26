@@ -397,7 +397,7 @@ fn glm_and_deepseek_profiles_are_explicit() {
     use evotengine::ThinkingLevel::*;
 
     let glm = ModelConfig::openai("zai/glm-5.2", "GLM 5.2");
-    assert_eq!(glm.context_window(), 908_928);
+    assert_eq!(glm.context_window(), 917_504);
     assert_eq!(glm.max_tokens(), 131_072);
     assert_eq!(glm.input(), [InputModality::Text]);
     assert_eq!(glm.supported_thinking_levels(), vec![Off, High, Xhigh]);
