@@ -93,6 +93,13 @@ Hardening fails when it degrades into these:
 
 ## Output
 
+Use the conversation language established before the harden invocation. Treat
+the invocation command and target selector as language-neutral. If no prior
+conversation language is available, use the invocation's natural-language
+prose. An explicit output-language request takes precedence. Never infer the
+output language from the subject being hardened. Localize prose and section
+headings; preserve code, diffs, identifiers, paths, logs, and quoted material.
+
 When you converge, present:
 
 - **Subject** — the plan, strategy, or current git changes being hardened.
