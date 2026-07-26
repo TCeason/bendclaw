@@ -58,6 +58,61 @@ async fn anthropic_sse_text_response() {
 }
 
 #[tokio::test]
+async fn anthropic_request_sends_session_id_header() {
+    // llmproxy groups requests into conversations via x-session-id. The
+    // Anthropic provider must forward StreamConfig.prompt_cache_key (the
+    // session id) as that header — the mock only matches when it is present.
+    use evotengine::provider::StreamProvider;
+    use wiremock::matchers::header;
+    use wiremock::matchers::method;
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::ResponseTemplate;
+
+    let sse = anthropic_sse::body(vec![
+        anthropic_sse::message_start(10, 0),
+        anthropic_sse::text_block_start(0),
+        anthropic_sse::text_delta(0, "ok"),
+        anthropic_sse::block_stop(0),
+        anthropic_sse::message_delta("end_turn", 1),
+        anthropic_sse::message_stop(),
+    ]);
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(header("x-session-id", "session-123"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_raw(sse, "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let model_config = resolved_model_config(
+        evotengine::provider::ApiProtocol::AnthropicMessages,
+        "anthropic",
+        "test-model",
+        &server.uri(),
+        None,
+        Default::default(),
+        Default::default(),
+    );
+    let config = StreamConfigBuilder::anthropic()
+        .model_config(model_config)
+        .prompt_cache_key("session-123")
+        .cache_disabled()
+        .build();
+
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let outcome = AnthropicProvider.stream(config, tx, cancel).await;
+    assert!(
+        outcome.is_ok(),
+        "mock requires x-session-id header; missing header fails the request: {outcome:?}"
+    );
+}
+
+#[tokio::test]
 async fn anthropic_sse_preserves_configured_provider_identity() {
     let sse = anthropic_sse::body(vec![
         anthropic_sse::message_start(100, 0),

@@ -45,6 +45,17 @@ impl StreamProvider for AnthropicProvider {
         let client = crate::provider::error::new_client()?;
         let mut builder = client.post(&url).header("content-type", "application/json");
 
+        // Session identity for observability. Claude CLI carries this inside
+        // body metadata.user_id; we use a transport header instead so the
+        // request body stays identical across providers. Unknown headers are
+        // ignored by Anthropic-compatible endpoints, while proxies (llmproxy)
+        // read x-session-id to group requests into conversations.
+        if let Some(session_id) = config.prompt_cache_key.as_deref() {
+            if !session_id.is_empty() {
+                builder = builder.header("x-session-id", session_id);
+            }
+        }
+
         if is_custom {
             // Custom endpoint — Bearer auth, no Anthropic-specific headers
             builder = builder.header("authorization", format!("Bearer {}", config.api_key));
