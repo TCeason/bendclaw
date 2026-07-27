@@ -167,7 +167,7 @@ describe('log-shot ansi + render', () => {
     expect(html).not.toContain('background:#56b6c2')
   })
 
-  test('buildShotHtml header shows model badge and slim meta with rules and footer', () => {
+  test('buildShotHtml header is a single line: brand left, muted meta right', () => {
     const source = resolveShotSource({
       historyLines: [
         { kind: 'assistant', id: 'a1', rawMarkdown: 'hi' },
@@ -184,21 +184,21 @@ describe('log-shot ansi + render', () => {
       },
     })
     expect(html).toContain('class="shot-header"')
-    expect(html).toContain('class="shot-model">claude-opus-4-8 · high</span>')
+    expect(html).toContain('class="shot-brand">evot</span>')
+    // Model · time collapse into one muted right-side run — no pill.
+    expect(html).toMatch(/class="shot-right">claude-opus-4-8 · high · \d{4}-\d{2}-\d{2} \d{2}:\d{2}</)
+    expect(html).not.toContain('shot-model')
+    expect(html).not.toContain('shot-rule')
     expect(html).not.toContain('@anthropic')
     expect(html).not.toContain('provider')
-    // No workspace path on the share image; time sits on the hero row.
+    // No workspace path on the share image.
     expect(html).not.toContain('~/github/evotai/evot')
     expect(html).not.toContain('session 019f5621')
     expect(html).not.toContain('100 cols')
     expect(html).not.toContain('class="chip"')
-    expect(html).toContain('class="shot-time"')
-    // Clear rules separate chrome from content
-    expect(html).toContain('class="shot-rule"')
-    // Footer explains how to generate
-    expect(html).toContain('class="shot-footer"')
-    expect(html).toContain('/log shot')
-    expect(html).toContain('Generated with')
+    // Footer is just the command — signature and how-to in one word.
+    expect(html).toContain('class="shot-footer">/log shot</footer>')
+    expect(html).not.toContain('Generated with')
     expect(html).toContain('<title>evot shot · claude-opus-4-8 · high ·')
   })
 
@@ -285,7 +285,7 @@ describe('log-shot ansi + render', () => {
       expect(body).toContain('padding: 14px 16px 18px')
       expect(body).toContain('class="shot-footer"')
       expect(body).toContain('/log shot')
-      expect(body).toContain('class="shot-rule"')
+      expect(body).not.toContain('shot-rule')
       expect(result.pngPath).toBeUndefined()
     } finally {
       rmSync(dir, { recursive: true, force: true })

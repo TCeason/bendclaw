@@ -309,9 +309,9 @@ export function buildShotHeroTime(ts?: string): string {
   return formatShotTimestamp(ts)
 }
 
-/** One-line footer: how this image was produced. */
+/** One-line footer: the command that produces the shot (signature + how-to). */
 export function buildShotFooterLine(): string {
-  return 'Generated with evot  ·  type /log shot in a session'
+  return '/log shot'
 }
 
 /** @deprecated use buildShotMetaLine — kept for older tests. */
@@ -359,7 +359,13 @@ export function buildShotHtml(
   })
   // The shot renders the live turn, so "now" is the honest capture time.
   const heroTime = buildShotHeroTime(new Date().toISOString())
-  const canvasCh = Math.max(48, contentCols + 4)
+  // Everything that is not the brand collapses into one muted right-side run.
+  const headerRight = [modelLabel, heroTime, metaLine].filter(Boolean).join(' · ')
+  // The nowrap header must fit inside the canvas: frame padding + dot +
+  // brand + gaps ≈ 14ch on the body's ch grid; the right run renders at
+  // 11px against the body's 12px ch.
+  const headerCh = Math.ceil(stringWidth(headerRight) * (11 / SHOT_FONT_SIZE_PX)) + 14
+  const canvasCh = Math.max(48, contentCols + 4, headerCh)
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -375,9 +381,7 @@ export function buildShotHtml(
     --muted: ${SHOT_MUTED};
     --border: ${SHOT_BORDER};
     --accent: #f0c674;
-    --accent-soft: rgba(240, 198, 116, 0.12);
-    --rule: rgba(240, 198, 116, 0.35);
-    --header-bg: #353644;
+    --hairline: rgba(232, 232, 236, 0.08);
     --cell: 1ch;
   }
   * { box-sizing: border-box; }
@@ -409,58 +413,31 @@ export function buildShotHtml(
     width: ${canvasCh}ch;
     max-width: none;
   }
+  /* Single-line chrome: brand left, muted metadata right. The content is
+     the hero — no gradients, pills, or accent borders competing with it. */
   header.shot-header {
-    padding: 14px 16px 12px;
-    background:
-      linear-gradient(180deg, var(--header-bg) 0%, var(--bg) 100%);
-    border-left: 3px solid var(--accent);
-  }
-  .shot-hero {
     display: flex;
     align-items: baseline;
-    flex-wrap: nowrap;
-    gap: 10px 14px;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .shot-dot {
+    color: var(--accent);
+    font-size: 11px;
   }
   .shot-brand {
-    color: var(--accent);
-    font-weight: 700;
-    font-size: 12px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-  .shot-model {
     color: var(--fg);
     font-weight: 600;
-    font-size: 13px;
-    background: var(--accent-soft);
-    border: 1px solid rgba(240, 198, 116, 0.28);
-    border-radius: 999px;
-    padding: 2px 10px;
-    white-space: nowrap;
+    font-size: 12px;
+    letter-spacing: 0.02em;
   }
-  .shot-time {
+  .shot-right {
+    margin-left: auto;
+    padding-left: 14px;
     color: var(--muted);
     font-size: 11px;
     white-space: nowrap;
-  }
-  .shot-meta {
-    margin-top: 8px;
-    color: var(--muted);
-    font-size: 11px;
-  }
-  /* Hairline rule — single soft edge, inset to the content padding. */
-  .shot-rule {
-    height: 1px;
-    border: 0;
-    margin: 0 16px;
-    background: linear-gradient(
-      90deg,
-      transparent 0%,
-      rgba(255, 255, 255, 0.04) 6%,
-      rgba(232, 232, 236, 0.14) 50%,
-      rgba(255, 255, 255, 0.04) 94%,
-      transparent 100%
-    );
   }
   main {
     padding: 14px 16px 18px;
@@ -487,36 +464,26 @@ export function buildShotHtml(
     white-space: pre;
   }
   footer.shot-footer {
-    padding: 10px 16px 14px;
-    color: var(--muted);
-    font-size: 11px;
+    padding: 10px 16px;
+    color: #5d5e68;
+    font-size: 10px;
+    text-align: right;
     letter-spacing: 0.01em;
-  }
-  footer.shot-footer .cmd {
-    color: var(--accent);
-    font-weight: 600;
+    border-top: 1px solid var(--hairline);
   }
 </style>
 </head>
 <body>
 <div class="shot-frame">
 <header class="shot-header">
-  <div class="shot-hero">
-    <span class="shot-brand">evot shot</span>
-    ${modelLabel ? `<span class="shot-model">${escapeHtml(modelLabel)}</span>` : ''}
-    ${heroTime ? `<span class="shot-time">${escapeHtml(heroTime)}</span>` : ''}
-  </div>
-  ${metaLine ? `<div class="shot-meta">${escapeHtml(metaLine)}</div>` : ''}
+  <span class="shot-dot">⏺</span>
+  <span class="shot-brand">evot</span>
+  ${headerRight ? `<span class="shot-right">${escapeHtml(headerRight)}</span>` : ''}
 </header>
-<hr class="shot-rule" />
 <main>
 ${bodyHtml}
 </main>
-<hr class="shot-rule" />
-<footer class="shot-footer">
-  Generated with <span class="cmd">evot</span>
-  · type <span class="cmd">/log shot</span> in a session
-</footer>
+<footer class="shot-footer">${escapeHtml(buildShotFooterLine())}</footer>
 </div>
 </body>
 </html>
