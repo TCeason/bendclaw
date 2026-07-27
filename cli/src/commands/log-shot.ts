@@ -50,6 +50,11 @@ export const SHOT_CHROME_PX = 120
 export const SHOT_ROW_PX = Math.ceil(SHOT_FONT_SIZE_PX * SHOT_LINE_HEIGHT) + 2
 /** Extra CSS px under the last content line in the PNG (tight crop + breathing room). */
 export const SHOT_BOTTOM_PAD_PX = 20
+/** Minimum PNG pixel width — narrow shots get a higher capture scale so chat
+ *  apps that stretch images to their container never upscale (blur) them. */
+export const SHOT_MIN_PNG_WIDTH = 1600
+export const SHOT_MIN_SCALE = 2
+export const SHOT_MAX_SCALE = 4
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 
@@ -291,19 +296,6 @@ export function formatShotTimestamp(isoOrLogTs?: string, now = new Date()): stri
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-/**
- * Optional second header line (only when needed).
- * Time lives on the hero row; cwd/workspace is intentionally omitted from shares.
- */
-export function buildShotMetaLine(args: {
-  header?: ShotHeaderMeta
-  chunkCount: number
-  ts?: string
-}): string {
-  if (args.chunkCount > 1) return `${args.chunkCount} chunks`
-  return ''
-}
-
 /** Timestamp shown on the hero row next to the model. */
 export function buildShotHeroTime(ts?: string): string {
   return formatShotTimestamp(ts)
@@ -312,23 +304,6 @@ export function buildShotHeroTime(ts?: string): string {
 /** One-line footer: the command that produces the shot (signature + how-to). */
 export function buildShotFooterLine(): string {
   return '/log shot'
-}
-
-/** @deprecated use buildShotMetaLine — kept for older tests. */
-export function buildShotMetaChips(args: {
-  header?: ShotHeaderMeta
-  idLabel: string
-  chunkCount: number
-  columns: number
-  rendererVersion?: string
-  ts?: string
-}): string[] {
-  const line = buildShotMetaLine({
-    header: args.header,
-    chunkCount: args.chunkCount,
-    ts: args.ts,
-  })
-  return line ? [escapeHtml(line)] : []
 }
 
 /** @deprecated use formatShotModelLabel — kept for tests that only need model chip text. */
@@ -353,14 +328,10 @@ export function buildShotHtml(
   const idLabel = meta.messageId
   const modelLabel = formatShotModelLabel(opts?.header)
   const titleBits = ['evot shot', modelLabel, idLabel].filter(Boolean)
-  const metaLine = buildShotMetaLine({
-    header: opts?.header,
-    chunkCount: meta.chunkCount,
-  })
   // The shot renders the live turn, so "now" is the honest capture time.
   const heroTime = buildShotHeroTime(new Date().toISOString())
   // Everything that is not the brand collapses into one muted right-side run.
-  const headerRight = [modelLabel, heroTime, metaLine].filter(Boolean).join(' · ')
+  const headerRight = [modelLabel, heroTime].filter(Boolean).join(' · ')
   // The nowrap header must fit inside the canvas: frame padding + dot +
   // brand + gaps ≈ 14ch on the body's ch grid; the right run renders at
   // 11px against the body's 12px ch.
@@ -829,6 +800,42 @@ export function shotWindowSize(
   return { width, height }
 }
 
+/**
+ * Capture density for a shot of `cssWidth` CSS px: at least 2× (retina), and
+ * enough that the PNG is ~SHOT_MIN_PNG_WIDTH px wide. Glyph sharpness is
+ * identical at any scale; total pixel count is what keeps a narrow shot crisp
+ * once a viewer rescales it to its container.
+ */
+export function shotScaleFactor(cssWidth: number): number {
+  if (!Number.isFinite(cssWidth) || cssWidth <= 0) return SHOT_MIN_SCALE
+  const needed = Math.ceil(SHOT_MIN_PNG_WIDTH / cssWidth)
+  return Math.min(SHOT_MAX_SCALE, Math.max(SHOT_MIN_SCALE, needed))
+}
+
+/**
+ * Stamp a PNG with its intended display density (pHYs chunk) so viewers that
+ * honour DPI (Preview, Quick Look) show the shot at its CSS size instead of
+ * a giant 1px=1pt blowup. Chrome's screenshots carry no pHYs chunk.
+ */
+export function withPngDpi(png: Buffer, dpi: number): Buffer {
+  const signature = 8
+  const ihdrEnd = signature + 4 + 4 + 13 + 4 // len + type + data + crc
+  if (png.length < ihdrEnd || png.subarray(signature + 4, signature + 8).toString('latin1') !== 'IHDR') {
+    return png
+  }
+  const ppm = Math.round(dpi / 0.0254) // pixels per metre
+  const body = Buffer.alloc(13) // type(4) + data(9)
+  body.write('pHYs', 0, 'latin1')
+  body.writeUInt32BE(ppm, 4)
+  body.writeUInt32BE(ppm, 8)
+  body.writeUInt8(1, 12) // unit: metre
+  const chunk = Buffer.alloc(4 + 13 + 4)
+  chunk.writeUInt32BE(9, 0)
+  body.copy(chunk, 4)
+  chunk.writeUInt32BE(Number(Bun.hash.crc32(body)) >>> 0, 17)
+  return Buffer.concat([png.subarray(0, ihdrEnd), chunk, png.subarray(ihdrEnd)])
+}
+
 function timestampSlug(): string {
   const d = new Date()
   const p = (n: number, w = 2) => n.toString().padStart(w, '0')
@@ -993,11 +1000,13 @@ async function captureViaCdp(
     const width = Math.max(1, Math.ceil(box?.width ?? cssWidth))
     const height = Math.max(1, Math.ceil(box?.height ?? 200))
 
-    // Device metrics: 1 CSS px = 1 device px for stable clip; scale=2 in capture.
+    // Adaptive density: 1 CSS px = 1 device px for a stable clip, scaled so
+    // narrow shots still carry enough pixels (see shotScaleFactor).
+    const scale = shotScaleFactor(width)
     await send('Emulation.setDeviceMetricsOverride', {
       width,
       height,
-      deviceScaleFactor: 2,
+      deviceScaleFactor: scale,
       mobile: false,
     })
 
@@ -1009,7 +1018,7 @@ async function captureViaCdp(
     }) as { data?: string }
 
     if (!shot.data) return false
-    const buf = Buffer.from(shot.data, 'base64')
+    const buf = withPngDpi(Buffer.from(shot.data, 'base64'), 72 * scale)
     writeFileSync(pngPath, buf)
     return true
   } finally {

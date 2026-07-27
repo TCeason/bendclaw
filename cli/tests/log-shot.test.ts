@@ -13,9 +13,10 @@ import {
   formatShotModelLabel,
   buildShotHeaderSpans,
   buildShotHeroTime,
-  buildShotMetaLine,
   shotWindowSize,
   ansiMaxColumns,
+  shotScaleFactor,
+  withPngDpi,
 } from '../src/commands/log-shot.js'
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
@@ -153,7 +154,7 @@ describe('log-shot ansi + render', () => {
     })
     expect(source).not.toBeNull()
     const html = buildShotHtml(source!)
-    expect(html).toContain('2 chunks')
+    expect(html).not.toContain('2 chunks')
     expect(html).toContain('⏺')
     expect(html).toContain('Hello')
     expect(html).toContain('code')
@@ -231,10 +232,8 @@ describe('log-shot ansi + render', () => {
     expect(source!.paintedLines?.[0]?.text).toBe(painted)
   })
 
-  test('shot header helpers show capture time and only useful turn metadata', () => {
+  test('shot header helpers show capture time only', () => {
     expect(buildShotHeroTime('2026-07-09T14:05:54')).toContain('2026-07-09 14:05')
-    expect(buildShotMetaLine({ chunkCount: 1 })).toBe('')
-    expect(buildShotMetaLine({ chunkCount: 2 })).toBe('2 chunks')
   })
 
   test('table cells keep TUI alignment metrics in HTML', () => {
@@ -306,6 +305,38 @@ describe('log-shot ansi + render', () => {
   test('ansiMaxColumns ignores trailing whitespace', () => {
     expect(ansiMaxColumns('short   \nwide line')).toBe(9)
     expect(ansiMaxColumns('\x1b[31mred\x1b[0m      ')).toBe(3)
+  })
+
+  test('shotScaleFactor keeps narrow shots pixel-dense', () => {
+    expect(shotScaleFactor(550)).toBe(3) // 1650px — no chat-app upscale blur
+    expect(shotScaleFactor(360)).toBe(4)
+    expect(shotScaleFactor(1400)).toBe(2) // wide shots stay plain retina
+    expect(shotScaleFactor(3000)).toBe(2)
+    expect(shotScaleFactor(0)).toBe(2)
+  })
+
+  test('withPngDpi inserts a valid pHYs chunk after IHDR', () => {
+    // Minimal synthetic PNG: signature + IHDR + IEND.
+    const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    const ihdrBody = Buffer.alloc(17)
+    ihdrBody.write('IHDR', 0, 'latin1')
+    const ihdr = Buffer.concat([
+      Buffer.from([0, 0, 0, 13]),
+      ihdrBody,
+      Buffer.from([0, 0, 0, 0]),
+    ])
+    const iend = Buffer.from([0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82])
+    const png = Buffer.concat([sig, ihdr, iend])
+
+    const out = withPngDpi(png, 216) // 72 × 3
+    const at = sig.length + ihdr.length
+    expect(out.readUInt32BE(at)).toBe(9)
+    expect(out.subarray(at + 4, at + 8).toString('latin1')).toBe('pHYs')
+    expect(out.readUInt32BE(at + 8)).toBe(Math.round(216 / 0.0254))
+    expect(out.readUInt8(at + 16)).toBe(1)
+    // Non-PNG input passes through untouched.
+    const junk = Buffer.from('not a png')
+    expect(withPngDpi(junk, 144)).toBe(junk)
   })
 
   test('canvas hugs narrow content instead of the wide wrap budget', () => {
