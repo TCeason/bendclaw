@@ -104,10 +104,13 @@ fn classify_overloaded_json_is_retryable() {
 
 #[test]
 fn classify_no_message_uses_full_json() {
+    // No recognizable error fields: the payload still arrived on an accepted
+    // (2xx) request, so it defaults to a retryable transient error rather
+    // than failing hard on unknown shapes.
     let value = serde_json::json!({"foo": "bar"});
     let err = classify_json_error(&value);
-    assert!(matches!(err, ProviderError::Api(_)));
-    assert!(!evotengine::retry::should_retry(&err));
+    assert!(matches!(err, ProviderError::Transient(_)));
+    assert!(evotengine::retry::should_retry(&err));
 }
 
 #[test]

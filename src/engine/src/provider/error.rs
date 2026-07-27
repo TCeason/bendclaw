@@ -36,6 +36,12 @@ fn display_rate_limited(retry_after_ms: Option<u64>) -> String {
 
 impl ProviderError {
     /// Classify an HTTP error response into the appropriate variant.
+    ///
+    /// The status code is the primary signal: 5xx (and 408) are server-side
+    /// failures that are safe to retry regardless of body wording, while the
+    /// remaining 4xx are client errors that cannot succeed on retry. Message
+    /// text refines the decision only for stable semantics (context overflow,
+    /// quota exhaustion, overload).
     pub fn classify(status: u16, message: &str, retry_after_ms: Option<u64>) -> Self {
         if is_context_overflow(status, message) {
             Self::ContextOverflow {
@@ -49,7 +55,9 @@ impl ProviderError {
             Self::Overloaded(message.to_string())
         } else if status == 401 || status == 403 {
             Self::Auth(message.to_string())
-        } else if status == 400 || status == 404 || status == 405 || status == 422 {
+        } else if status == 408 || (500..600).contains(&status) {
+            Self::Transient(message.to_string())
+        } else if (400..500).contains(&status) {
             Self::Other(message.to_string())
         } else {
             Self::Api(message.to_string())
@@ -75,6 +83,25 @@ impl ProviderError {
 // ---------------------------------------------------------------------------
 
 pub fn classify_sse_error_event(message: &str) -> ProviderError {
+    let value = serde_json::from_str::<serde_json::Value>(message).ok();
+    classify_stream_error(message, value.as_ref())
+}
+
+/// Classify an error surfaced *after* the request was accepted (HTTP 2xx):
+/// an inline SSE error event or an error-shaped JSON body on a stream
+/// endpoint.
+///
+/// The transport already accepted this request, so an error here is almost
+/// always a transient upstream/proxy failure. Only *fatal* conditions are
+/// recognized positively — via structured error types and stable semantics
+/// (context overflow, quota, auth) — and everything else defaults to the
+/// retryable [`ProviderError::Transient`]. A provider changing its transient
+/// error wording therefore degrades to a bounded retry instead of a hard
+/// failure.
+pub(crate) fn classify_stream_error(
+    message: &str,
+    value: Option<&serde_json::Value>,
+) -> ProviderError {
     if is_context_overflow_message(message) {
         return ProviderError::ContextOverflow {
             message: message.to_string(),
@@ -83,14 +110,21 @@ pub fn classify_sse_error_event(message: &str) -> ProviderError {
     if is_overloaded_message(message) {
         return ProviderError::Overloaded(message.to_string());
     }
-
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(message) {
-        if provider_error_type(&value).is_some_and(is_transient_provider_error_type) {
-            return ProviderError::Transient(message.to_string());
-        }
+    if is_quota_exceeded(message) {
+        return ProviderError::Other(message.to_string());
     }
-
-    ProviderError::Api(message.to_string())
+    match value.and_then(provider_error_type) {
+        Some(error_type) if is_auth_error_type(error_type) => {
+            ProviderError::Auth(message.to_string())
+        }
+        Some(error_type) if is_fatal_error_type(error_type) => {
+            ProviderError::Api(message.to_string())
+        }
+        Some("rate_limit_error") => ProviderError::RateLimited {
+            retry_after_ms: None,
+        },
+        _ => ProviderError::Transient(message.to_string()),
+    }
 }
 
 /// Extract the provider's semantic error type from common JSON envelopes.
@@ -102,12 +136,18 @@ pub(crate) fn provider_error_type(value: &serde_json::Value) -> Option<&str> {
         .or_else(|| value.get("type").and_then(serde_json::Value::as_str))
 }
 
-/// Provider-declared transient error types. These are protocol fields, not
-/// human-readable messages, so classification remains stable if wording changes.
-pub(crate) fn is_transient_provider_error_type(error_type: &str) -> bool {
+fn is_auth_error_type(error_type: &str) -> bool {
+    matches!(error_type, "authentication_error" | "permission_error")
+}
+
+/// Provider-declared fatal error types: the request itself is invalid, so
+/// resending the identical payload cannot succeed. These are protocol fields,
+/// not human-readable messages, so classification remains stable if wording
+/// changes.
+fn is_fatal_error_type(error_type: &str) -> bool {
     matches!(
         error_type,
-        "api_error" | "server_error" | "invalid_tool_call"
+        "invalid_request_error" | "not_found_error" | "billing_error" | "insufficient_quota"
     )
 }
 

@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
-use crate::provider::error::classify_sse_error_event;
+use crate::provider::error::classify_stream_error;
 use crate::provider::error::ProviderError;
 use crate::provider::json_repair::try_repair_json;
 use crate::provider::stream_http;
@@ -142,7 +142,7 @@ fn process_event(
             .or_else(|| value.get("message"))
             .and_then(serde_json::Value::as_str)
             .unwrap_or(&sse.data);
-        return Err(classify_sse_error_event(message));
+        return Err(classify_stream_error(message, Some(&value)));
     }
     if event_type == "response.cancelled" {
         return Err(ProviderError::Api("OpenAI response was cancelled".into()));

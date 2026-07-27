@@ -213,6 +213,81 @@ fn structured_invalid_request_error_remains_non_retryable() {
 }
 
 #[test]
+fn stream_error_without_recognized_type_defaults_to_retryable() {
+    // The request was already accepted (HTTP 200 + SSE), so an unrecognized
+    // error payload is transient by default. A provider changing its error
+    // wording degrades to a bounded retry instead of a hard failure.
+    let err = classify_sse_error_event(
+        r#"{"type":"error","error":{"type":"api_error","message":"Upstream request failed."}}"#,
+    );
+    assert!(matches!(err, ProviderError::Transient(_)));
+    assert!(evotengine::retry::should_retry(&err));
+
+    // Plain-text payload without any JSON structure.
+    let err = classify_sse_error_event("Upstream request failed.");
+    assert!(matches!(err, ProviderError::Transient(_)));
+    assert!(evotengine::retry::should_retry(&err));
+
+    // Never-seen-before structured type stays retryable too.
+    let err = classify_sse_error_event(
+        r#"{"type":"error","error":{"type":"brand_new_error_kind","message":"something novel"}}"#,
+    );
+    assert!(evotengine::retry::should_retry(&err));
+}
+
+#[test]
+fn stream_auth_error_is_not_retryable() {
+    let err = classify_sse_error_event(
+        r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#,
+    );
+    assert!(matches!(err, ProviderError::Auth(_)));
+    assert!(!evotengine::retry::should_retry(&err));
+
+    let err = classify_sse_error_event(
+        r#"{"type":"error","error":{"type":"permission_error","message":"forbidden"}}"#,
+    );
+    assert!(matches!(err, ProviderError::Auth(_)));
+    assert!(!evotengine::retry::should_retry(&err));
+}
+
+#[test]
+fn stream_quota_error_is_not_retryable() {
+    let err = classify_sse_error_event(
+        r#"{"type":"error","error":{"type":"rate_limit_error","message":"insufficient_quota: out of budget"}}"#,
+    );
+    assert!(!evotengine::retry::should_retry(&err));
+}
+
+#[test]
+fn stream_rate_limit_type_is_retryable() {
+    let err = classify_sse_error_event(
+        r#"{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}"#,
+    );
+    assert!(matches!(err, ProviderError::RateLimited { .. }));
+    assert!(evotengine::retry::should_retry(&err));
+}
+
+#[test]
+fn classify_http_5xx_and_408_are_transient() {
+    // Status is authoritative: server-side failures retry regardless of the
+    // body wording, so provider message changes cannot break retry.
+    for status in [500, 501, 502, 503, 504, 520, 599, 408] {
+        let err = ProviderError::classify(status, "whatever the body says", None);
+        assert!(matches!(err, ProviderError::Transient(_)), "HTTP {status}");
+        assert!(evotengine::retry::should_retry(&err), "HTTP {status}");
+    }
+}
+
+#[test]
+fn classify_unknown_4xx_is_not_retryable() {
+    for status in [402, 410, 418, 451] {
+        let err = ProviderError::classify(status, "client-side failure", None);
+        assert!(matches!(err, ProviderError::Other(_)), "HTTP {status}");
+        assert!(!evotengine::retry::should_retry(&err), "HTTP {status}");
+    }
+}
+
+#[test]
 fn embedded_http_5xx_errors_are_retryable() {
     for status in [500, 501, 502, 503, 504, 520, 529, 599] {
         let err = ProviderError::Api(format!("API error: HTTP {status}: upstream failed"));
@@ -240,6 +315,17 @@ fn stream_interrupted_api_error_is_retryable() {
         r#"{"type":"error","error":{"type":"api_error","message":"Stream interrupted. Please retry."}}"#
             .into(),
     );
+    assert!(evotengine::retry::should_retry(&err));
+}
+
+#[test]
+fn upstream_request_failed_is_retryable() {
+    // xAI (Grok) surfaces transient upstream failures as an inline SSE error
+    // with this wording, classified as a bare Api error (no HTTP status).
+    let err = ProviderError::Api("Upstream request failed.".into());
+    assert!(evotengine::retry::should_retry(&err));
+
+    let err = ProviderError::Api("API error: upstream error while proxying request".into());
     assert!(evotengine::retry::should_retry(&err));
 }
 

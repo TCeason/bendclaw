@@ -63,10 +63,15 @@ impl RetryPolicy {
 
 /// Whether this provider error is safe to retry.
 ///
-/// Retryable: rate limits (429), network/transient errors, overloaded (529),
-/// and explicit transient API messages.
+/// Classification happens at the provider layer (HTTP status and structured
+/// error types — see [`ProviderError::classify`] and
+/// `provider::error::classify_stream_error`), which yields semantic variants.
+/// Retryable: rate limits (429), network/transient errors, overloaded (529).
 /// Not retryable: auth (401/403), context overflow, cancellation,
-/// client errors (400 etc.), not found (404).
+/// client errors (4xx), quota exhaustion.
+///
+/// Bare [`ProviderError::Api`] errors from paths without status/type context
+/// fall back to keyword matching as a last resort.
 pub fn should_retry(error: &ProviderError) -> bool {
     match error {
         ProviderError::RateLimited { .. }
@@ -84,6 +89,9 @@ pub fn should_retry(error: &ProviderError) -> bool {
     }
 }
 
+/// Legacy keyword fallback for bare `Api` errors constructed without HTTP
+/// status or structured type context (e.g. internally-generated errors).
+/// New code paths should classify structurally instead of extending this list.
 fn is_retryable_api_message(message: &str) -> bool {
     let lower = message.to_lowercase();
     lower.contains("rate limit")
@@ -104,6 +112,10 @@ fn is_retryable_api_message(message: &str) -> bool {
         || lower.contains("gateway timeout")
         || lower.contains("stream interrupted")
         || lower.contains("please retry")
+        // xAI (Grok) proxies surface transient upstream failures as an inline
+        // SSE error with this wording and no HTTP status to classify by.
+        || lower.contains("upstream request failed")
+        || lower.contains("upstream error")
         // A successful response with no usable content is a transient provider
         // or proxy defect even when usage accounting is present. Retry before
         // an empty assistant message can be accepted into session history.

@@ -9,9 +9,6 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
-use super::error::is_context_overflow_message;
-use super::error::is_transient_provider_error_type;
-use super::error::provider_error_type;
 use super::error::ProviderError;
 
 /// A parsed SSE event with event type and data.
@@ -161,24 +158,16 @@ pub fn extract_json_error_message(value: &serde_json::Value) -> Option<String> {
     }
 }
 
-/// Classify a JSON error body into a [`ProviderError`].
+/// Classify a JSON error body from an accepted (2xx) stream request into a
+/// [`ProviderError`].
 ///
-/// - Context overflow messages → [`ProviderError::ContextOverflow`]
-/// - Overloaded messages → [`ProviderError::Overloaded`]
-/// - Provider-declared transient types → [`ProviderError::Transient`]
-/// - Everything else → [`ProviderError::Api`]
+/// Delegates to [`crate::provider::error::classify_stream_error`]: fatal
+/// conditions (context overflow, quota, auth, structured fatal error types)
+/// are recognized positively and everything else defaults to a retryable
+/// [`ProviderError::Transient`].
 pub fn classify_json_error(value: &serde_json::Value) -> ProviderError {
     let message = extract_json_error_message(value).unwrap_or_else(|| value.to_string());
-
-    if is_context_overflow_message(&message) {
-        ProviderError::ContextOverflow { message }
-    } else if crate::provider::error::is_overloaded_message(&message) {
-        ProviderError::Overloaded(message)
-    } else if provider_error_type(value).is_some_and(is_transient_provider_error_type) {
-        ProviderError::Transient(message)
-    } else {
-        ProviderError::Api(message)
-    }
+    crate::provider::error::classify_stream_error(&message, Some(value))
 }
 
 // ---------------------------------------------------------------------------

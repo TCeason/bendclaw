@@ -9,7 +9,7 @@ use tracing::debug;
 
 use super::request::ToolCallBuffer;
 use super::types::*;
-use crate::provider::error::classify_sse_error_event;
+use crate::provider::error::classify_stream_error;
 use crate::provider::error::ProviderError;
 use crate::provider::route::OpenAiCompat;
 use crate::provider::route::ThinkingFormat;
@@ -162,7 +162,10 @@ fn process_sse_chunk(
             err.message.clone()
         };
         debug!("OpenAI stream error: {}", msg);
-        return Err(classify_sse_error_event(&msg));
+        // Classify with the full chunk JSON so a structured `error.type`
+        // is honoured even when only the message is surfaced to the user.
+        let value = serde_json::from_str::<serde_json::Value>(&sse.data).ok();
+        return Err(classify_stream_error(&msg, value.as_ref()));
     }
 
     // Capture response id and model from the first chunk
