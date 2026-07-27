@@ -250,11 +250,12 @@ export function renderAssistantAnsi(rawMarkdown: string, columns: number = SHOT_
  * Wrap the TUI ANSI paint in a terminal-like HTML canvas.
  * Markdown/table layout is NOT reimplemented — only ANSI → HTML with terminal metrics.
  */
-/** Max visible terminal columns in an ANSI paint (for canvas sizing). */
+/** Max visible terminal columns in an ANSI paint (for canvas sizing).
+ *  Trailing whitespace paints nothing, so it never widens the canvas. */
 export function ansiMaxColumns(ansi: string): number {
   let max = 0
   for (const line of ansi.split('\n')) {
-    const w = stringWidth(stripAnsi(line))
+    const w = stringWidth(stripAnsi(line).trimEnd())
     if (w > max) max = w
   }
   return max
@@ -344,9 +345,10 @@ export function buildShotHtml(
   const meta = sourceMeta(source)
   const columns = opts?.columns ?? SHOT_COLUMNS
   const ansi = renderShotAnsi(source, columns)
-  // Painted log lines may be wider than the current column budget (they were
-  // laid out at the live terminal width). Size the canvas to the content.
-  const contentCols = Math.max(columns, ansiMaxColumns(ansi))
+  // `columns` is only the wrap budget. The canvas hugs the actual painted
+  // content: flooring at the budget leaves a wide empty band when the turn
+  // was captured in (or wrapped for) a much wider terminal.
+  const contentCols = ansiMaxColumns(ansi)
   const bodyHtml = `<pre class="term">${ansiToHtml(ansi)}</pre>`
   const idLabel = meta.messageId
   const modelLabel = formatShotModelLabel(opts?.header)
@@ -545,7 +547,7 @@ export async function writeMarkdownShot(opts: WriteMarkdownShotOptions): Promise
     // Width is estimated from content; height is measured from the live DOM via
     // CDP so the PNG ends at the last painted pixel (no empty bottom band).
     const ansi = renderShotAnsi(source, columns)
-    const contentCols = Math.max(columns, ansiMaxColumns(ansi))
+    const contentCols = ansiMaxColumns(ansi)
     const lineCount = Math.max(1, ansi.replace(/\n+$/, '').split('\n').length)
     const size = shotWindowSize(contentCols, lineCount)
     const shot = await tryChromeScreenshot(

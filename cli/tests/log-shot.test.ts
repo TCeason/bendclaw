@@ -15,6 +15,7 @@ import {
   buildShotHeroTime,
   buildShotMetaLine,
   shotWindowSize,
+  ansiMaxColumns,
 } from '../src/commands/log-shot.js'
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
@@ -300,5 +301,23 @@ describe('log-shot ansi + render', () => {
     expect(long.height).toBeLessThanOrEqual(16000)
     // Wide content still gets a usable width, but not a tall empty frame.
     expect(shotWindowSize(40, 5).width).toBeGreaterThanOrEqual(480)
+  })
+
+  test('ansiMaxColumns ignores trailing whitespace', () => {
+    expect(ansiMaxColumns('short   \nwide line')).toBe(9)
+    expect(ansiMaxColumns('\x1b[31mred\x1b[0m      ')).toBe(3)
+  })
+
+  test('canvas hugs narrow content instead of the wide wrap budget', () => {
+    const source = resolveShotSource({
+      historyLines: [{ kind: 'assistant', id: 'a', rawMarkdown: 'short reply' }],
+    })
+    expect(source).not.toBeNull()
+    // Captured in a very wide terminal: the canvas must track the painted
+    // content width, not leave a ~200ch empty right band.
+    const html = buildShotHtml(source!, { columns: 220 })
+    const m = html.match(/\.shot-frame \{\s*width: (\d+)ch/)
+    expect(m).not.toBeNull()
+    expect(Number(m![1])).toBeLessThan(80)
   })
 })
