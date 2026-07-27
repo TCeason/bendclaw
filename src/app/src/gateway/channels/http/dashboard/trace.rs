@@ -204,30 +204,30 @@ fn span_stats_for(entries: &[TranscriptEntry], idx: u64) -> SpanStats {
     stats
 }
 
-/// Extract the system prompt + tool schemas from this span's `LlmCallStarted`
-/// stats. Detail-only (the list never needs these large payloads), so it's
-/// kept out of `span_stats_for`.
+/// Resolve the system prompt + tool schemas in effect for the span at `idx`.
+/// Payloads are delta-persisted (written only when they change), so scan back
+/// to the nearest `LlmCallStarted` that carries a non-empty payload.
+/// Detail-only (the list never needs these large payloads), so it's kept out
+/// of `span_stats_for`.
 fn span_request_payload(entries: &[TranscriptEntry], idx: usize) -> (String, Vec<ToolDefView>) {
     for prev in entries[..idx].iter().rev() {
-        match &prev.item {
-            TranscriptItem::Assistant { .. } => break,
-            item => {
-                if let Some(TranscriptStats::LlmCallStarted(s)) =
-                    TranscriptStats::try_from_item(item)
-                {
-                    let tools = s
-                        .tool_definitions
-                        .iter()
-                        .map(|t| ToolDefView {
-                            name: t.name.clone(),
-                            description: t.description.clone(),
-                            parameters: t.parameters.clone(),
-                        })
-                        .collect();
-                    return (s.system_prompt.clone(), tools);
-                }
-            }
+        let Some(TranscriptStats::LlmCallStarted(s)) = TranscriptStats::try_from_item(&prev.item)
+        else {
+            continue;
+        };
+        if s.system_prompt.is_empty() && s.tool_definitions.is_empty() {
+            continue;
         }
+        let tools = s
+            .tool_definitions
+            .into_iter()
+            .map(|t| ToolDefView {
+                name: t.name,
+                description: t.description,
+                parameters: t.parameters,
+            })
+            .collect();
+        return (s.system_prompt, tools);
     }
     (String::new(), Vec::new())
 }

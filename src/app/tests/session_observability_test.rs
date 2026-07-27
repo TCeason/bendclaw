@@ -469,3 +469,48 @@ fn aggregator_reset_clears_state() {
     assert!(agg.last_model.is_none());
     assert_eq!(agg.system_prompt_tokens, 0);
 }
+
+// ---------------------------------------------------------------------------
+// Trace span detail — delta-persisted request payload lookback
+// ---------------------------------------------------------------------------
+
+#[test]
+fn trace_span_payload_resolves_nearest_non_empty_record() -> Result<(), String> {
+    use evot::gateway::channels::http::dashboard::trace::project_span_detail;
+
+    let assistant = TranscriptItem::Assistant {
+        content: vec![],
+        stop_reason: "end_turn".into(),
+        usage: UsageSummary::default(),
+        model: "m".into(),
+        provider: "p".into(),
+        timestamp: 0,
+        error_message: None,
+    };
+    let full = TranscriptStats::LlmCallStarted(LlmCallStartedStats {
+        system_prompt: "the prompt".into(),
+        tool_definitions: vec![ToolDef {
+            name: "read".into(),
+            description: "read a file".into(),
+            parameters: serde_json::json!({"type": "object"}),
+        }],
+        ..Default::default()
+    })
+    .to_item();
+    // Delta-stripped repeat: payload omitted because it did not change.
+    let stripped = TranscriptStats::LlmCallStarted(LlmCallStartedStats::default()).to_item();
+
+    let entries: Vec<TranscriptEntry> = [full, assistant.clone(), stripped, assistant]
+        .into_iter()
+        .enumerate()
+        .map(|(i, item)| TranscriptEntry::new("s".into(), None, (i + 1) as u64, 1, item))
+        .collect();
+
+    // The second span's own record is empty; its payload resolves from the
+    // nearest earlier non-empty record.
+    let detail = project_span_detail(&entries, 4).ok_or("span not found")?;
+    assert_eq!(detail.system_prompt, "the prompt");
+    assert_eq!(detail.tool_definitions.len(), 1);
+    assert_eq!(detail.tool_definitions[0].name, "read");
+    Ok(())
+}

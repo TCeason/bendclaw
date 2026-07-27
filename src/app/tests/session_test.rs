@@ -2042,3 +2042,75 @@ fn marker_item_is_not_context() {
     };
     assert!(!item.is_context_item());
 }
+
+// ---------------------------------------------------------------------------
+// LLM request payload — delta persistence
+// ---------------------------------------------------------------------------
+
+fn llm_started_item(prompt: &str) -> TranscriptItem {
+    use evot::types::observability::*;
+    TranscriptStats::LlmCallStarted(LlmCallStartedStats {
+        turn: 1,
+        attempt: 0,
+        model: "m".into(),
+        system_prompt: prompt.into(),
+        tool_definitions: vec![ToolDef {
+            name: "read".into(),
+            description: "read a file".into(),
+            parameters: serde_json::json!({"type": "object"}),
+        }],
+        ..Default::default()
+    })
+    .to_item()
+}
+
+#[tokio::test]
+async fn llm_request_payload_is_delta_persisted() -> TestResult {
+    use evot::types::observability::TranscriptStats;
+
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+    let session = Session::new(
+        "sess-delta".into(),
+        "/tmp".into(),
+        "m".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    // Same payload twice, then a changed one.
+    session
+        .write_items(vec![llm_started_item("prompt v1")])
+        .await?;
+    session
+        .write_items(vec![llm_started_item("prompt v1")])
+        .await?;
+    session
+        .write_items(vec![llm_started_item("prompt v2")])
+        .await?;
+
+    let entries = storage
+        .list_entries(evot::types::ListTranscriptEntries {
+            session_id: "sess-delta".into(),
+            run_id: None,
+            after_seq: None,
+            limit: None,
+        })
+        .await?;
+    let persisted: Vec<(String, usize)> = entries
+        .iter()
+        .filter_map(|e| match TranscriptStats::try_from_item(&e.item) {
+            Some(TranscriptStats::LlmCallStarted(s)) => {
+                Some((s.system_prompt, s.tool_definitions.len()))
+            }
+            _ => None,
+        })
+        .collect();
+    // The repeat is stripped to empty; the changed payload is persisted full.
+    assert_eq!(persisted, vec![
+        ("prompt v1".to_string(), 1),
+        (String::new(), 0),
+        ("prompt v2".to_string(), 1),
+    ]);
+    Ok(())
+}

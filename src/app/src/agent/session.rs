@@ -27,6 +27,9 @@ struct SessionState {
     /// compaction updates the previous summary instead of re-summarizing it
     /// as plain conversation text.
     compact_seed: Option<evot_engine::CompactionState>,
+    /// Hash of the last persisted `LlmCallStarted` request payload (system
+    /// prompt + tool schemas). Repeats are delta-stripped before storage.
+    llm_payload_hash: Option<u64>,
 }
 
 impl Session {
@@ -46,6 +49,7 @@ impl Session {
                 engine_transcript,
                 next_seq,
                 compact_seed,
+                llm_payload_hash: None,
             }),
         })
     }
@@ -288,7 +292,7 @@ impl Session {
 
     async fn commit_items(
         &self,
-        items: Vec<TranscriptItem>,
+        mut items: Vec<TranscriptItem>,
         replacement: Option<Vec<TranscriptItem>>,
         expected_seq: Option<u64>,
         is_compaction: bool,
@@ -299,6 +303,8 @@ impl Session {
         if items.is_empty() {
             return Ok(state.next_seq);
         }
+        let mut payload_hash = state.llm_payload_hash;
+        dedupe_llm_request_payload(&mut payload_hash, &mut items);
 
         let (session_id, turn) = {
             let meta = self.meta.read().await;
@@ -339,6 +345,7 @@ impl Session {
                 .await?
             {
                 state.next_seq = state.next_seq.saturating_add(items.len() as u64);
+                state.llm_payload_hash = payload_hash;
                 update_compact_seed(&mut state.compact_seed, &items);
                 match replacement.clone() {
                     Some(context) => {
@@ -416,7 +423,24 @@ impl Session {
 
     /// Persist session meta (title, updated_at, context usage, etc.).
     pub async fn save(&self) -> Result<()> {
-        let transcript = self.state.lock().await.transcript.clone();
+        // Derive meta fields under the state lock by reference: the active
+        // context can be tens of MB on long sessions, so it is never cloned.
+        let (title, context_usage, message_count, span_count) = {
+            let state = self.state.lock().await;
+            let transcript = &state.transcript;
+            (
+                build_title(transcript),
+                last_context_usage(transcript),
+                transcript.iter().filter(|i| i.is_context_item()).count() as u32,
+                // Accurate span count = assistant LLM-call entries, matching
+                // the trace viewer.
+                transcript
+                    .iter()
+                    .filter(|i| matches!(i, TranscriptItem::Assistant { .. }))
+                    .count() as u32,
+            )
+        };
+
         let mut meta = self.meta.write().await;
         // Build title from first + last user messages so the resume list
         // shows both the original topic and the most recent activity. When the
@@ -424,7 +448,7 @@ impl Session {
         // cleared instead of being kept forever: compaction used to derive it
         // from its own synthetic summary message, which made every compacted
         // session look identical in the resume list.
-        match build_title(&transcript) {
+        match title {
             Some(title) => meta.title = Some(title),
             None => {
                 let polluted = meta
@@ -437,19 +461,12 @@ impl Session {
             }
         }
         // Extract latest context window usage from compaction stats.
-        if let Some((tokens, budget)) = last_context_usage(&transcript) {
+        if let Some((tokens, budget)) = context_usage {
             meta.context_tokens = tokens;
             meta.context_budget = budget;
         }
-        meta.message_count = transcript.iter().filter(|i| i.is_context_item()).count() as u32;
-        // Accurate span count = assistant LLM-call entries, matching the trace
-        // viewer. Transcript is already in memory, so this is cheap.
-        meta.span_count = Some(
-            transcript
-                .iter()
-                .filter(|i| matches!(i, TranscriptItem::Assistant { .. }))
-                .count() as u32,
-        );
+        meta.message_count = message_count;
+        meta.span_count = Some(span_count);
         meta.updated_at = Utc::now().to_rfc3339();
         self.storage.save_session(meta.clone()).await
     }
@@ -538,6 +555,43 @@ fn update_compact_seed(seed: &mut Option<evot_engine::CompactionState>, items: &
             _ => {}
         }
     }
+}
+
+/// Delta-persist LLM request payloads: `LlmCallStarted` stats carry the full
+/// system prompt and tool schemas only when they differ from the previous
+/// persisted call. The payload rarely changes within a session, and repeating
+/// it on every call dominates transcript size on long sessions. Readers
+/// resolve a span's payload from the nearest non-empty record (see the
+/// dashboard trace view).
+fn dedupe_llm_request_payload(last_hash: &mut Option<u64>, items: &mut [TranscriptItem]) {
+    use crate::types::observability::TranscriptStats;
+
+    for item in items {
+        let Some(TranscriptStats::LlmCallStarted(mut stats)) = TranscriptStats::try_from_item(item)
+        else {
+            continue;
+        };
+        let hash = llm_payload_hash(&stats.system_prompt, &stats.tool_definitions);
+        if *last_hash == Some(hash) {
+            stats.system_prompt = String::new();
+            stats.tool_definitions = Vec::new();
+            *item = TranscriptStats::LlmCallStarted(stats).to_item();
+        } else {
+            *last_hash = Some(hash);
+        }
+    }
+}
+
+fn llm_payload_hash(system_prompt: &str, tools: &[crate::types::observability::ToolDef]) -> u64 {
+    use std::hash::Hash;
+    use std::hash::Hasher;
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    system_prompt.hash(&mut hasher);
+    serde_json::to_string(tools)
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    hasher.finish()
 }
 
 fn build_title(items: &[TranscriptItem]) -> Option<String> {
