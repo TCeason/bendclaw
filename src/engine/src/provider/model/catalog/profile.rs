@@ -47,8 +47,10 @@ pub(super) struct ModelProfile {
     pub vision: bool,
     pub reasoning: ReasoningProfile,
     pub remote_compaction: bool,
-    /// Optional proactive compaction threshold. `None` derives the registry
-    /// default from effective input capacity.
+    /// Optional explicit compaction threshold for models whose usable input
+    /// is smaller than the advertised window (e.g. Anthropic 200k models with
+    /// output headroom carved out). `None` follows pi: compaction triggers at
+    /// `context_window - reserve_tokens`, however large the window is.
     pub compaction_limit: Option<u32>,
     pub default_verbosity: Option<Verbosity>,
 }
@@ -65,9 +67,6 @@ pub(super) const BASE: ModelProfile = ModelProfile {
 
 impl ModelProfile {
     pub(super) fn capabilities(self) -> ModelCapabilities {
-        let compaction_limit = self
-            .compaction_limit
-            .unwrap_or(self.max_input_tokens.min(250_000));
         ModelCapabilities {
             max_input_tokens: self.max_input_tokens,
             max_output_tokens: self.max_output_tokens,
@@ -82,7 +81,7 @@ impl ModelProfile {
                 self.reasoning.anthropic_wire,
             ),
             default_verbosity: self.default_verbosity,
-            compaction_limit: Some(compaction_limit),
+            compaction_limit: self.compaction_limit,
             remote_compaction: self.remote_compaction,
         }
     }

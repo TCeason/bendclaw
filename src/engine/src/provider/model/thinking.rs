@@ -33,22 +33,13 @@ const LEVEL_LADDER: [ThinkingLevel; 7] = [
     ThinkingLevel::Max,
 ];
 
-/// Droid registry default for proactive compaction on large-context models.
-pub const DEFAULT_COMPACTION_TOKEN_LIMIT: u32 = 250_000;
-
 impl ModelConfig {
-    /// Resolved profile limit. `None` means the model is uncatalogued and the
-    /// context layer should use its reserve-based fallback.
+    /// Explicit profile compaction threshold. `None` means the profile sets no
+    /// limit and the context layer compacts at `window - reserve` (pi-style).
     pub fn profile_compaction_limit(&self, _requested: ThinkingLevel) -> Option<u32> {
         self.capabilities
             .compaction_limit
             .map(|limit| limit.min(self.context_window()))
-    }
-
-    /// Profile-bound compaction threshold with the registry default applied.
-    pub fn default_compaction_limit(&self, requested: ThinkingLevel) -> u32 {
-        self.profile_compaction_limit(requested)
-            .unwrap_or_else(|| self.context_window().min(DEFAULT_COMPACTION_TOKEN_LIMIT))
     }
 
     /// Whether the configured protocol and transport can carry a selectable

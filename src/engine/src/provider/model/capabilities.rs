@@ -120,8 +120,8 @@ pub(super) struct ModelCapabilities {
     pub(super) input: Vec<InputModality>,
     pub(super) reasoning: ReasoningCapabilities,
     pub(super) default_verbosity: Option<Verbosity>,
-    /// Resolved proactive compaction threshold. `None` means the model was not
-    /// found in the catalog and context management should use safe fallback headroom.
+    /// Explicit profile compaction threshold. `None` means no profile limit;
+    /// context management compacts at `window - reserve` (pi-style).
     pub(super) compaction_limit: Option<u32>,
     pub(super) remote_compaction: bool,
 }

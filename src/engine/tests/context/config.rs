@@ -94,10 +94,16 @@ fn threshold_saturates_when_window_is_below_the_reserve() {
 
 #[test]
 fn context_config_uses_profile_compaction_policy() {
+    // Large-window models have no profile limit: the trigger falls back to
+    // `window - reserve` (pi-style), so the whole window is usable.
     let gpt = ModelConfig::openai("gpt-5.5", "GPT-5.5");
     let context = ContextConfig::from_model(&gpt, ThinkingLevel::Medium);
     assert_eq!(context.max_context_tokens, 922_000);
-    assert_eq!(context.trigger_tokens, Some(250_000));
+    assert_eq!(context.trigger_tokens, None);
+    assert_eq!(
+        CompactionConfig::from_context_config(&context).trigger_threshold(),
+        922_000 - DEFAULT_RESERVE_TOKENS
+    );
 
     let claude = ModelConfig::anthropic("claude-sonnet-4-20250514", "Claude Sonnet 4");
     let context = ContextConfig::from_model(&claude, ThinkingLevel::High);

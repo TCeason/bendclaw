@@ -212,7 +212,8 @@ fn kimi_profiles_match_catalog_contracts() {
     assert_eq!(k3.supported_thinking_levels(), vec![Low, High, Max]);
     assert!(!k3.can_disable_thinking());
     assert_eq!(k3.default_thinking_level(), Max);
-    assert_eq!(k3.default_compaction_limit(Max), 250_000);
+    // No profile limit: compaction follows the window (pi-style trigger).
+    assert_eq!(k3.profile_compaction_limit(Max), None);
 
     let thinking = ModelConfig::anthropic("kimi-k2-thinking", "Kimi K2 Thinking");
     assert_eq!(thinking.context_window(), 196_608);
@@ -296,34 +297,34 @@ fn anthropic_version_rules_cover_current_and_future_models() {
 }
 
 #[test]
-fn compaction_limits_follow_existing_model_profiles() {
+fn compaction_limits_come_only_from_explicit_profiles() {
+    // Large-window models carry no profile limit: compaction triggers near
+    // the real window (pi-style `window - reserve`), not a proactive cap.
     let gpt = ModelConfig::openai("gpt-5.5", "GPT-5.5");
     assert_eq!(gpt.context_window(), 922_000);
-    assert_eq!(gpt.default_compaction_limit(ThinkingLevel::Medium), 250_000);
+    assert_eq!(gpt.profile_compaction_limit(ThinkingLevel::Medium), None);
 
     let adaptive = ModelConfig::anthropic("claude-opus-4-6", "Claude Opus 4.6");
     assert_eq!(adaptive.context_window(), 867_000);
-    assert_eq!(
-        adaptive.default_compaction_limit(ThinkingLevel::High),
-        250_000
-    );
+    assert_eq!(adaptive.profile_compaction_limit(ThinkingLevel::High), None);
 
+    // Anthropic 200k models keep their explicit 180k profile threshold.
     let budget_based = ModelConfig::anthropic("claude-sonnet-4-20250514", "Claude Sonnet 4");
     assert_eq!(budget_based.context_window(), 200_000);
     assert_eq!(
-        budget_based.default_compaction_limit(ThinkingLevel::High),
-        180_000
+        budget_based.profile_compaction_limit(ThinkingLevel::High),
+        Some(180_000)
     );
 
     let kimi = ModelConfig::anthropic("kimi-for-coding", "Kimi for Coding");
     assert_eq!(kimi.context_window(), 196_608);
-    assert_eq!(kimi.default_compaction_limit(ThinkingLevel::High), 196_608);
+    assert_eq!(kimi.profile_compaction_limit(ThinkingLevel::High), None);
 
     // xAI documents 500k as the model window; 200k is only its higher-price
     // prompt tier boundary.
     let grok = ModelConfig::openai("grok-4.5", "Grok 4.5");
     assert_eq!(grok.context_window(), 500_000);
-    assert_eq!(grok.default_compaction_limit(ThinkingLevel::High), 250_000);
+    assert_eq!(grok.profile_compaction_limit(ThinkingLevel::High), None);
 }
 
 #[test]
