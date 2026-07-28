@@ -109,14 +109,17 @@ function buildInputLines(input: PromptVMInput, columns: number): { lines: Styled
       const before = textChunk.slice(0, cursorCol)
       const cursorChar = textChunk.slice(cursorCol, cursorEnd) || ' '
       const after = textChunk.slice(cursorEnd)
-      const spans: StyledSpan[] = [
-        prefix,
-        ...styleInputText(before),
-        plain(CURSOR_MARKER),
-        inverse(cursorChar),
-        ...styleInputText(after),
-      ]
-      if (!input.completion && input.ghostHint && chunk.end === text.length) spans.push(dim(input.ghostHint))
+      const ghost = !input.completion && chunk.end === text.length ? input.ghostHint : ''
+      const spans: StyledSpan[] = [prefix, ...styleInputText(before), plain(CURSOR_MARKER)]
+      if (ghost && cursorCol >= textChunk.length) {
+        // Cursor sits on the first ghost grapheme (pi-style: overlay, don't
+        // insert a blank cell that would visually split the suggested word).
+        const ghostEnd = nextGraphemeBoundary(ghost, 0)
+        spans.push(inverse(ghost.slice(0, ghostEnd)), dim(ghost.slice(ghostEnd)))
+      } else {
+        spans.push(inverse(cursorChar), ...styleInputText(after))
+        if (ghost) spans.push(dim(ghost))
+      }
       lines.push(line(...spans))
     }
   }

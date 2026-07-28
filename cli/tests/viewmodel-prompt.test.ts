@@ -108,6 +108,27 @@ describe('prompt editor', () => {
     expect(plain).not.toContain('row 10')
   })
 
+  test('cursor overlays the first ghost hint character without inserting a blank cell', () => {
+    const input = defaultInput({ lines: ['/mo'], cursorCol: 3, placeholder: false, ghostHint: 'del  [<name>]' })
+    const ansi = render(input)
+    // No blank cell between typed text and ghost suffix: `/model  [<name>]`
+    expect(stripAnsi(ansi).replaceAll(CURSOR_MARKER, '')).toContain('/model  [<name>]')
+    // Cursor block sits on the ghost's first character `d`
+    expect(ansi).toContain('\x1b[7md\x1b[27m')
+  })
+
+  test('cursor at end of line without ghost hint still renders an inverse space', () => {
+    const ansi = render(defaultInput({ lines: ['/mo'], cursorCol: 3, placeholder: false }))
+    expect(ansi).toContain('\x1b[7m \x1b[27m')
+  })
+
+  test('ghost hint follows the cursor character when the cursor is not at end of line', () => {
+    const input = defaultInput({ lines: ['/model '], cursorCol: 6, placeholder: false, ghostHint: '[<name>]' })
+    const ansi = render(input)
+    expect(stripAnsi(ansi).replaceAll(CURSOR_MARKER, '')).toContain('/model [<name>]')
+    expect(ansi).toContain('\x1b[7m \x1b[27m')
+  })
+
   test('renders a five-row completion viewport with descriptions and position', () => {
     const plain = renderPlain(defaultInput({ completion: completion(['/a', '/b', '/c', '/d', '/e', '/f'], 5) }))
     expect(plain).not.toContain('/a')
