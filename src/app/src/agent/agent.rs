@@ -1184,10 +1184,9 @@ impl Agent {
 
     /// The session-facing label for the agent's current thinking level, or
     /// `None` when the level is not a selectable tier for the active model
-    /// (e.g. a config-set level the model rejects).
-    /// Gating on membership keeps session metadata meaningful even though
-    /// resume now reapplies the current configured value instead of restoring
-    /// this historical snapshot.
+    /// (e.g. a config-set level the model rejects). Resume restores this
+    /// snapshot over the config default, so gating on membership keeps the
+    /// metadata meaningful.
     fn persisted_thinking_level(&self) -> Option<String> {
         let level = self.llm.read().thinking_level;
         if self.supported_thinking_levels().contains(&level) {

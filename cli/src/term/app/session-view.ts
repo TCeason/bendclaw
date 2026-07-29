@@ -59,19 +59,39 @@ export function resumeModelUnavailableNote(opts: {
   return `  model '${opts.model ?? ''}' unavailable · kept ${opts.keptModel} · /model to switch`
 }
 
-/** Reload a resumed session's model and current configured thinking level. */
+/**
+ * Reload a resumed session's model from current config, then reapply the
+ * session's recorded thinking level over the config default (pi precedence:
+ * session wins on resume). Unsupported levels keep the config-applied value.
+ */
 export function reloadResumeModel(
-  agent: { model: string; reloadProvider(spec: string): boolean },
+  agent: {
+    model: string
+    reloadProvider(spec: string): boolean
+    restoreThinkingLevel(level: string): void
+  },
   model?: string,
   provider?: string,
+  thinkingLevel?: string | null,
 ): string | null {
-  if (!model) return null
-
-  const preferred = provider ? `${provider}:${model}` : model
-  try {
-    if (agent.reloadProvider(preferred)) return null
-  } catch {
-    // Keep the current live selection and show the same recovery hint.
+  let note: string | null = null
+  if (model) {
+    const preferred = provider ? `${provider}:${model}` : model
+    try {
+      if (!agent.reloadProvider(preferred)) {
+        note = resumeModelUnavailableNote({ provider, model, keptModel: agent.model })
+      }
+    } catch {
+      // Keep the current live selection and show the same recovery hint.
+      note = resumeModelUnavailableNote({ provider, model, keptModel: agent.model })
+    }
   }
-  return resumeModelUnavailableNote({ provider, model, keptModel: agent.model })
+  if (thinkingLevel) {
+    try {
+      agent.restoreThinkingLevel(thinkingLevel)
+    } catch {
+      // Keep the config-applied level.
+    }
+  }
+  return note
 }

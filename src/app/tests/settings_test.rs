@@ -329,3 +329,47 @@ fn reloading_env_file_reflects_external_edits() -> TestResult {
     std::fs::remove_file(&path)?;
     Ok(())
 }
+
+#[test]
+fn persist_default_thinking_level_updates_global_and_masking_override() -> TestResult {
+    let mut config = Config::new(std::env::temp_dir());
+    apply_settings(&mut config, &sample_update())?;
+    config.env_file_path = tmp_env_path("persist_thinking");
+
+    // anthropic carries its own override ("xhigh") which would mask the global,
+    // so persisting must update both.
+    let low = evot::conf::thinking_level_from_str("low")?;
+    evot::conf::persist_default_thinking_level(&mut config, "anthropic", low)?;
+    assert_eq!(config.llm.thinking_level, Some(low));
+    assert_eq!(
+        config
+            .providers
+            .get("anthropic")
+            .and_then(|p| p.thinking_level),
+        Some(low)
+    );
+    let written = std::fs::read_to_string(&config.env_file_path)?;
+    assert!(written.contains("EVOT_LLM_THINKING_LEVEL=low"));
+    assert!(written.contains("EVOT_LLM_ANTHROPIC_THINKING_LEVEL=low"));
+
+    // A provider without its own override keeps inheriting the global.
+    if let Some(p) = config.providers.get_mut("anthropic") {
+        p.thinking_level = None;
+    }
+    let high = evot::conf::thinking_level_from_str("high")?;
+    evot::conf::persist_default_thinking_level(&mut config, "anthropic", high)?;
+    assert_eq!(config.llm.thinking_level, Some(high));
+    assert_eq!(
+        config
+            .providers
+            .get("anthropic")
+            .and_then(|p| p.thinking_level),
+        None
+    );
+    let written = std::fs::read_to_string(&config.env_file_path)?;
+    assert!(written.contains("EVOT_LLM_THINKING_LEVEL=high"));
+    assert!(!written.contains("EVOT_LLM_ANTHROPIC_THINKING_LEVEL"));
+
+    std::fs::remove_file(&config.env_file_path)?;
+    Ok(())
+}

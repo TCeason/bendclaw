@@ -415,16 +415,25 @@ impl NapiAgent {
     }
 
     /// Advance the thinking level to the next tier the current model supports,
-    /// wrapping around. Returns the new level's display label, or `null` when
-    /// the model has no selectable reasoning levels.
+    /// wrapping around, and persist it as the default for future sessions
+    /// (pi-style double write: the session records its own level per run).
+    /// Returns the new level's display label, or `null` when the model has no
+    /// selectable reasoning levels.
     #[napi]
     pub fn cycle_thinking_level(&self) -> Option<String> {
-        self.agent.cycle_thinking_level()?;
+        let level = self.agent.cycle_thinking_level()?;
+        // Best-effort: the live session keeps the new level even when the
+        // config write fails; the default then falls back on next start.
+        if let Ok(mut config) = self.load_config() {
+            let provider = self.agent.llm().provider.clone();
+            let _ = evot::conf::persist_default_thinking_level(&mut config, &provider, level);
+        }
         Some(display_thinking_level(&self.agent.llm()))
     }
 
     /// Apply a named thinking level when supported by the active model.
-    /// Session resume intentionally uses `reload_provider` instead.
+    /// Used on session resume so the session's recorded effort wins over the
+    /// config default applied by `reload_provider`.
     #[napi]
     pub fn restore_thinking_level(&self, level: String) {
         self.agent.restore_thinking_level(&level);

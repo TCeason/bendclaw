@@ -65,35 +65,50 @@ describe('repl session view helpers', () => {
     expect(resumeElidedLine(1).text).toContain('1 earlier message hidden')
   })
 
-  test('reloadResumeModel reapplies config without using session thinking metadata', () => {
+  test('reloadResumeModel restores the session thinking level over the config default', () => {
     const calls: string[] = []
+    const restored: string[] = []
     const agent = {
       model: 'claude-opus-4-8',
       reloadProvider(spec: string) {
         calls.push(spec)
         return true
       },
+      restoreThinkingLevel(level: string) {
+        restored.push(level)
+      },
     }
 
-    expect(reloadResumeModel(agent, 'gpt-5.5', 'openai')).toBeNull()
+    expect(reloadResumeModel(agent, 'gpt-5.5', 'openai', 'high')).toBeNull()
     expect(calls).toEqual(['openai:gpt-5.5'])
-    expect(reloadResumeModel(agent, undefined, 'openai')).toBeNull()
+    expect(restored).toEqual(['high'])
+
+    // No recorded level keeps the config-applied default.
+    expect(reloadResumeModel(agent, undefined, 'openai', null)).toBeNull()
     expect(calls).toHaveLength(1)
+    expect(restored).toHaveLength(1)
   })
 
   test('reloadResumeModel reports unavailable saved selections and reload errors', () => {
+    const restored: string[] = []
     const unavailable = {
       model: 'claude-opus-4-8',
       reloadProvider: (_spec: string) => false,
+      restoreThinkingLevel(level: string) {
+        restored.push(level)
+      },
     }
-    expect(reloadResumeModel(unavailable, 'grok-4.5', 'grok'))
+    // The thinking level is still restored onto the kept live model.
+    expect(reloadResumeModel(unavailable, 'grok-4.5', 'grok', 'low'))
       .toBe("  provider 'grok' unavailable · kept claude-opus-4-8 · /model to switch")
+    expect(restored).toEqual(['low'])
 
     const failing = {
       model: 'claude-opus-4-8',
       reloadProvider: (_spec: string): boolean => { throw new Error('bad config') },
+      restoreThinkingLevel: (_level: string): void => { throw new Error('unsupported') },
     }
-    expect(reloadResumeModel(failing, 'missing-model'))
+    expect(reloadResumeModel(failing, 'missing-model', undefined, 'xhigh'))
       .toBe("  model 'missing-model' unavailable · kept claude-opus-4-8 · /model to switch")
   })
 

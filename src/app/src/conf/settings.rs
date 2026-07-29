@@ -125,6 +125,25 @@ pub fn config_to_env_groups(config: &Config) -> Vec<EnvGroup> {
     groups
 }
 
+/// Persist an interactively chosen thinking level as the default for future
+/// sessions: updates the global selection and, when the active provider
+/// carries its own override (which would otherwise mask the global), that
+/// override too, then rewrites the managed env block.
+pub fn persist_default_thinking_level(
+    config: &mut Config,
+    provider: &str,
+    level: evot_engine::ThinkingLevel,
+) -> Result<()> {
+    config.llm.thinking_level = Some(level);
+    if let Some(profile) = config.providers.get_mut(provider) {
+        if profile.thinking_level.is_some() {
+            profile.thinking_level = Some(level);
+        }
+    }
+    let groups = config_to_env_groups(config);
+    crate::conf::env_writer::write_grouped(&config.env_file_path, &groups)
+}
+
 /// Validate and apply a settings update to a live `Config` in place.
 ///
 /// Secrets that arrive empty are preserved from the existing config rather than

@@ -826,20 +826,23 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       // (e.g. the resume selector only knows the id); fetch the full record.
       let model = session.model
       let provider = session.provider
+      let thinkingLevel = session.thinking_level
       let sessionCwd = session.cwd
-      if (!model || !provider || !sessionCwd) {
+      if (!model || !provider || thinkingLevel === undefined || !sessionCwd) {
         const full = await agent.findSession(session.session_id)
         if (full) {
           if (!model) model = full.model
           if (!provider) provider = full.provider
+          if (thinkingLevel === undefined) thinkingLevel = full.thinking_level
           if (!sessionCwd) sessionCwd = full.cwd
         }
       }
 
-      // Restore model selection and reapply its current configured thinking
-      // level. Missing saved selections keep the refreshed live model and show
-      // a recovery hint.
-      const modelRestoreNote = reloadResumeModel(agent, model, provider)
+      // Restore model selection from current config, then the session's
+      // recorded thinking level (session wins over the config default).
+      // Missing saved selections keep the refreshed live model and show a
+      // recovery hint.
+      const modelRestoreNote = reloadResumeModel(agent, model, provider, thinkingLevel)
       sessionId = session.session_id
       rendererTrace.bind(session.session_id)
       refreshConfigInfo()
