@@ -168,6 +168,14 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
                 }
             }));
         }
+        RunEventPayload::QuotaWaiting { delay_ms } => {
+            events.push(json!({
+                "type": "quota_waiting",
+                "data": {
+                    "retry_delay_ms": delay_ms,
+                }
+            }));
+        }
         RunEventPayload::LlmCallCompleted {
             turn,
             attempt,

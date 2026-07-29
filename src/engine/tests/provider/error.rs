@@ -93,18 +93,21 @@ fn classify_rate_limit_with_retry_after() {
 }
 
 #[test]
-fn classify_quota_exhausted_429_is_not_retryable() {
-    // A 429 that signals exhausted quota (vs. transient rate limiting) must not
-    // retry: the quota only refreshes next billing period, so retrying just
-    // hammers the same error. Kimi's wording is the regression case here.
+fn classify_quota_exhausted_429_uses_waitable_and_fatal_paths() {
+    // Periodic quota windows are waitable and use the agent's cancellable,
+    // unbounded quota retry path.
     let kimi = "rate_limit_error: You've reached your usage limit for this period. \
         Your quota will be refreshed in the next period. Upgrade to get more.";
     let err = ProviderError::classify(429, kimi, None);
-    assert!(matches!(err, ProviderError::Other(_)));
+    assert!(matches!(err, ProviderError::QuotaLimited(_)));
+    assert!(err.is_quota_limited());
     assert!(!evotengine::retry::should_retry(&err));
 
-    // Other quota phrasings stay non-retryable too.
-    for msg in ["insufficient_quota", "quota exceeded", "out of budget"] {
+    let err = ProviderError::classify(429, "quota exceeded", None);
+    assert!(matches!(err, ProviderError::QuotaLimited(_)));
+
+    // Billing failures have no automatic reset and remain fatal.
+    for msg in ["insufficient_quota", "out of budget"] {
         let err = ProviderError::classify(429, msg, None);
         assert!(matches!(err, ProviderError::Other(_)), "{msg}");
         assert!(!evotengine::retry::should_retry(&err), "{msg}");
@@ -251,11 +254,19 @@ fn stream_auth_error_is_not_retryable() {
 }
 
 #[test]
-fn stream_quota_error_is_not_retryable() {
-    let err = classify_sse_error_event(
+fn stream_quota_error_is_classified_by_recovery_semantics() {
+    let fatal = classify_sse_error_event(
         r#"{"type":"error","error":{"type":"rate_limit_error","message":"insufficient_quota: out of budget"}}"#,
     );
-    assert!(!evotengine::retry::should_retry(&err));
+    assert!(matches!(fatal, ProviderError::Other(_)));
+    assert!(!fatal.is_quota_limited());
+    assert!(!evotengine::retry::should_retry(&fatal));
+
+    let waitable = classify_sse_error_event(
+        r#"{"type":"error","error":{"type":"quota_error","message":"Quota exceeded."}}"#,
+    );
+    assert!(matches!(waitable, ProviderError::QuotaLimited(_)));
+    assert!(waitable.is_quota_limited());
 }
 
 #[test]

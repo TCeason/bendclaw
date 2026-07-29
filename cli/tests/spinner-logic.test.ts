@@ -3,6 +3,7 @@ import {
   createSpinnerState,
   advanceSpinner,
   setSpinnerPhase,
+  setQuotaWaiting,
   recordStreamDelta,
   isSlow,
   formatSpinnerLine,
@@ -17,6 +18,7 @@ describe('createSpinnerState', () => {
     expect(state.phase).toBe('preparing')
     expect(state.streaming).toBe(false)
     expect(state.toolName).toBeNull()
+    expect(state.quotaRetryAt).toBeNull()
     expect(state.tokenCount).toBe(0)
   })
 })
@@ -157,6 +159,21 @@ describe('formatSpinnerLine', () => {
     expect(stripAnsi(formatSpinnerLine(at('waiting'), now))).toContain('Waiting for model…')
     expect(stripAnsi(formatSpinnerLine(at('thinking'), now))).toContain('Thinking…')
     expect(stripAnsi(formatSpinnerLine(at('responding'), now))).toContain('Responding…')
+  })
+
+  test('formats quota waiting as a calm countdown instead of a slow request', () => {
+    const now = Date.now()
+    const state = setQuotaWaiting(createSpinnerState(), 60_000, now)
+    expect(state.phase).toBe('quota_waiting')
+    expect(isSlow(state, now + 30_000)).toBe(false)
+    const line = stripAnsi(formatSpinnerLine(state, now + 18_100, {
+      inputTokens: 100,
+      cacheReadTokens: 90,
+    }))
+    expect(line).toContain('Model quota unavailable · retrying in 42s')
+    expect(line).not.toContain('cache')
+    expect(line).toContain('esc to interrupt')
+    expect(line).not.toContain('slow')
   })
 
   test('contains action label when executing', () => {

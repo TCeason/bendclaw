@@ -35,6 +35,21 @@ describe('term stream machine', () => {
     expect(complete.state.spinnerState.phase).toBe('preparing')
   })
 
+  test('quota waiting replaces the normal spinner without committing retry cards', () => {
+    const initial = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
+    const waiting = reduceRunEvent(initial, {
+      kind: 'quota_waiting',
+      payload: { delay_ms: 60_000 },
+    }, { termRows: 24 })
+
+    expect(waiting.state.spinnerState.phase).toBe('quota_waiting')
+    expect(waiting.state.spinnerState.quotaRetryAt).toBeGreaterThan(Date.now())
+    expect(waiting.commitLines).toEqual([])
+    expect(waiting.writeLines).toEqual([])
+    expect(waiting.state.appState.verboseEvents).toEqual([])
+    expect(waiting.rerenderStatus).toBe(true)
+  })
+
   test('assistant delta keeps the whole message in the dynamic zone (no mid-stream commit)', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()

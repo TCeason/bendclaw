@@ -2,6 +2,8 @@
 
 use tokio::sync::mpsc;
 
+const DEFAULT_QUOTA_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
+
 use super::config::default_convert_to_llm;
 use super::config::AgentLoopConfig;
 use crate::provider::ApiProtocol;
@@ -21,16 +23,33 @@ impl AssistantStreamResult {
     }
 }
 
+fn quota_retry_delay() -> std::time::Duration {
+    // The gateway may balance several accounts, so evot intentionally ignores
+    // any one account's reset hint and probes the gateway at a calm cadence.
+    DEFAULT_QUOTA_RETRY_DELAY
+}
+
+pub(super) struct AssistantStreamInput {
+    pub turn: usize,
+    pub injected_count: usize,
+    pub budget: crate::context::ContextBudgetSnapshot,
+    pub idle_clock: Option<crate::context::IdleClock>,
+}
+
 /// Stream an assistant response from the LLM.
 pub(super) async fn stream_assistant_response(
     context: &AgentContext,
     config: &AgentLoopConfig,
     tx: &mpsc::UnboundedSender<AgentEvent>,
     cancel: &tokio_util::sync::CancellationToken,
-    turn: usize,
-    injected_count: usize,
-    budget: crate::context::ContextBudgetSnapshot,
+    input: AssistantStreamInput,
 ) -> AssistantStreamResult {
+    let AssistantStreamInput {
+        turn,
+        injected_count,
+        budget,
+        idle_clock,
+    } = input;
     // Apply context transform
     let messages = if let Some(transform) = &config.transform_context {
         transform(context.messages.clone())
@@ -81,6 +100,7 @@ pub(super) async fn stream_assistant_response(
     // Retry loop for transient provider errors
     let retry = &config.retry_policy;
     let mut attempt = 0;
+    let mut quota_wait_started = false;
     let shared_metrics = std::sync::Arc::new(std::sync::Mutex::new(LlmCallMetrics::default()));
     let result = loop {
         let thinking_level = crate::provider::effective_thinking_level(
@@ -101,23 +121,26 @@ pub(super) async fn stream_assistant_response(
             prompt_cache_key: context.prompt_cache_key.clone(),
         };
 
-        // Emit LlmCallStart before each provider attempt
-        let llm_stats = crate::context::compute_call_stats(&llm_messages);
-        tx.send(AgentEvent::LlmCallStart {
-            turn,
-            attempt,
-            injected_count,
-            request: LlmCallRequest {
-                model: config.model.clone(),
-                system_prompt: context.system_prompt.clone(),
-                messages: llm_messages.clone(),
-                tools: tool_defs.clone(),
-                max_tokens: config.max_tokens,
-            },
-            stats: llm_stats,
-            budget: budget.clone(),
-        })
-        .ok();
+        // Emit one logical call start. Quota re-probes remain part of this call
+        // so they do not churn observability or the TUI status line.
+        if !quota_wait_started {
+            let llm_stats = crate::context::compute_call_stats(&llm_messages);
+            tx.send(AgentEvent::LlmCallStart {
+                turn,
+                attempt,
+                injected_count,
+                request: LlmCallRequest {
+                    model: config.model.clone(),
+                    system_prompt: context.system_prompt.clone(),
+                    messages: llm_messages.clone(),
+                    tools: tool_defs.clone(),
+                    max_tokens: config.max_tokens,
+                },
+                stats: llm_stats,
+                budget: budget.clone(),
+            })
+            .ok();
+        }
 
         let call_start = std::time::Instant::now();
         let (stream_tx, mut stream_rx) = mpsc::unbounded_channel();
@@ -335,6 +358,25 @@ pub(super) async fn stream_assistant_response(
         };
 
         match &result {
+            Err(e) if e.is_quota_limited() && !cancel.is_cancelled() => {
+                // Quota exhaustion is a wait state, not a failed assistant
+                // response. Retry the exact request indefinitely until it
+                // succeeds or the user cancels. This does not consume the
+                // ordinary transient retry budget.
+                forward_handle.abort();
+                let delay = quota_retry_delay();
+                tx.send(AgentEvent::QuotaWait {
+                    delay_ms: delay.as_millis() as u64,
+                })
+                .ok();
+                quota_wait_started = true;
+                let _idle_pause = idle_clock.as_ref().map(crate::context::IdleClock::pause);
+                tokio::select! {
+                    _ = cancel.cancelled() => break Err(ProviderError::Cancelled),
+                    _ = tokio::time::sleep(delay) => {}
+                }
+                continue;
+            }
             Err(e)
                 if crate::retry::should_retry(e)
                     && attempt < retry.max_retries()
@@ -429,6 +471,18 @@ pub(super) async fn stream_assistant_response(
             AssistantStreamResult::complete(outcome.into_message())
         }
         Err(e) => {
+            if matches!(e, ProviderError::Cancelled) && cancel.is_cancelled() {
+                return AssistantStreamResult::complete(Message::Assistant {
+                    content: vec![],
+                    stop_reason: StopReason::Aborted,
+                    model: config.model.clone(),
+                    provider: target_provider,
+                    usage: Usage::default(),
+                    timestamp: now_ms(),
+                    error_message: None,
+                    response_id: None,
+                });
+            }
             tx.send(AgentEvent::LlmCallEnd {
                 turn,
                 attempt,

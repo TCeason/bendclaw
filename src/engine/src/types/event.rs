@@ -88,6 +88,11 @@ pub enum AgentEvent {
     Error {
         error: AgentErrorInfo,
     },
+    /// A provider quota window is exhausted. The same request will be retried
+    /// after `delay_ms`; this event is transient UI state and is not persisted.
+    QuotaWait {
+        delay_ms: u64,
+    },
     LlmCallStart {
         turn: usize,
         attempt: usize,

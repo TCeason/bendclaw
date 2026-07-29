@@ -19,6 +19,11 @@ pub enum ProviderError {
     Auth(String),
     #[error("{}", display_rate_limited(*.retry_after_ms))]
     RateLimited { retry_after_ms: Option<u64> },
+    /// A provider quota window is exhausted. Unlike short-lived rate limiting,
+    /// this is retried by the agent's cancellable long-wait path and does not
+    /// consume the ordinary bounded retry budget.
+    #[error("Quota limited: {0}")]
+    QuotaLimited(String),
     #[error("Context overflow: {message}")]
     ContextOverflow { message: String },
     #[error("Cancelled")]
@@ -47,8 +52,10 @@ impl ProviderError {
             Self::ContextOverflow {
                 message: message.to_string(),
             }
-        } else if status == 429 && is_quota_exceeded(message) {
+        } else if is_fatal_quota_exhaustion(message) {
             Self::Other(message.to_string())
+        } else if is_waitable_quota_limit(message) {
+            Self::QuotaLimited(message.to_string())
         } else if status == 429 {
             Self::RateLimited { retry_after_ms }
         } else if status == 529 || is_overloaded_message(message) {
@@ -66,6 +73,10 @@ impl ProviderError {
 
     pub fn is_context_overflow(&self) -> bool {
         matches!(self, Self::ContextOverflow { .. })
+    }
+
+    pub fn is_quota_limited(&self) -> bool {
+        matches!(self, Self::QuotaLimited(_))
     }
 
     pub fn retry_after(&self) -> Option<Duration> {
@@ -110,8 +121,11 @@ pub(crate) fn classify_stream_error(
     if is_overloaded_message(message) {
         return ProviderError::Overloaded(message.to_string());
     }
-    if is_quota_exceeded(message) {
+    if is_fatal_quota_exhaustion(message) {
         return ProviderError::Other(message.to_string());
+    }
+    if is_waitable_quota_limit(message) {
+        return ProviderError::QuotaLimited(message.to_string());
     }
     match value.and_then(provider_error_type) {
         Some(error_type) if is_auth_error_type(error_type) => {
@@ -238,14 +252,22 @@ pub(crate) fn is_overloaded_message(message: &str) -> bool {
     message.to_lowercase().contains("overloaded")
 }
 
-fn is_quota_exceeded(message: &str) -> bool {
+fn is_waitable_quota_limit(message: &str) -> bool {
     let lower = message.to_lowercase();
-    lower.contains("quota_exceeded")
+    lower.contains("quota_error")
+        || lower.contains("quota_exceeded")
         || lower.contains("quota exceeded")
-        || lower.contains("insufficient_quota")
+        || lower.contains("usage limit") // Kimi: "reached your usage limit for this period"
+        || lower.contains("monthly request limit")
+        || lower.contains("daily request limit")
+        || lower.contains("quota will be refreshed")
+}
+
+fn is_fatal_quota_exhaustion(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    lower.contains("insufficient_quota")
         || lower.contains("out of budget")
         || lower.contains("available balance")
-        || lower.contains("usage limit") // Kimi: "reached your usage limit for this period"
         || lower.contains("billing")
 }
 

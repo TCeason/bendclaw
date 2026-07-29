@@ -674,6 +674,9 @@ impl StreamProvider for FailThenSucceedProvider {
                 ProviderError::RateLimited { retry_after_ms } => ProviderError::RateLimited {
                     retry_after_ms: *retry_after_ms,
                 },
+                ProviderError::QuotaLimited(message) => {
+                    ProviderError::QuotaLimited(message.clone())
+                }
                 ProviderError::Network(msg) => ProviderError::Network(msg.clone()),
                 ProviderError::Transient(msg) => ProviderError::Transient(msg.clone()),
                 ProviderError::Auth(msg) => ProviderError::Auth(msg.clone()),
@@ -770,6 +773,109 @@ async fn test_retry_on_rate_limit_succeeds() {
             .fail_count
             .load(std::sync::atomic::Ordering::SeqCst),
         3
+    );
+}
+
+#[tokio::test]
+async fn test_quota_limit_waits_without_using_bounded_retry_budget() {
+    let provider: std::sync::Arc<FailThenSucceedProvider> =
+        std::sync::Arc::new(FailThenSucceedProvider {
+            fail_count: std::sync::atomic::AtomicUsize::new(0),
+            max_failures: 2,
+            error: ProviderError::QuotaLimited("Quota exceeded".into()),
+            inner: MockProvider::text("Success after quota reset"),
+        });
+
+    let config = AgentLoopConfig {
+        provider: provider.clone(),
+        model: "mock".into(),
+        api_key: "test".into(),
+        thinking_level: ThinkingLevel::Off,
+        max_tokens: None,
+        model_config: None,
+        convert_to_llm: None,
+        transform_context: None,
+        get_steering_messages: None,
+        get_follow_up_messages: None,
+        context_config: None,
+        compaction_context: None,
+        compaction_fallback_context: None,
+        initial_compaction_state: None,
+        execution_limits: None,
+        cache_config: CacheConfig::default(),
+        tool_execution: ToolExecutionStrategy::default(),
+        retry_policy: evotengine::RetryPolicy::disabled(),
+        before_turn: None,
+        after_turn: None,
+        spill: None,
+    };
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: Vec::new(),
+        tools: Vec::new(),
+        cwd: std::path::PathBuf::new(),
+        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+        prompt_cache_key: None,
+    };
+    // Abort while the first quota wait is sleeping; this verifies cancellation
+    // remains responsive without waiting for the production retry interval.
+    let cancel = CancellationToken::new();
+    let cancel_after_wait = cancel.clone();
+    let events_after_wait = std::sync::Arc::new(tokio::sync::Notify::new());
+    let notify = events_after_wait.clone();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let watcher = tokio::spawn(async move {
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            let quota_wait = matches!(event, AgentEvent::QuotaWait { .. });
+            events.push(event);
+            if quota_wait {
+                notify.notify_one();
+                break;
+            }
+        }
+        events
+    });
+    let cancellation = tokio::spawn(async move {
+        events_after_wait.notified().await;
+        cancel_after_wait.cancel();
+    });
+
+    let messages = agent_loop(
+        vec![AgentMessage::Llm(Message::user("hi"))],
+        &mut context,
+        &config,
+        tx,
+        cancel,
+    )
+    .await;
+    let _ = cancellation.await;
+    let events = watcher.await.unwrap_or_default();
+
+    assert_eq!(messages.len(), 2);
+    assert_eq!(
+        provider
+            .fail_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    let quota_delays: Vec<u64> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::QuotaWait { delay_ms } => Some(*delay_ms),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(quota_delays, vec![60_000]);
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::LlmCallRetry { .. })));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, AgentEvent::LlmCallStart { .. }))
+            .count(),
+        1
     );
 }
 

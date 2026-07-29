@@ -1,6 +1,6 @@
 import { buildError, buildVerboseEvent, buildEventCard, isVisibleEvent, type OutputLine } from '../../render/output.js'
 import { formatDuration } from '../../render/format.js'
-import { recordStreamDelta, resetStreamStats, setSpinnerPhase, type SpinnerState } from '../spinner.js'
+import { recordStreamDelta, resetStreamStats, setQuotaWaiting, setSpinnerPhase, type SpinnerState } from '../spinner.js'
 import { assistantToolCalls } from './assistant-content.js'
 import { assistantMessageToOutputLines } from '../../render/assistant.js'
 import { applyEvent } from './reducer.js'
@@ -158,6 +158,27 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
         spinnerState: setSpinnerPhase(resetStreamStats(state.spinnerState), 'executing', toolName),
       }
     }
+    rerenderStatus = true
+  }
+
+  if (event.kind === 'quota_waiting') {
+    const flushed = {
+      state: {
+        ...state,
+        appState: { ...state.appState, currentAssistantContent: [] },
+      },
+      lines: [] as OutputLine[],
+      expandedLines: undefined,
+    }
+    state = {
+      ...flushed.state,
+      activeLlmCall: false,
+      spinnerState: setQuotaWaiting(
+        flushed.state.spinnerState,
+        (p.delay_ms as number) ?? (p.retry_delay_ms as number) ?? 60_000,
+      ),
+    }
+    commitLines.push(...flushed.lines)
     rerenderStatus = true
   }
 

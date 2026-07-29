@@ -549,6 +549,12 @@ fn map_agent_event(
     match event {
         evot_engine::AgentEvent::AgentStart => vec![],
 
+        evot_engine::AgentEvent::QuotaWait { delay_ms } => {
+            vec![RuntimeEvent::Public(RunEventPayload::QuotaWaiting {
+                delay_ms: *delay_ms,
+            })]
+        }
+
         evot_engine::AgentEvent::AgentEnd { messages } => {
             let transcripts = from_agent_messages(messages);
             let usage = total_usage(messages);

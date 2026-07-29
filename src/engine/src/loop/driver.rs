@@ -17,6 +17,7 @@ use super::compaction::CompactionRequestShape;
 use super::config::AgentLoopConfig;
 use super::doom_loop::DoomLoopDetector;
 use super::llm_call::stream_assistant_response;
+use super::llm_call::AssistantStreamInput;
 use super::thinking_only_guard::ThinkingOnlyGuard;
 use super::tool_exec::execute_tool_calls;
 use super::tool_exec::skip_tool_call_doom_loop;
@@ -317,16 +318,14 @@ async fn run_loop(
         );
 
         // Stream assistant response
-        let assistant_result = stream_assistant_response(
-            context,
-            config,
-            tx,
-            cancel,
-            turn_number,
-            injected_count,
-            budget_snapshot,
-        )
-        .await;
+        let assistant_result =
+            stream_assistant_response(context, config, tx, cancel, AssistantStreamInput {
+                turn: turn_number,
+                injected_count,
+                budget: budget_snapshot,
+                idle_clock: tracker.as_ref().map(ExecutionTracker::idle_clock),
+            })
+            .await;
         let message = assistant_result.message;
 
         // Strip any `<system-reminder>` / `<system>` tags or status-template

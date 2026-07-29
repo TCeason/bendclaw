@@ -298,6 +298,25 @@ fn run_event_round_trip_tool_finished() {
 }
 
 #[test]
+fn run_event_round_trip_quota_waiting() -> Result<(), Box<dyn std::error::Error>> {
+    let event = RunEvent::new(
+        "run-quota".into(),
+        "session-quota".into(),
+        3,
+        RunEventPayload::QuotaWaiting { delay_ms: 60_000 },
+    );
+    let json = serde_json::to_string(&event)?;
+    let parsed: serde_json::Value = serde_json::from_str(&json)?;
+    assert_eq!(parsed["kind"], "quota_waiting");
+    assert_eq!(parsed["payload"]["delay_ms"], 60_000);
+    let decoded: RunEvent = serde_json::from_str(&json)?;
+    assert!(matches!(decoded.payload, RunEventPayload::QuotaWaiting {
+        delay_ms: 60_000
+    }));
+    Ok(())
+}
+
+#[test]
 fn run_event_round_trip_llm_call_retry() -> Result<(), Box<dyn std::error::Error>> {
     let event = RunEvent::new(
         "run-1".into(),

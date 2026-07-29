@@ -113,6 +113,11 @@ pub enum RunEventPayload {
         delay_ms: u64,
         error: String,
     },
+    /// Transient quota wait state. This is public for live UIs but deliberately
+    /// omitted from persisted transcript observability.
+    QuotaWaiting {
+        delay_ms: u64,
+    },
     LlmCallCompleted {
         turn: usize,
         attempt: usize,
@@ -248,6 +253,7 @@ impl RunEventPayload {
             Self::ToolFinished { .. } => "tool_finished",
             Self::LlmCallStarted { .. } => "llm_call_started",
             Self::LlmCallRetry { .. } => "llm_call_retry",
+            Self::QuotaWaiting { .. } => "quota_waiting",
             Self::LlmCallCompleted { .. } => "llm_call_completed",
             Self::ContextCompactionStarted { .. } => "context_compaction_started",
             Self::ContextCompactionPhase { .. } => "context_compaction_phase",
