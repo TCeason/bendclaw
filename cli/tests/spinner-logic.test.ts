@@ -293,14 +293,40 @@ describe('formatSpinnerLine', () => {
   test('cache hit percent includes cache-write tokens in the denominator', () => {
     const now = Date.now()
     const state = { ...createSpinnerState(), phaseStartedAt: now - 5000 }
-    // 80 read / (10 + 80 + 10) = 80% — same formula as pi CH%
+    // 80 read / (10 + 80 + 10) = 80%; the write bucket surfaces as `+`.
     const line = stripAnsi(formatSpinnerLine(state, now, {
       inputTokens: 10_000,
       outputTokens: 100,
       cacheReadTokens: 80_000,
       cacheWriteTokens: 10_000,
     }))
-    expect(line).toContain('cache 80k 80%')
+    expect(line).toContain('cache 80k 80% +10k')
+  })
+
+  test('near-full hit shows one decimal instead of rounding to 100%', () => {
+    const now = Date.now()
+    const state = { ...createSpinnerState(), phaseStartedAt: now - 5000 }
+    // 200000 / 200504 = 99.75% — Math.round would show a fake "100%".
+    const line = stripAnsi(formatSpinnerLine(state, now, {
+      inputTokens: 4,
+      outputTokens: 900,
+      cacheReadTokens: 200_000,
+      cacheWriteTokens: 500,
+    }))
+    expect(line).toContain('cache 200k 99.7% +500')
+    expect(line).not.toContain('100%')
+  })
+
+  test('shows 100% only when every billed prompt token was a cache read', () => {
+    const now = Date.now()
+    const state = { ...createSpinnerState(), phaseStartedAt: now - 5000 }
+    const line = stripAnsi(formatSpinnerLine(state, now, {
+      inputTokens: 0,
+      outputTokens: 40,
+      cacheReadTokens: 150_000,
+      cacheWriteTokens: 0,
+    }))
+    expect(line).toContain('cache 150k 100%')
   })
 
   test('spinnerStatsFromLastUsage hides prior usage until the active call completes', () => {

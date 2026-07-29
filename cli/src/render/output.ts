@@ -721,25 +721,25 @@ export function buildVerboseEvent(eventText: string): OutputLine[] {
   }))
 }
 
-/** True for events that must always reach the TUI: LLM errors/retries and
- *  compactions that actually changed context. Per-call/no-op stats remain in
- *  screen.log only. */
+/** True for events that must always reach the TUI: LLM errors/retries,
+ *  significant prompt-cache misses, and compactions that actually changed
+ *  context. Per-call/no-op stats remain in screen.log only. */
 export function isVisibleEvent(text: string): boolean {
-  return /^\[LLM\]\s+[↻✗]/u.test(text)
+  return /^\[LLM\]\s+[↻✗⚠]/u.test(text)
     || /^\[COMPACT\]\s+✓\s+·\s+(?!skipped\b)/u.test(text)
 }
 
 /**
- * Render a visible LLM event (error / retry) as a tool-style card so it reads
- * like any other tool in the stream:
- *   ✦ llm  <model|retry>
- *     ✗|↻ · <meta>
+ * Render a visible LLM event (error / retry / cache-miss notice) as a
+ * tool-style card so it reads like any other tool in the stream:
+ *   ✦ llm  <model|retry|cache miss …>
+ *     ✗|↻|⚠ · <meta>
  *     <error message>
  * Falls back to plain verbose lines if the text isn't in the expected shape.
  */
 export function buildLlmCard(text: string): OutputLine[] {
   const rawLines = text.split('\n')
-  const head = (rawLines[0] ?? '').match(/^\[LLM\]\s+([↻✗])\s*·?\s*(.*)$/u)
+  const head = (rawLines[0] ?? '').match(/^\[LLM\]\s+([↻✗⚠])\s*·?\s*(.*)$/u)
   if (!head) return buildVerboseEvent(text)
   const mark = head[1]!
   const rest = (head[2] ?? '').trim()

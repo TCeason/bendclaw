@@ -3,6 +3,8 @@
  * Pure logic: returns the string to display, no React.
  */
 
+import { formatCacheHitPercent } from '../render/cache.js'
+
 function getSpinnerChars(): string[] {
   if (process.env.TERM === 'xterm-ghostty') {
     return ['·', '✢', '✳', '✶', '✻', '*']
@@ -258,29 +260,19 @@ function formatLiveTokPerSec(state: SpinnerState, now: number): string {
 }
 
 /**
- * Cache hit share of billed prompt tokens.
- * Provider buckets are disjoint: uncached input + cache read + cache write.
+ * Compact spinner cache segment: read amount + hit percent + newly written
+ * tokens (`+write` — the cache-billed part not served from cache this call).
  */
-export function cacheHitPercent(
-  inputTokens: number,
-  cacheReadTokens: number,
-  cacheWriteTokens = 0,
-): number {
-  const total = inputTokens + cacheReadTokens + cacheWriteTokens
-  if (total <= 0) return 0
-  return Math.round((cacheReadTokens / total) * 100)
-}
-
-/** Compact spinner cache segment: absolute read amount + hit percent. */
 export function formatCacheLabel(
   inputTokens: number,
   cacheReadTokens: number,
   cacheWriteTokens = 0,
 ): string | null {
   if (cacheReadTokens <= 0 && cacheWriteTokens <= 0) return null
-  const pct = cacheHitPercent(inputTokens, cacheReadTokens, cacheWriteTokens)
-  if (cacheReadTokens > 0) return `cache ${formatTokens(cacheReadTokens)} ${pct}%`
-  return `cache write ${formatTokens(cacheWriteTokens)}`
+  if (cacheReadTokens <= 0) return `cache write ${formatTokens(cacheWriteTokens)}`
+  const pct = formatCacheHitPercent(inputTokens, cacheReadTokens, cacheWriteTokens)
+  const writeSuffix = cacheWriteTokens > 0 ? ` +${formatTokens(cacheWriteTokens)}` : ''
+  return `cache ${formatTokens(cacheReadTokens)} ${pct}%${writeSuffix}`
 }
 
 /**

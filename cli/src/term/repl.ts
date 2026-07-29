@@ -439,6 +439,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       // token usage renders on the spinner; session totals belong to logs.
       contextTokens: appState.sessionTokens.contextTokens,
       contextWindow: appState.sessionTokens.contextWindow,
+      cacheUsage: appState.promptCache?.usage ?? null,
       thinkingLevel: configInfo?.thinkingLevel ?? '',
     }
   }
@@ -898,6 +899,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         contextTokens: outcome.tokens_after,
         contextWindow: outcome.context_window || appState.sessionTokens.contextWindow,
       },
+      // Manual compaction rewrote the context; the next cold call is not a miss.
+      promptCache: null,
     }
     renderer.clearScreen()
     compactLines.length = 0

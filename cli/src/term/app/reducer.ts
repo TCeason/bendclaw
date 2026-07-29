@@ -4,8 +4,9 @@
 
 import type { RunEvent } from '../../native/index.js'
 import { formatLlmCallStarted, formatLlmCallRetry, formatLlmCallCompleted, formatCompactionStarted, formatCompactionCompleted } from '../../render/verbose.js'
+import { detectCacheMiss, formatCacheMissNotice, nextPromptCacheSnapshot } from '../../render/cache.js'
 import { emptyRunStats, type AppState } from './state.js'
-import type { CompactRecord, MessageStats, UIAssistantBlock, UIMessage, UIToolCall } from './types.js'
+import type { CompactRecord, MessageStats, UIAssistantBlock, UIMessage, UIToolCall, VerboseEvent } from './types.js'
 import { appendAssistantDelta, assistantToolCalls, completedAssistantContent, findAssistantToolCall, updateAssistantToolCall, updateToolCallInMessages, upsertAssistantToolCall } from './assistant-content.js'
 import { parseStreamingToolArgs } from './tool-args.js'
 
@@ -285,7 +286,10 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
 
       const cacheReadTok = (usage?.cache_read as number) ?? 0
       const cacheWriteTok = (usage?.cache_write as number) ?? 0
+      const model = (p.model as string) ?? state.model
 
+      let promptCache = state.promptCache
+      let missNotice: string | null = null
       if (usage) {
         stats.inputTokens += inputTok
         stats.outputTokens += outputTok
@@ -298,6 +302,13 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
           cacheWriteTokens: cacheWriteTok,
         }
 
+        // Miss = tokens from the previous prompt re-billed instead of cache-read.
+        const buckets = { inputTokens: inputTok, cacheReadTokens: cacheReadTok, cacheWriteTokens: cacheWriteTok }
+        const now = Date.now()
+        const miss = detectCacheMiss(promptCache, buckets, model, now)
+        missNotice = miss ? formatCacheMissNotice(miss) : null
+        promptCache = nextPromptCacheSnapshot(promptCache, buckets, model, now)
+
         // Provider usage buckets are disjoint.
         const realContextTokens =
           inputTok + cacheReadTok + cacheWriteTok + outputTok
@@ -307,7 +318,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       }
 
       stats.llmCallDetails = [...stats.llmCallDetails, {
-        model: (p.model as string) ?? state.model,
+        model,
         durationMs,
         inputTokens: inputTok,
         outputTokens: outputTok,
@@ -320,24 +331,31 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
 
       const data: Record<string, unknown> = {
         ...p,
-        model: (p.model as string) ?? state.model,
+        model,
         turn: event.turn,
         estimated_context_tokens: state.currentRunStats.contextTokens,
         context_window: state.currentRunStats.contextWindow,
       }
       const result = formatLlmCallCompleted(data)
 
+      const completedEvents: VerboseEvent[] = [
+        { kind: 'llm_completed', text: result.text, expandedText: result.expandedText },
+      ]
+      if (missNotice) completedEvents.push({ kind: 'llm_completed', text: missNotice })
+
       return {
         ...state,
         currentRunStats: stats,
+        promptCache,
         sessionTokens: {
           inputTokens: state.sessionTokens.inputTokens + inputTok,
           outputTokens: state.sessionTokens.outputTokens + outputTok,
           cacheReadTokens: state.sessionTokens.cacheReadTokens + cacheReadTok,
+          cacheWriteTokens: state.sessionTokens.cacheWriteTokens + cacheWriteTok,
           contextTokens: stats.contextTokens,
           contextWindow: stats.contextWindow,
         },
-        verboseEvents: [...state.verboseEvents, { kind: 'llm_completed', text: result.text, expandedText: result.expandedText }],
+        verboseEvents: [...state.verboseEvents, ...completedEvents],
       }
     }
 
@@ -388,6 +406,8 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       return {
         ...state,
         currentRunStats: updatedStats,
+        // Context legitimately changed; the next cold call is not a miss.
+        promptCache: compactRecord ? null : state.promptCache,
         verboseEvents: [...state.verboseEvents, { kind: 'compact_done', text }],
       }
     }

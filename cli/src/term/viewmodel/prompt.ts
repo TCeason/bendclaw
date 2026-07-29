@@ -4,6 +4,7 @@ import type { CompletionMenu } from '../input/editor.js'
 import { nextGraphemeBoundary, wrapEditorText } from '../input/grapheme.js'
 import { CURSOR_MARKER } from '../renderer.js'
 import { line, block, plain, dim, colored, inverse, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
+import { formatCacheHitPercent, type PromptUsageBuckets } from '../../render/cache.js'
 
 export interface PromptVMInput {
   lines: string[]
@@ -26,6 +27,8 @@ export interface PromptVMInput {
   gitBranch: string | null
   contextTokens: number
   contextWindow: number
+  /** Prompt buckets of the last billed request; null hides the cache segment. */
+  cacheUsage?: PromptUsageBuckets | null
 }
 
 export interface PromptLayoutOptions {
@@ -164,14 +167,15 @@ function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
     ? input.contextTokens / input.contextWindow * 100
     : 0
   const layouts: FooterLayout[] = [
-    { dashboard: true, context: 'full', provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
-    { dashboard: false, context: 'full', provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
-    { dashboard: false, context: 'compact', provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
-    { dashboard: false, context: 'compact', provider: false, branch: true, thinking: true, model: true, truncateCwd: false },
-    { dashboard: false, context: 'compact', provider: false, branch: false, thinking: true, model: true, truncateCwd: false },
-    { dashboard: false, context: 'hidden', provider: false, branch: false, thinking: true, model: true, truncateCwd: true },
-    { dashboard: false, context: 'hidden', provider: false, branch: false, thinking: false, model: true, truncateCwd: true },
-    { dashboard: false, context: 'hidden', provider: false, branch: false, thinking: false, model: false, truncateCwd: true },
+    { dashboard: true, context: 'full', cache: true, provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
+    { dashboard: false, context: 'full', cache: true, provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
+    { dashboard: false, context: 'compact', cache: true, provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
+    { dashboard: false, context: 'compact', cache: false, provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
+    { dashboard: false, context: 'compact', cache: false, provider: false, branch: true, thinking: true, model: true, truncateCwd: false },
+    { dashboard: false, context: 'compact', cache: false, provider: false, branch: false, thinking: true, model: true, truncateCwd: false },
+    { dashboard: false, context: 'hidden', cache: false, provider: false, branch: false, thinking: true, model: true, truncateCwd: true },
+    { dashboard: false, context: 'hidden', cache: false, provider: false, branch: false, thinking: false, model: true, truncateCwd: true },
+    { dashboard: false, context: 'hidden', cache: false, provider: false, branch: false, thinking: false, model: false, truncateCwd: true },
   ]
 
   for (const layout of layouts) {
@@ -187,6 +191,7 @@ type FooterContextDetail = 'full' | 'compact' | 'hidden'
 interface FooterLayout {
   dashboard: boolean
   context: FooterContextDetail
+  cache: boolean
   provider: boolean
   branch: boolean
   thinking: boolean
@@ -238,6 +243,15 @@ function buildFooterCandidate(
             ? colored(text, 'yellow')
             : dim(text),
       ])
+    }
+    if (layout.cache && input.cacheUsage
+      && input.cacheUsage.cacheReadTokens + input.cacheUsage.cacheWriteTokens > 0) {
+      const pct = formatCacheHitPercent(
+        input.cacheUsage.inputTokens,
+        input.cacheUsage.cacheReadTokens,
+        input.cacheUsage.cacheWriteTokens,
+      )
+      groups.push([dim(`cache: ${pct}%`)])
     }
     return groups.flatMap((group, index) => index === 0 ? group : [dim(' │ '), ...group])
   }

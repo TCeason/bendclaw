@@ -5,6 +5,7 @@
  * to produce identical output from stats event data.
  */
 import { formatDuration, humanTokens, renderBar, renderPositionBar } from './format.js'
+import { formatCacheHitPercent } from './cache.js'
 
 function msgBreakdown(ms: Record<string, any> | undefined): string {
   if (!ms) return ''
@@ -217,8 +218,7 @@ export function formatLlmCallCompleted(data: Record<string, unknown>): { text: s
   const outputTok = usage?.output ?? (data.output_tokens as number) ?? 0
   const cacheReadTok = usage?.cache_read ?? (data.cache_read as number) ?? 0
   const cacheWriteTok = usage?.cache_write ?? (data.cache_write as number) ?? 0
-  const cacheTotalInput = inputTok + cacheReadTok + cacheWriteTok
-  const cacheHitRate = cacheTotalInput > 0 ? (cacheReadTok / cacheTotalInput * 100).toFixed(0) : '0'
+  const cacheHitRate = formatCacheHitPercent(inputTok, cacheReadTok, cacheWriteTok)
   const ttfbMs = (data.time_to_first_byte_ms as number) ?? metrics?.ttfb_ms ?? 0
   const streamingMs = metrics?.streaming_ms ?? Math.max(0, durationMs - ttfbMs)
   // Real generation speed: output tokens over the pure streaming window (first

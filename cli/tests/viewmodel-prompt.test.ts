@@ -219,6 +219,48 @@ describe('prompt footer', () => {
     expect(footer).toBe('~/github/evotai/evot (main) │ gpt-5.6-sol@anthropic • high │ context: 38.9% (105.8k/272.0k)')
   })
 
+  test('shows last-call cache hit rate and drops it before provider when narrow', () => {
+    const footerAt = (columns: number) => blocksToLines(buildPromptFooterBlocks(defaultInput({
+      columns,
+      model: 'gpt-5.6-sol',
+      provider: 'anthropic',
+      thinkingLevel: 'high',
+      contextTokens: 105800,
+      contextWindow: 272000,
+      cacheUsage: { inputTokens: 4, cacheReadTokens: 200_000, cacheWriteTokens: 500 },
+    }))).map(stripAnsi)[0]!
+
+    const wide = footerAt(160)
+    expect(wide).toContain('context: 38.9% (105.8k/272.0k)')
+    expect(wide).toContain('cache: 99.7%')
+
+    // cache is dropped before provider/branch/context.
+    const narrow = footerAt(80)
+    expect(narrow).not.toContain('cache:')
+    expect(narrow).toContain('@anthropic')
+    expect(narrow).toContain('context: 38.9%')
+  })
+
+  test('hides the cache segment when the last call reported no cache activity', () => {
+    const plain = renderPlain(defaultInput({
+      columns: 200,
+      contextTokens: 105800,
+      contextWindow: 272000,
+      cacheUsage: { inputTokens: 50_000, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    }))
+    expect(plain).not.toContain('cache:')
+  })
+
+  test('cold cache write shows 0% instead of hiding', () => {
+    const plain = renderPlain(defaultInput({
+      columns: 200,
+      contextTokens: 105800,
+      contextWindow: 272000,
+      cacheUsage: { inputTokens: 500, cacheReadTokens: 0, cacheWriteTokens: 20_000 },
+    }))
+    expect(plain).toContain('cache: 0%')
+  })
+
   test('degrades footer details in priority order as width narrows', () => {
     const footerAt = (columns: number) => blocksToLines(buildPromptFooterBlocks(defaultInput({
       columns,
