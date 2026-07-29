@@ -106,6 +106,20 @@ fn test_glm_5_2_xhigh_maps_to_max_effort() {
 }
 
 #[test]
+fn test_gpt_5_6_anthropic_route_uses_enabled_wire_with_effort() {
+    let config = StreamConfigBuilder::anthropic()
+        .model("gpt-5.6-sol")
+        .model_config(ModelConfig::anthropic("gpt-5.6-sol", "GPT-5.6 Sol"))
+        .thinking(ThinkingLevel::Max)
+        .build();
+
+    let body = build_request_body(&config, false);
+    assert_eq!(body["thinking"]["type"], "enabled");
+    assert_eq!(body["thinking"]["budget_tokens"], 16_384);
+    assert_eq!(body["output_config"]["effort"], "max");
+}
+
+#[test]
 fn test_anthropic_request_omits_temperature() {
     let config = StreamConfigBuilder::anthropic()
         .model("claude-sonnet-4-5")

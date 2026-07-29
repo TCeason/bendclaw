@@ -1,6 +1,6 @@
 ---
 name: humanize
-description: "Rewrite AI-generated Chinese or English text to read as naturally human-written. Detects and removes AI tells (formulaic structure, hedging, translation-ese, mechanical parallelism, filler phrases, emoji/bullet overuse) while preserving meaning, tone, and register. Trigger phrases: humanize, remove AI tone, make it sound human, rewrite naturally, de-AI, sound less robotic, AI味去掉, 去AI感, 像人写的, 润色去机器味, 去翻译腔, 去机械感."
+description: "Humanize or 去AI感: rewrite Chinese or English AI text naturally while preserving meaning and tone. Trigger phrases: humanize, remove AI tone, sound human, de-AI, AI味去掉, 去AI感, 像人写的, 润色去机器味, 去翻译腔, 去机械感."
 ---
 
 # Humanize — AI Text De-roboticizer (Chinese & English)
@@ -93,7 +93,7 @@ English:
 ## Output Format
 
 ```
-humanize v1.0 — {zh|en|mixed} / change rate: {N}%
+Humanized — {zh|en|mixed} / change rate: {N}%
 
 [rewritten text]
 

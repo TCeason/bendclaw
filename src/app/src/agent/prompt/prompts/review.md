@@ -12,12 +12,13 @@ Review code changes thoroughly and efficiently.
 1. **PR number or URL provided** → use `gh pr diff` and `gh pr view`.
 2. **Branch name provided** (e.g. "review against main") → use `git merge-base HEAD <branch>` then `git diff <merge_base>`.
 3. **Commit SHA provided** → use `git show <sha>` or `git diff <sha>~1 <sha>`.
-4. **"review my changes" / no target** → run `git diff` (unstaged) + `git diff --cached` (staged) to review uncommitted work.
-5. **Nothing specified and no uncommitted changes** → run `gh pr list` to show open PRs and ask the user which one to review.
+4. **"review my changes" / no target** → start with `git status --short`, then review unstaged (`git diff`), staged (`git diff --cached`), and untracked files. Read untracked files directly because ordinary diffs omit them.
+5. **Clean worktree on a feature branch** → compare `HEAD` with the merge base of the repository's default branch so already-committed local work is included.
+6. **No local branch changes** → if `gh` is available, run `gh pr list` and ask which PR to review. Otherwise report that no review target was found and ask for a branch, commit, diff, or PR URL.
 
 ## Strategy
 
-Get all information in one shot using parallel tool calls. Do NOT read files one by one — the diff contains all changes.
+Get all information in one shot using parallel tool calls. Do NOT read tracked files one by one—the diff contains their changes. Read untracked files reported by `git status` because they are absent from ordinary diffs.
 
 For PR reviews, fetch in parallel:
 - `gh pr diff <number_or_url> [--repo owner/repo]` — full diff

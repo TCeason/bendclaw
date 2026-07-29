@@ -33,6 +33,40 @@ fn load_from_directory() {
 }
 
 #[test]
+fn loads_folded_yaml_description() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    let skill_dir = tmp.path().join("folded");
+    fs::create_dir_all(&skill_dir)?;
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: folded\ndescription: >-\n  Search prior incidents and\n  recall durable findings.\n---\n\nBody.\n",
+    )?;
+
+    let specs = load_fs_skills(&[tmp.path().to_path_buf()])?;
+    assert_eq!(
+        specs[0].description,
+        "Search prior incidents and recall durable findings."
+    );
+    Ok(())
+}
+
+#[test]
+fn handles_crlf_frontmatter() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    let skill_dir = tmp.path().join("crlf");
+    fs::create_dir_all(&skill_dir)?;
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\r\nname: crlf\r\ndescription: CRLF skill\r\n---\r\n\r\n# Body\r\n",
+    )?;
+
+    let specs = load_fs_skills(&[tmp.path().to_path_buf()])?;
+    assert_eq!(specs[0].description, "CRLF skill");
+    assert_eq!(specs[0].instructions, "\r\n# Body\r\n");
+    Ok(())
+}
+
+#[test]
 fn name_comes_from_directory_not_frontmatter() {
     let tmp = TempDir::new().unwrap();
     let skill_dir = tmp.path().join("my-tool");
@@ -140,6 +174,19 @@ fn handles_quoted_description() {
 // ---------------------------------------------------------------------------
 // Builtin skill tests
 // ---------------------------------------------------------------------------
+
+#[test]
+fn all_builtin_skills_load() -> Result<(), Box<dyn std::error::Error>> {
+    let empty: Vec<std::path::PathBuf> = vec![];
+    let specs = load_skills(&empty)?;
+    let names: Vec<&str> = specs.iter().map(|skill| skill.name.as_str()).collect();
+
+    assert_eq!(names, vec![
+        "harden", "humanize", "memory", "opencli", "review"
+    ]);
+    assert!(specs.iter().all(|skill| !skill.description.is_empty()));
+    Ok(())
+}
 
 #[test]
 fn builtin_review_skill_loaded() {

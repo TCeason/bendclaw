@@ -1,3 +1,4 @@
+use super::super::capabilities::AnthropicThinkingWire;
 use super::super::capabilities::Verbosity;
 use super::profile::ModelProfile;
 use super::profile::ReasoningProfile;
@@ -33,22 +34,22 @@ const LEGACY_LEVELS: &[(ThinkingLevel, Option<&str>)] = &[
 const GPT_REASONING: ReasoningProfile = ReasoningProfile {
     levels: GPT_LEVELS,
     default: ThinkingLevel::Medium,
-    anthropic_wire: None,
+    anthropic_wire: Some(AnthropicThinkingWire::Enabled),
 };
 const GPT_5_6_REASONING: ReasoningProfile = ReasoningProfile {
     levels: GPT_5_6_LEVELS,
     default: ThinkingLevel::Medium,
-    anthropic_wire: None,
+    anthropic_wire: Some(AnthropicThinkingWire::Enabled),
 };
 const GPT_5_5_PRO_REASONING: ReasoningProfile = ReasoningProfile {
     levels: GPT_5_5_PRO_LEVELS,
     default: ThinkingLevel::Medium,
-    anthropic_wire: None,
+    anthropic_wire: Some(AnthropicThinkingWire::Enabled),
 };
 const LEGACY_REASONING: ReasoningProfile = ReasoningProfile {
     levels: LEGACY_LEVELS,
     default: ThinkingLevel::Medium,
-    anthropic_wire: None,
+    anthropic_wire: Some(AnthropicThinkingWire::Enabled),
 };
 
 const GPT_5_6: ModelProfile = ModelProfile {

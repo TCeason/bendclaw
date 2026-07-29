@@ -1,6 +1,6 @@
 ---
 name: opencli
-description: "Use OpenCLI for websites, browser sessions, logged-in web apps, Twitter/X, Feishu/Lark, Hacker News, search, page interaction, extraction, and registered external CLIs. Trigger on: browser, browse, open page, click, fill form, extract page, twitter, x/twitter, feishu, lark, hackernews, search."
+description: "Use OpenCLI for browser automation, websites, logged-in web apps, Twitter/X, Hacker News, search, extraction, and external CLI adapters. Trigger on: browse, open page, click, fill form, extract page, Twitter/X, Hacker News, or web search. For Feishu/Lark, use a dedicated lark skill when available; otherwise use OpenCLI."
 ---
 
 # OpenCLI
@@ -22,7 +22,7 @@ If missing, check Node.js:
 node -v
 ```
 
-If Node.js is available and major version is >= 21, install OpenCLI automatically:
+If Node.js is available and major version is >= 21, ask for explicit permission before installing OpenCLI globally. Explain that this mutates the user's global npm environment. After approval, run:
 
 ```bash
 npm install -g @jackwener/opencli
@@ -30,7 +30,7 @@ command -v opencli
 opencli doctor
 ```
 
-If Node.js is missing or older than 21, stop and tell the user to install or upgrade Node.js first.
+If permission is declined, or Node.js is missing or older than 21, stop and report the prerequisite instead of installing anything.
 
 2. Discover live capabilities:
 
@@ -61,10 +61,13 @@ When browser support is needed, run:
 opencli doctor
 ```
 
-If the browser bridge or Chrome extension is unavailable, stop browser-dependent execution and open the extension install page for the user:
+If the browser bridge or Chrome extension is unavailable, stop browser-dependent execution and ask before opening the extension install page. After approval, use the platform-appropriate command:
 
 ```bash
+# macOS
 open "https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk"
+# Linux
+xdg-open "https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk"
 ```
 
 Then ask the user to click "Add to Chrome", enable the extension, keep Chrome running, log into the target site if needed, and retry. Do not attempt to install the extension silently.
@@ -84,9 +87,9 @@ Confirm names with `opencli list -f json` before use.
 
 ## Feishu / Lark priority
 
-For any Feishu or Lark task (messages, groups, docs, calendar, contacts, etc.), always prefer `opencli lark-cli` over browser-based access. The `lark-cli` adapter provides structured API access that is faster, more reliable, and does not require browser/extension setup.
+For any Feishu or Lark task (messages, groups, docs, calendar, contacts, etc.), use an available dedicated `lark-*` skill first. If no matching skill is available, prefer `opencli lark-cli` over browser-based access. The `lark-cli` adapter provides structured API access that is faster, more reliable, and does not require browser/extension setup.
 
-Try this first:
+When falling back to OpenCLI, try this first:
 
 ```bash
 opencli lark-cli --help

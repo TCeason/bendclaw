@@ -67,11 +67,11 @@ impl SkillSet {
     }
 }
 
-pub fn truncate_str(s: &str, max_chars: usize) -> String {
-    if s.len() <= max_chars {
+pub fn truncate_str(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
         return s.to_string();
     }
-    let end = s.floor_char_boundary(max_chars);
+    let end = s.floor_char_boundary(max_bytes);
     format!("{}\u{2026}", &s[..end])
 }
 
@@ -83,7 +83,9 @@ pub struct SkillTool {
 }
 
 impl SkillTool {
-    const MAX_DESC_CHARS: usize = 250;
+    // Keep descriptions bounded when many filesystem skills are installed, but
+    // leave enough room for trigger phrases commonly listed at the end.
+    const MAX_DESC_BYTES: usize = 500;
 
     pub fn new(skills: Arc<SkillSet>) -> Self {
         let mut desc = String::from(
@@ -94,7 +96,7 @@ impl SkillTool {
              Available skills:\n",
         );
         for skill in skills.specs() {
-            let truncated = truncate_str(&skill.description, Self::MAX_DESC_CHARS);
+            let truncated = truncate_str(&skill.description, Self::MAX_DESC_BYTES);
             desc.push_str(&format!("- {}: {}\n", skill.name, truncated));
         }
         Self {

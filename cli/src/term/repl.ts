@@ -1216,6 +1216,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   function handleKey(event: KeyEvent) {
+    // Mouse dragging creates a native terminal selection outside our editor
+    // state. Repaint only the active input row on the next frame so a following
+    // keypress releases that stale highlight without clearing scrollback.
+    if (overlay.kind === 'none') renderer.invalidateCursorRow()
+
     if (editingQueuedPrompt) {
       if (event.type === 'escape' || (event.type === 'ctrl' && event.key === 'c')) {
         cancelQueueEdit()

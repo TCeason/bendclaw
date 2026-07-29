@@ -1,6 +1,6 @@
 ---
 name: harden
-description: Stress-test a proposed strategy, plan, or current git changes by hunting loopholes before implementation or commit. Trigger phrases: harden, stress test, poke holes, find loopholes.
+description: "Stress-test a proposed strategy, plan, or current git changes by hunting loopholes before implementation or commit. Trigger phrases: harden, stress test, poke holes, find loopholes."
 ---
 
 # Harden

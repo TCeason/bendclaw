@@ -4,6 +4,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use evot_engine::SkillSpec;
+use serde::Deserialize;
 
 // ---------------------------------------------------------------------------
 // Builtin skills — compiled into the binary via include_str!()
@@ -39,14 +40,14 @@ const BUILTINS: &[BuiltinDef] = &[
 
 /// Parse builtin skill definitions into `SkillSpec` values.
 /// Returns specs with an empty `base_dir` (no filesystem path).
-fn builtin_specs() -> Vec<SkillSpec> {
-    let sentinel = Path::new("<builtin>");
+fn builtin_specs() -> Result<Vec<SkillSpec>, SkillLoadError> {
     BUILTINS
         .iter()
-        .filter_map(|def| {
-            let description = parse_frontmatter(def.content, sentinel).ok()?;
+        .map(|def| {
+            let path = PathBuf::from(format!("<builtin:{}>", def.name));
+            let description = parse_frontmatter(def.content, &path)?;
             let instructions = strip_frontmatter(def.content).to_string();
-            Some(SkillSpec {
+            Ok(SkillSpec {
                 name: def.name.to_string(),
                 description,
                 instructions,
@@ -78,8 +79,9 @@ pub enum SkillLoadError {
 // ---------------------------------------------------------------------------
 
 pub fn load_skills(dirs: &[impl AsRef<Path>]) -> Result<Vec<SkillSpec>, SkillLoadError> {
-    // Start with builtins
-    let mut by_name: HashMap<String, SkillSpec> = builtin_specs()
+    // Start with builtins. A malformed compiled-in skill is a build defect, so
+    // surface it instead of silently dropping that skill.
+    let mut by_name: HashMap<String, SkillSpec> = builtin_specs()?
         .into_iter()
         .map(|s| (s.name.clone(), s))
         .collect();
@@ -180,68 +182,55 @@ fn load_skills_from_dir(dir: &Path) -> Result<Vec<SkillSpec>, SkillLoadError> {
     Ok(specs)
 }
 
-fn parse_frontmatter(content: &str, path: &Path) -> Result<String, SkillLoadError> {
+#[derive(Deserialize)]
+struct SkillFrontmatter {
+    description: Option<String>,
+}
+
+fn split_frontmatter(content: &str) -> Result<(&str, &str), &'static str> {
     let trimmed = content.trim_start();
-    if !trimmed.starts_with("---") {
-        return Err(SkillLoadError::InvalidFrontmatter {
-            path: path.to_path_buf(),
-            detail: "missing opening ---".into(),
-        });
-    }
+    let after_open = trimmed
+        .strip_prefix("---\r\n")
+        .or_else(|| trimmed.strip_prefix("---\n"))
+        .ok_or("missing opening ---")?;
 
-    let after_open = &trimmed[3..];
-    let end = after_open
-        .find("\n---")
-        .ok_or(SkillLoadError::InvalidFrontmatter {
-            path: path.to_path_buf(),
-            detail: "missing closing ---".into(),
-        })?;
-
-    let yaml_block = &after_open[..end];
-
-    let mut description = None;
-
-    for line in yaml_block.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("description:") {
-            description = Some(unquote(rest.trim()));
+    let mut offset = 0;
+    for segment in after_open.split_inclusive('\n') {
+        let line = segment.trim_end_matches(['\r', '\n']);
+        if line == "---" {
+            return Ok((&after_open[..offset], &after_open[offset + segment.len()..]));
         }
+        offset += segment.len();
     }
 
-    let description = description.ok_or(SkillLoadError::MissingField {
-        path: path.to_path_buf(),
-        field: "description",
-    })?;
+    Err("missing closing ---")
+}
 
-    if description.is_empty() {
-        return Err(SkillLoadError::MissingField {
+fn parse_frontmatter(content: &str, path: &Path) -> Result<String, SkillLoadError> {
+    let (yaml_block, _) =
+        split_frontmatter(content).map_err(|detail| SkillLoadError::InvalidFrontmatter {
+            path: path.to_path_buf(),
+            detail: detail.into(),
+        })?;
+    let frontmatter: SkillFrontmatter =
+        serde_yaml::from_str(yaml_block).map_err(|error| SkillLoadError::InvalidFrontmatter {
+            path: path.to_path_buf(),
+            detail: error.to_string(),
+        })?;
+    let description = frontmatter
+        .description
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or(SkillLoadError::MissingField {
             path: path.to_path_buf(),
             field: "description",
-        });
-    }
+        })?;
 
     Ok(description)
 }
 
-fn unquote(s: &str) -> String {
-    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
-        s[1..s.len() - 1].to_string()
-    } else {
-        s.to_string()
-    }
-}
-
 fn strip_frontmatter(content: &str) -> &str {
-    let trimmed = content.trim_start();
-    if !trimmed.starts_with("---") {
-        return content;
-    }
-    let after_open = &trimmed[3..];
-    match after_open.find("\n---") {
-        Some(end) => {
-            let rest = &after_open[end + 4..];
-            rest.strip_prefix('\n').unwrap_or(rest)
-        }
-        None => content,
-    }
+    split_frontmatter(content)
+        .map(|(_, body)| body)
+        .unwrap_or(content)
 }

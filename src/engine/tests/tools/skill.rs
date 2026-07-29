@@ -164,6 +164,16 @@ async fn execute_missing_param_returns_error() {
 }
 
 #[test]
+fn description_keeps_trailing_triggers_under_limit() {
+    let long_prefix = "x".repeat(300);
+    let description = long_prefix + " trigger-near-the-end";
+    let skills = SkillSet::new(vec![spec("long", &description, "instructions")]);
+    let tool = SkillTool::new(Arc::new(skills));
+
+    assert!(tool.description().contains("trigger-near-the-end"));
+}
+
+#[test]
 fn preview_command_shows_skill_name() {
     let skills = SkillSet::new(vec![spec("weather", "Get weather.", "instructions")]);
     let tool = SkillTool::new(Arc::new(skills));

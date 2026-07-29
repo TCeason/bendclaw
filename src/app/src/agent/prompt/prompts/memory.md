@@ -1,6 +1,6 @@
 ---
 name: memory
-description: "Archive and recall knowledge across sessions in the memory vault (~/.evotai/memory). Activated by /clip all, when the user asks to remember or save durable knowledge, or when they ask to recall past incidents, research, or prior findings."
+description: "Archive and recall durable knowledge across sessions in ~/.evotai/memory. Trigger on /clip all, requests to remember or save knowledge, and requests to recall past incidents, research, or findings."
 ---
 
 # Memory

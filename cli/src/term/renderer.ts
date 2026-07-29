@@ -100,6 +100,7 @@ export class TermRenderer {
   private hardwareCursorRow = 0
   private maxLinesRendered = 0
   private previousViewportTop = 0
+  private invalidatedRows = new Set<number>()
 
   // Render scheduling
   private renderCallback: (() => RenderFrame | string[]) | null = null
@@ -156,6 +157,17 @@ export class TermRenderer {
     this.renderCallback = cb
   }
 
+  /**
+   * Redraw the logical row containing the hardware cursor on the next frame.
+   * Repainting the active input row releases stale native terminal selections
+   * without clearing the viewport or disturbing scrollback.
+   */
+  invalidateCursorRow(): void {
+    if (this.destroyed || this.previousLines.length === 0) return
+    this.invalidatedRows.add(this.hardwareCursorRow)
+    this.requestRender()
+  }
+
   requestRender(force = false): void {
     if (this.destroyed) return
     if (force) {
@@ -165,6 +177,7 @@ export class TermRenderer {
       this.hardwareCursorRow = 0
       this.maxLinesRendered = 0
       this.previousViewportTop = 0
+      this.invalidatedRows.clear()
       if (this.renderTimer) {
         clearTimeout(this.renderTimer)
         this.renderTimer = undefined
@@ -192,6 +205,7 @@ export class TermRenderer {
     this.hardwareCursorRow = 0
     this.maxLinesRendered = 0
     this.previousViewportTop = 0
+    this.invalidatedRows.clear()
     this.previousWidth = this.termCols
     this.previousHeight = this.termRows
   }
@@ -386,6 +400,11 @@ export class TermRenderer {
       return targetScreenRow - currentScreenRow
     }
 
+    // Consume explicit row invalidations with this frame. They force a repaint
+    // even when the rendered bytes are unchanged (for example, to release a
+    // native terminal selection covering the active input row).
+    const invalidatedRows = this.invalidatedRows
+
     // Find first and last changed lines
     let firstChanged = -1
     let lastChanged = -1
@@ -393,11 +412,12 @@ export class TermRenderer {
     for (let i = 0; i < maxLines; i++) {
       const oldLine = i < this.previousLines.length ? this.previousLines[i] : ''
       const newLine = i < newLines.length ? newLines[i] : ''
-      if (oldLine !== newLine) {
+      if (oldLine !== newLine || invalidatedRows.has(i)) {
         if (firstChanged === -1) firstChanged = i
         lastChanged = i
       }
     }
+    invalidatedRows.clear()
 
     const appendedLines = newLines.length > this.previousLines.length
     if (appendedLines) {

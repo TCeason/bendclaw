@@ -107,6 +107,29 @@ describe('TermRenderer', () => {
       renderer.destroy()
     })
 
+    test('invalidated cursor row repaints without clearing viewport or scrollback', async () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      renderer.setRenderCallback(() => ['history', `❯ hello${CURSOR_MARKER}`])
+      await renderFrame(renderer)
+
+      stdout.clear()
+      renderer.invalidateCursorRow()
+      await renderFrame(renderer)
+
+      const out = stdout.output
+      expect(out).toContain('❯ hello')
+      expect(out).toContain('\x1b[2K')
+      expect(out).not.toContain('\x1b[2J')
+      expect(out).not.toContain('\x1b[3J')
+      expect(out).not.toContain('history')
+
+      stdout.clear()
+      await renderFrame(renderer)
+      expect(stdout.output).not.toContain('❯ hello')
+      renderer.destroy()
+    })
+
     test('appended lines use append fast path', async () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()
