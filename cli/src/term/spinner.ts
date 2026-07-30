@@ -46,7 +46,14 @@ function slowThresholdMs(state: SpinnerState): number {
  * `responding` distinguish reasoning deltas from answer/tool-call deltas, and
  * `executing` is tool execution.
  */
-export type SpinnerPhase = 'preparing' | 'waiting' | 'quota_waiting' | 'thinking' | 'responding' | 'executing'
+export type SpinnerPhase = 'preparing' | 'waiting' | 'quota_waiting' | 'outage_waiting' | 'thinking' | 'responding' | 'executing'
+
+/** Cancellable long-wait phases: quota exhaustion or a sustained upstream outage. */
+export type LongWaitPhase = 'quota_waiting' | 'outage_waiting'
+
+export function isLongWaitPhase(phase: SpinnerPhase): phase is LongWaitPhase {
+  return phase === 'quota_waiting' || phase === 'outage_waiting'
+}
 
 /**
  * Map a tool name to a human action label shown on the spinner while it runs.
@@ -83,7 +90,7 @@ export interface SpinnerState {
   lastTokenAt: number | null
   streaming: boolean
   toolName: string | null
-  quotaRetryAt: number | null
+  waitRetryAt: number | null
   tokenCount: number
   streamStartedAt: number | null
   glimmerPos: number
@@ -97,7 +104,7 @@ export function createSpinnerState(): SpinnerState {
     lastTokenAt: null,
     streaming: false,
     toolName: null,
-    quotaRetryAt: null,
+    waitRetryAt: null,
     tokenCount: 0,
     streamStartedAt: null,
     glimmerPos: -2,
@@ -119,17 +126,17 @@ export function setSpinnerPhase(state: SpinnerState, phase: SpinnerPhase, toolNa
     phase,
     phaseStartedAt: Date.now(),
     toolName: toolName ?? null,
-    quotaRetryAt: phase === 'quota_waiting' ? state.quotaRetryAt : null,
+    waitRetryAt: isLongWaitPhase(phase) ? state.waitRetryAt : null,
   }
 }
 
-export function setQuotaWaiting(state: SpinnerState, delayMs: number, now = Date.now()): SpinnerState {
+export function setLongWait(state: SpinnerState, phase: LongWaitPhase, delayMs: number, now = Date.now()): SpinnerState {
   return {
     ...resetStreamStats(state),
-    phase: 'quota_waiting',
+    phase,
     phaseStartedAt: now,
     toolName: null,
-    quotaRetryAt: now + Math.max(0, delayMs),
+    waitRetryAt: now + Math.max(0, delayMs),
   }
 }
 
@@ -155,7 +162,7 @@ export function resetStreamStats(state: SpinnerState): SpinnerState {
 }
 
 export function isSlow(state: SpinnerState, now: number): boolean {
-  if (state.phase === 'quota_waiting') return false
+  if (isLongWaitPhase(state.phase)) return false
   const threshold = slowThresholdMs(state)
   // While the model is emitting, health is measured from the last token:
   // a flowing stream is never slow, and a stalled one is surfaced instead of
@@ -200,8 +207,13 @@ export function formatSpinnerLine(
       label = slow ? 'LLM slow…' : 'Waiting for model…'
       break
     case 'quota_waiting': {
-      const seconds = Math.max(0, Math.ceil(((state.quotaRetryAt ?? now) - now) / 1000))
+      const seconds = Math.max(0, Math.ceil(((state.waitRetryAt ?? now) - now) / 1000))
       label = `Model quota unavailable · retrying in ${seconds}s`
+      break
+    }
+    case 'outage_waiting': {
+      const seconds = Math.max(0, Math.ceil(((state.waitRetryAt ?? now) - now) / 1000))
+      label = `Upstream unavailable · retrying in ${seconds}s`
       break
     }
     case 'thinking':
@@ -215,7 +227,7 @@ export function formatSpinnerLine(
   }
 
   const status = humanDuration(elapsed)
-  const tokenSuffix = state.phase === 'quota_waiting' ? '' : formatSpinnerTokenSuffix(state, now, stats)
+  const tokenSuffix = isLongWaitPhase(state.phase) ? '' : formatSpinnerTokenSuffix(state, now, stats)
   const interruptHint = options.interruptible === false ? '' : ' · esc to interrupt'
 
   if (slow) {

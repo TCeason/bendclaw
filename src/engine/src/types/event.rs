@@ -93,6 +93,15 @@ pub enum AgentEvent {
     QuotaWait {
         delay_ms: u64,
     },
+    /// The bounded retry budget is exhausted but the provider keeps failing
+    /// with retryable errors — a sustained upstream/gateway outage. The same
+    /// request will be probed again after `delay_ms`, indefinitely, until it
+    /// succeeds or the user cancels. Transient UI state, not persisted.
+    OutageWait {
+        delay_ms: u64,
+        /// The last provider error, for display.
+        error: String,
+    },
     LlmCallStart {
         turn: usize,
         attempt: usize,

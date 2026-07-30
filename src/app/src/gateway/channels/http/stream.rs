@@ -176,6 +176,15 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
                 }
             }));
         }
+        RunEventPayload::OutageWaiting { delay_ms, error } => {
+            events.push(json!({
+                "type": "outage_waiting",
+                "data": {
+                    "retry_delay_ms": delay_ms,
+                    "error": error,
+                }
+            }));
+        }
         RunEventPayload::LlmCallCompleted {
             turn,
             attempt,

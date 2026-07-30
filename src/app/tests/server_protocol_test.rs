@@ -317,6 +317,33 @@ fn run_event_round_trip_quota_waiting() -> Result<(), Box<dyn std::error::Error>
 }
 
 #[test]
+fn run_event_round_trip_outage_waiting() -> Result<(), Box<dyn std::error::Error>> {
+    let event = RunEvent::new(
+        "run-outage".into(),
+        "session-outage".into(),
+        7,
+        RunEventPayload::OutageWaiting {
+            delay_ms: 60_000,
+            error: "API error: Upstream request failed.".into(),
+        },
+    );
+    let json = serde_json::to_string(&event)?;
+    let parsed: serde_json::Value = serde_json::from_str(&json)?;
+    assert_eq!(parsed["kind"], "outage_waiting");
+    assert_eq!(parsed["payload"]["delay_ms"], 60_000);
+    assert_eq!(
+        parsed["payload"]["error"],
+        "API error: Upstream request failed."
+    );
+    let decoded: RunEvent = serde_json::from_str(&json)?;
+    assert!(matches!(decoded.payload, RunEventPayload::OutageWaiting {
+        delay_ms: 60_000,
+        ..
+    }));
+    Ok(())
+}
+
+#[test]
 fn run_event_round_trip_llm_call_retry() -> Result<(), Box<dyn std::error::Error>> {
     let event = RunEvent::new(
         "run-1".into(),

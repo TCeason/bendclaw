@@ -678,7 +678,13 @@ impl StreamProvider for FailThenSucceedProvider {
                     ProviderError::QuotaLimited(message.clone())
                 }
                 ProviderError::Network(msg) => ProviderError::Network(msg.clone()),
-                ProviderError::Transient(msg) => ProviderError::Transient(msg.clone()),
+                ProviderError::Transient {
+                    message,
+                    retry_after_ms,
+                } => ProviderError::Transient {
+                    message: message.clone(),
+                    retry_after_ms: *retry_after_ms,
+                },
                 ProviderError::Auth(msg) => ProviderError::Auth(msg.clone()),
                 other => ProviderError::Other(other.to_string()),
             });
@@ -886,7 +892,10 @@ async fn test_provider_declared_transient_error_retries_then_succeeds() {
         std::sync::Arc::new(FailThenSucceedProvider {
             fail_count: std::sync::atomic::AtomicUsize::new(0),
             max_failures: 1,
-            error: ProviderError::Transient(payload.into()),
+            error: ProviderError::Transient {
+                message: payload.into(),
+                retry_after_ms: None,
+            },
             inner: MockProvider::text("Success after transient error"),
         });
 
@@ -949,14 +958,17 @@ async fn test_provider_declared_transient_error_retries_then_succeeds() {
     assert_eq!(retry_errors, vec![format!("API error: {payload}")]);
 }
 
-#[tokio::test]
-async fn test_retry_exhausted_returns_error() {
+#[tokio::test(start_paused = true)]
+async fn test_retry_exhausted_enters_outage_wait_and_recovers() {
+    // 5 failures: 1 initial + 2 bounded retries all fail, then the loop must
+    // switch to indefinite outage probing (60 s cadence) instead of failing
+    // the run, and succeed once the upstream recovers on the 6th call.
     let provider: std::sync::Arc<FailThenSucceedProvider> =
         std::sync::Arc::new(FailThenSucceedProvider {
             fail_count: std::sync::atomic::AtomicUsize::new(0),
-            max_failures: 10, // more failures than retries
+            max_failures: 5,
             error: ProviderError::Network("connection reset".into()),
-            inner: MockProvider::text("never reached"),
+            inner: MockProvider::text("recovered after outage"),
         });
 
     let config = AgentLoopConfig {
@@ -993,32 +1005,149 @@ async fn test_retry_exhausted_returns_error() {
     };
 
     let prompt = AgentMessage::Llm(Message::user("hi"));
-    let (tx, _rx) = mpsc::unbounded_channel();
+    let (tx, rx) = mpsc::unbounded_channel();
     let cancel = CancellationToken::new();
 
     let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
 
-    // Should have an error message (StopReason::Error)
-    let last = new_messages.last().unwrap();
+    // The run recovers instead of surfacing an error.
+    let Some(last) = new_messages.last() else {
+        panic!("Expected successful assistant message");
+    };
     if let AgentMessage::Llm(Message::Assistant {
         stop_reason,
-        error_message,
+        content,
         ..
     }) = last
     {
-        assert_eq!(*stop_reason, StopReason::Error);
-        assert!(error_message.as_ref().unwrap().contains("connection reset"));
+        assert_eq!(*stop_reason, StopReason::Stop);
+        assert!(matches!(
+            content.first(),
+            Some(Content::Text { text }) if text == "recovered after outage"
+        ));
     } else {
-        panic!("Expected error assistant message");
+        panic!("Expected successful assistant message");
     }
 
-    // 1 initial + 2 retries = 3 attempts
+    // 1 initial + 2 bounded retries + 3 outage probes = 6 calls.
     assert_eq!(
         provider
             .fail_count
             .load(std::sync::atomic::Ordering::SeqCst),
+        6
+    );
+
+    let events = collect_events(rx);
+    let outage_waits: Vec<(u64, &str)> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::OutageWait { delay_ms, error } => Some((*delay_ms, error.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(outage_waits.len(), 3);
+    for (delay_ms, error) in &outage_waits {
+        assert_eq!(*delay_ms, 60_000);
+        assert!(error.contains("connection reset"));
+    }
+    // Bounded retries stay bounded: exactly 2 LlmCallRetry events, and outage
+    // probes stay part of the same logical call (no extra LlmCallStart).
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, AgentEvent::LlmCallRetry { .. }))
+            .count(),
+        2
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, AgentEvent::LlmCallStart { .. }))
+            .count(),
         3
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_outage_wait_is_cancellable() {
+    let provider: std::sync::Arc<FailThenSucceedProvider> =
+        std::sync::Arc::new(FailThenSucceedProvider {
+            fail_count: std::sync::atomic::AtomicUsize::new(0),
+            max_failures: usize::MAX,
+            error: ProviderError::Network("gateway unavailable".into()),
+            inner: MockProvider::text("never reached"),
+        });
+
+    let config = AgentLoopConfig {
+        provider: provider.clone(),
+        model: "mock".into(),
+        api_key: "test".into(),
+        thinking_level: ThinkingLevel::Off,
+        max_tokens: None,
+        model_config: None,
+        convert_to_llm: None,
+        transform_context: None,
+        get_steering_messages: None,
+        get_follow_up_messages: None,
+        context_config: None,
+        compaction_context: None,
+        compaction_fallback_context: None,
+        initial_compaction_state: None,
+        execution_limits: None,
+        cache_config: CacheConfig::default(),
+        tool_execution: ToolExecutionStrategy::default(),
+        retry_policy: evotengine::RetryPolicy::new(1),
+        before_turn: None,
+        after_turn: None,
+        spill: None,
+    };
+
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: Vec::new(),
+        tools: Vec::new(),
+        cwd: std::path::PathBuf::new(),
+        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+        prompt_cache_key: None,
+    };
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let cancel = CancellationToken::new();
+    let cancel_on_wait = cancel.clone();
+    let watcher = tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            if matches!(event, AgentEvent::OutageWait { .. }) {
+                cancel_on_wait.cancel();
+                return true;
+            }
+        }
+        false
+    });
+
+    let messages = agent_loop(
+        vec![AgentMessage::Llm(Message::user("hi"))],
+        &mut context,
+        &config,
+        tx,
+        cancel,
+    )
+    .await;
+    let saw_outage_wait = watcher.await.unwrap_or(false);
+
+    assert!(saw_outage_wait);
+    assert_eq!(messages.len(), 2);
+    assert_eq!(
+        provider
+            .fail_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+    assert!(matches!(
+        messages.last(),
+        Some(AgentMessage::Llm(Message::Assistant {
+            stop_reason: StopReason::Aborted,
+            ..
+        }))
+    ));
 }
 
 #[tokio::test]

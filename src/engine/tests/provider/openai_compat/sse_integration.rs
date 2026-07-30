@@ -434,7 +434,7 @@ async fn openai_sse_inline_error() {
 
     assert!(matches!(
         err,
-        evotengine::provider::ProviderError::Transient(ref msg) if msg.contains("upstream failed")
+        evotengine::provider::ProviderError::Transient { ref message, .. } if message.contains("upstream failed")
     ));
     assert!(evotengine::retry::should_retry(&err));
 }
@@ -652,6 +652,6 @@ async fn openai_json_fallback_error() {
 
     assert!(matches!(
         err,
-        evotengine::provider::ProviderError::Transient(_)
+        evotengine::provider::ProviderError::Transient { .. }
     ));
 }

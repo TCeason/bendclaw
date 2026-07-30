@@ -193,7 +193,7 @@ fn structured_server_error_with_empty_message_is_retryable() {
     let err = classify_sse_error_event(
         r#"{"type":"error","error":{"message":"","type":"server_error"}}"#,
     );
-    assert!(matches!(err, ProviderError::Transient(_)));
+    assert!(matches!(err, ProviderError::Transient { .. }));
     assert!(evotengine::retry::should_retry(&err));
 }
 
@@ -202,7 +202,7 @@ fn kiro_api_error_is_structurally_retryable() {
     let payload = r#"{"type":"error","error":{"type":"api_error","message":"Kiro returned invalid JSON for tool edit: Unterminated string starting at: line 1 column 378 (char 377)"}}"#;
     let err = classify_sse_error_event(payload);
 
-    assert!(matches!(&err, ProviderError::Transient(raw) if raw == payload));
+    assert!(matches!(&err, ProviderError::Transient { message, .. } if message == payload));
     assert!(evotengine::retry::should_retry(&err));
 }
 
@@ -223,12 +223,12 @@ fn stream_error_without_recognized_type_defaults_to_retryable() {
     let err = classify_sse_error_event(
         r#"{"type":"error","error":{"type":"api_error","message":"Upstream request failed."}}"#,
     );
-    assert!(matches!(err, ProviderError::Transient(_)));
+    assert!(matches!(err, ProviderError::Transient { .. }));
     assert!(evotengine::retry::should_retry(&err));
 
     // Plain-text payload without any JSON structure.
     let err = classify_sse_error_event("Upstream request failed.");
-    assert!(matches!(err, ProviderError::Transient(_)));
+    assert!(matches!(err, ProviderError::Transient { .. }));
     assert!(evotengine::retry::should_retry(&err));
 
     // Never-seen-before structured type stays retryable too.
@@ -284,9 +284,68 @@ fn classify_http_5xx_and_408_are_transient() {
     // body wording, so provider message changes cannot break retry.
     for status in [500, 501, 502, 503, 504, 520, 599, 408] {
         let err = ProviderError::classify(status, "whatever the body says", None);
-        assert!(matches!(err, ProviderError::Transient(_)), "HTTP {status}");
+        assert!(
+            matches!(err, ProviderError::Transient { .. }),
+            "HTTP {status}"
+        );
         assert!(evotengine::retry::should_retry(&err), "HTTP {status}");
     }
+}
+
+#[test]
+fn classify_http_425_too_early_is_transient() {
+    // 425 Too Early is an explicit "retry later" protocol signal; gateways
+    // surface it during connection reuse races. It must not fail the run.
+    let err = ProviderError::classify(425, "too early", None);
+    assert!(matches!(err, ProviderError::Transient { .. }));
+    assert!(evotengine::retry::should_retry(&err));
+}
+
+#[test]
+fn classify_transient_carries_retry_after_hint() {
+    // A Retry-After header on a 5xx must reach the retry policy, not just 429.
+    let err = ProviderError::classify(503, "service unavailable", Some(3000));
+    assert!(matches!(err, ProviderError::Transient { .. }));
+    assert_eq!(
+        err.retry_after(),
+        Some(std::time::Duration::from_millis(3000))
+    );
+    assert!(evotengine::retry::should_retry(&err));
+
+    // Without the header there is no hint.
+    let err = ProviderError::classify(503, "service unavailable", None);
+    assert_eq!(err.retry_after(), None);
+}
+
+#[test]
+fn should_retry_hint_upgrades_only_unknown_classification() {
+    // x-should-retry: true lets any gateway mark an unknown 4xx retryable
+    // without an evot release.
+    let err = ProviderError::classify_with_hints(402, "Payment Required", Some(7000), Some(true));
+    assert!(matches!(err, ProviderError::Transient { .. }));
+    assert_eq!(
+        err.retry_after(),
+        Some(std::time::Duration::from_millis(7000))
+    );
+    assert!(evotengine::retry::should_retry(&err));
+
+    // Semantics with their own recovery paths are never overridden.
+    let overflow = ProviderError::classify_with_hints(413, "", None, Some(true));
+    assert!(overflow.is_context_overflow());
+    let auth = ProviderError::classify_with_hints(401, "invalid key", None, Some(true));
+    assert!(matches!(auth, ProviderError::Auth(_)));
+    let quota = ProviderError::classify_with_hints(429, "quota exceeded", None, Some(true));
+    assert!(quota.is_quota_limited());
+
+    // An explicit false never downgrades a server-side failure — resilience
+    // must not hinge on a proxy getting this header right.
+    let five = ProviderError::classify_with_hints(500, "boom", None, Some(false));
+    assert!(evotengine::retry::should_retry(&five));
+
+    // Absent hint keeps the plain classification.
+    let plain = ProviderError::classify_with_hints(402, "Payment Required", None, None);
+    assert!(matches!(plain, ProviderError::Other(_)));
+    assert!(!evotengine::retry::should_retry(&plain));
 }
 
 #[test]
@@ -345,7 +404,7 @@ fn malformed_tool_call_error_type_is_retryable() {
     let err = classify_sse_error_event(
         r#"{"type":"error","error":{"type":"invalid_tool_call","message":"wording may change"}}"#,
     );
-    assert!(matches!(err, ProviderError::Transient(_)));
+    assert!(matches!(err, ProviderError::Transient { .. }));
     assert!(evotengine::retry::should_retry(&err));
 }
 

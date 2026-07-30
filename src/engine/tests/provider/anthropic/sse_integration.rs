@@ -541,7 +541,7 @@ async fn anthropic_sse_kiro_api_error_is_structurally_retryable() {
 
     assert!(matches!(
         &err,
-        evotengine::provider::ProviderError::Transient(raw) if raw == &payload
+        evotengine::provider::ProviderError::Transient { message, .. } if message == &payload
     ));
     assert!(evotengine::retry::should_retry(&err));
 }

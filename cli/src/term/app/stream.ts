@@ -1,6 +1,6 @@
 import { buildError, buildVerboseEvent, buildEventCard, isVisibleEvent, type OutputLine } from '../../render/output.js'
 import { formatDuration } from '../../render/format.js'
-import { recordStreamDelta, resetStreamStats, setQuotaWaiting, setSpinnerPhase, type SpinnerState } from '../spinner.js'
+import { recordStreamDelta, resetStreamStats, setLongWait, setSpinnerPhase, type SpinnerState } from '../spinner.js'
 import { assistantToolCalls } from './assistant-content.js'
 import { assistantMessageToOutputLines } from '../../render/assistant.js'
 import { applyEvent } from './reducer.js'
@@ -161,7 +161,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
     rerenderStatus = true
   }
 
-  if (event.kind === 'quota_waiting') {
+  if (event.kind === 'quota_waiting' || event.kind === 'outage_waiting') {
     const flushed = {
       state: {
         ...state,
@@ -173,8 +173,9 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
     state = {
       ...flushed.state,
       activeLlmCall: false,
-      spinnerState: setQuotaWaiting(
+      spinnerState: setLongWait(
         flushed.state.spinnerState,
+        event.kind === 'outage_waiting' ? 'outage_waiting' : 'quota_waiting',
         (p.delay_ms as number) ?? (p.retry_delay_ms as number) ?? 60_000,
       ),
     }

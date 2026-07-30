@@ -3,7 +3,7 @@ import {
   createSpinnerState,
   advanceSpinner,
   setSpinnerPhase,
-  setQuotaWaiting,
+  setLongWait,
   recordStreamDelta,
   isSlow,
   formatSpinnerLine,
@@ -18,7 +18,7 @@ describe('createSpinnerState', () => {
     expect(state.phase).toBe('preparing')
     expect(state.streaming).toBe(false)
     expect(state.toolName).toBeNull()
-    expect(state.quotaRetryAt).toBeNull()
+    expect(state.waitRetryAt).toBeNull()
     expect(state.tokenCount).toBe(0)
   })
 })
@@ -163,7 +163,7 @@ describe('formatSpinnerLine', () => {
 
   test('formats quota waiting as a calm countdown instead of a slow request', () => {
     const now = Date.now()
-    const state = setQuotaWaiting(createSpinnerState(), 60_000, now)
+    const state = setLongWait(createSpinnerState(), 'quota_waiting', 60_000, now)
     expect(state.phase).toBe('quota_waiting')
     expect(isSlow(state, now + 30_000)).toBe(false)
     const line = stripAnsi(formatSpinnerLine(state, now + 18_100, {
@@ -171,6 +171,21 @@ describe('formatSpinnerLine', () => {
       cacheReadTokens: 90,
     }))
     expect(line).toContain('Model quota unavailable · retrying in 42s')
+    expect(line).not.toContain('cache')
+    expect(line).toContain('esc to interrupt')
+    expect(line).not.toContain('slow')
+  })
+
+  test('formats outage waiting as a calm countdown instead of a slow request', () => {
+    const now = Date.now()
+    const state = setLongWait(createSpinnerState(), 'outage_waiting', 60_000, now)
+    expect(state.phase).toBe('outage_waiting')
+    expect(isSlow(state, now + 30_000)).toBe(false)
+    const line = stripAnsi(formatSpinnerLine(state, now + 18_100, {
+      inputTokens: 100,
+      cacheReadTokens: 90,
+    }))
+    expect(line).toContain('Upstream unavailable · retrying in 42s')
     expect(line).not.toContain('cache')
     expect(line).toContain('esc to interrupt')
     expect(line).not.toContain('slow')

@@ -1,5 +1,6 @@
 //! Tests for shared stream HTTP helpers.
 
+use evotengine::provider::stream_http::check_error_status;
 use evotengine::provider::stream_http::classify_json_error;
 use evotengine::provider::stream_http::extract_json_error_message;
 use evotengine::provider::stream_http::StreamResponseKind;
@@ -84,7 +85,7 @@ fn classify_internal_server_error_json_is_retryable() {
         }
     });
     let err = classify_json_error(&value);
-    assert!(matches!(err, ProviderError::Transient(_)));
+    assert!(matches!(err, ProviderError::Transient { .. }));
     assert!(evotengine::retry::should_retry(&err));
 }
 
@@ -109,7 +110,7 @@ fn classify_no_message_uses_full_json() {
     // than failing hard on unknown shapes.
     let value = serde_json::json!({"foo": "bar"});
     let err = classify_json_error(&value);
-    assert!(matches!(err, ProviderError::Transient(_)));
+    assert!(matches!(err, ProviderError::Transient { .. }));
     assert!(evotengine::retry::should_retry(&err));
 }
 
@@ -154,4 +155,56 @@ fn stream_response_kind_variants() {
     assert_eq!(streaming, StreamResponseKind::Streaming);
     assert_eq!(json, StreamResponseKind::Json);
     assert!(matches!(other, StreamResponseKind::Other(_)));
+}
+
+// ---------------------------------------------------------------------------
+// check_error_status — gateway hint headers
+// ---------------------------------------------------------------------------
+
+async fn error_from_mock_response(template: wiremock::ResponseTemplate) -> ProviderError {
+    use wiremock::matchers::method;
+    use wiremock::Mock;
+    use wiremock::MockServer;
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(template)
+        .mount(&server)
+        .await;
+    let response = match reqwest::get(server.uri()).await {
+        Ok(response) => response,
+        Err(error) => panic!("mock request failed: {error}"),
+    };
+    match check_error_status(response).await {
+        Err(error) => error,
+        Ok(_) => panic!("expected an error classification"),
+    }
+}
+
+#[tokio::test]
+async fn check_error_status_honors_should_retry_and_retry_after() {
+    // A gateway marking an unknown 4xx as retryable (x-should-retry: true)
+    // with a Retry-After hint must surface as Transient with that delay.
+    let err = error_from_mock_response(
+        wiremock::ResponseTemplate::new(402)
+            .insert_header("x-should-retry", "true")
+            .insert_header("retry-after", "7")
+            .set_body_string("payment required"),
+    )
+    .await;
+    assert!(matches!(err, ProviderError::Transient { .. }));
+    assert_eq!(err.retry_after(), Some(std::time::Duration::from_secs(7)));
+    assert!(evotengine::retry::should_retry(&err));
+}
+
+#[tokio::test]
+async fn check_error_status_retry_after_reaches_5xx() {
+    let err = error_from_mock_response(
+        wiremock::ResponseTemplate::new(503)
+            .insert_header("retry-after", "12")
+            .set_body_string("maintenance"),
+    )
+    .await;
+    assert!(matches!(err, ProviderError::Transient { .. }));
+    assert_eq!(err.retry_after(), Some(std::time::Duration::from_secs(12)));
 }

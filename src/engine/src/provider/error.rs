@@ -8,9 +8,13 @@ pub enum ProviderError {
     Api(String),
     /// A provider-declared transient failure. The original payload is retained
     /// for diagnostics, while retry policy can rely on this semantic variant
-    /// instead of matching provider-specific message text.
-    #[error("API error: {0}")]
-    Transient(String),
+    /// instead of matching provider-specific message text. Carries the
+    /// server-specified `Retry-After` hint when the HTTP response included one.
+    #[error("API error: {message}")]
+    Transient {
+        message: String,
+        retry_after_ms: Option<u64>,
+    },
     #[error("Overloaded: {0}")]
     Overloaded(String),
     #[error("Network error: {0}")]
@@ -42,7 +46,7 @@ fn display_rate_limited(retry_after_ms: Option<u64>) -> String {
 impl ProviderError {
     /// Classify an HTTP error response into the appropriate variant.
     ///
-    /// The status code is the primary signal: 5xx (and 408) are server-side
+    /// The status code is the primary signal: 5xx (and 408/425) are server-side
     /// failures that are safe to retry regardless of body wording, while the
     /// remaining 4xx are client errors that cannot succeed on retry. Message
     /// text refines the decision only for stable semantics (context overflow,
@@ -62,13 +66,45 @@ impl ProviderError {
             Self::Overloaded(message.to_string())
         } else if status == 401 || status == 403 {
             Self::Auth(message.to_string())
-        } else if status == 408 || (500..600).contains(&status) {
-            Self::Transient(message.to_string())
+        } else if status == 408 || status == 425 || (500..600).contains(&status) {
+            Self::Transient {
+                message: message.to_string(),
+                retry_after_ms,
+            }
         } else if (400..500).contains(&status) {
             Self::Other(message.to_string())
         } else {
             Self::Api(message.to_string())
         }
+    }
+
+    /// [`classify`](Self::classify) plus the `x-should-retry` gateway hint
+    /// (sent by Anthropic and passed through by proxies).
+    ///
+    /// An explicit `true` upgrades an otherwise-fatal *unknown* classification
+    /// ([`Other`](Self::Other)) to the retryable [`Transient`](Self::Transient),
+    /// so any gateway can mark a response retryable without an evot release.
+    /// Semantics with their own recovery paths are never overridden: context
+    /// overflow (compaction), quota (long wait), auth (fail fast). An explicit
+    /// `false` is ignored — server-side failures must keep retrying even when a
+    /// misconfigured proxy claims otherwise; fatal classification already comes
+    /// from status and structured error types.
+    pub fn classify_with_hints(
+        status: u16,
+        message: &str,
+        retry_after_ms: Option<u64>,
+        should_retry: Option<bool>,
+    ) -> Self {
+        let classified = Self::classify(status, message, retry_after_ms);
+        if should_retry == Some(true) {
+            if let Self::Other(message) = classified {
+                return Self::Transient {
+                    message,
+                    retry_after_ms,
+                };
+            }
+        }
+        classified
     }
 
     pub fn is_context_overflow(&self) -> bool {
@@ -83,6 +119,10 @@ impl ProviderError {
         match self {
             Self::RateLimited {
                 retry_after_ms: Some(ms),
+            }
+            | Self::Transient {
+                retry_after_ms: Some(ms),
+                ..
             } => Some(Duration::from_millis(*ms)),
             _ => None,
         }
@@ -137,7 +177,10 @@ pub(crate) fn classify_stream_error(
         Some("rate_limit_error") => ProviderError::RateLimited {
             retry_after_ms: None,
         },
-        _ => ProviderError::Transient(message.to_string()),
+        _ => ProviderError::Transient {
+            message: message.to_string(),
+            retry_after_ms: None,
+        },
     }
 }
 

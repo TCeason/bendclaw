@@ -43,7 +43,22 @@ describe('term stream machine', () => {
     }, { termRows: 24 })
 
     expect(waiting.state.spinnerState.phase).toBe('quota_waiting')
-    expect(waiting.state.spinnerState.quotaRetryAt).toBeGreaterThan(Date.now())
+    expect(waiting.state.spinnerState.waitRetryAt).toBeGreaterThan(Date.now())
+    expect(waiting.commitLines).toEqual([])
+    expect(waiting.writeLines).toEqual([])
+    expect(waiting.state.appState.verboseEvents).toEqual([])
+    expect(waiting.rerenderStatus).toBe(true)
+  })
+
+  test('outage waiting replaces the normal spinner without committing retry cards', () => {
+    const initial = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
+    const waiting = reduceRunEvent(initial, {
+      kind: 'outage_waiting',
+      payload: { delay_ms: 60_000, error: 'API error: Upstream request failed.' },
+    }, { termRows: 24 })
+
+    expect(waiting.state.spinnerState.phase).toBe('outage_waiting')
+    expect(waiting.state.spinnerState.waitRetryAt).toBeGreaterThan(Date.now())
     expect(waiting.commitLines).toEqual([])
     expect(waiting.writeLines).toEqual([])
     expect(waiting.state.appState.verboseEvents).toEqual([])

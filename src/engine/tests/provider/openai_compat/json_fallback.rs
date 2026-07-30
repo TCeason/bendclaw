@@ -21,7 +21,7 @@ fn openai_error_generic() {
         }
     });
     let err = classify_json_error(&value);
-    assert!(matches!(err, ProviderError::Transient(_)));
+    assert!(matches!(err, ProviderError::Transient { .. }));
     assert!(evotengine::retry::should_retry(&err));
 }
 

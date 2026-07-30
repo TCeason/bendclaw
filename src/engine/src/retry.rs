@@ -13,10 +13,18 @@ use crate::provider::ProviderError;
 /// Controls *how many* times and *how long* to wait between retries.
 /// Use [`RetryPolicy::disabled()`] to fail immediately on any error.
 ///
+/// When retries are enabled, exhausting the bounded budget on a still
+/// retryable error does not fail the agent loop: it switches to the
+/// cancellable long-wait path (see `OutageWait` in the loop) and keeps
+/// probing the provider until it recovers. Only [`disabled()`]
+/// (`max_retries == 0`) keeps the strict fail-fast contract.
+///
 /// Internal backoff parameters (2 s initial, 2× multiplier, 30 s cap,
 /// ±20 % jitter) are intentionally not exposed — callers express intent
 /// via [`new()`](RetryPolicy::new) and the
 /// implementation is free to evolve.
+///
+/// [`disabled()`]: RetryPolicy::disabled
 #[derive(Debug, Clone)]
 pub struct RetryPolicy {
     max_retries: usize,
@@ -77,7 +85,7 @@ pub fn should_retry(error: &ProviderError) -> bool {
         ProviderError::RateLimited { .. }
         | ProviderError::Network(_)
         | ProviderError::Overloaded(_)
-        | ProviderError::Transient(_) => true,
+        | ProviderError::Transient { .. } => true,
         // A bare Api error that is really a context overflow must never retry,
         // even if its wording also contains a transient phrase like "try again".
         // Overflow is handled by compaction, not retry.

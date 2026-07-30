@@ -118,6 +118,14 @@ pub enum RunEventPayload {
     QuotaWaiting {
         delay_ms: u64,
     },
+    /// Transient upstream-outage wait state: the bounded retry budget is
+    /// exhausted but the provider error remains retryable, so the run keeps
+    /// probing instead of failing. Public for live UIs, omitted from persisted
+    /// transcript observability.
+    OutageWaiting {
+        delay_ms: u64,
+        error: String,
+    },
     LlmCallCompleted {
         turn: usize,
         attempt: usize,
@@ -254,6 +262,7 @@ impl RunEventPayload {
             Self::LlmCallStarted { .. } => "llm_call_started",
             Self::LlmCallRetry { .. } => "llm_call_retry",
             Self::QuotaWaiting { .. } => "quota_waiting",
+            Self::OutageWaiting { .. } => "outage_waiting",
             Self::LlmCallCompleted { .. } => "llm_call_completed",
             Self::ContextCompactionStarted { .. } => "context_compaction_started",
             Self::ContextCompactionPhase { .. } => "context_compaction_phase",

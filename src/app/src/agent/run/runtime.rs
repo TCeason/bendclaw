@@ -555,6 +555,13 @@ fn map_agent_event(
             })]
         }
 
+        evot_engine::AgentEvent::OutageWait { delay_ms, error } => {
+            vec![RuntimeEvent::Public(RunEventPayload::OutageWaiting {
+                delay_ms: *delay_ms,
+                error: error.clone(),
+            })]
+        }
+
         evot_engine::AgentEvent::AgentEnd { messages } => {
             let transcripts = from_agent_messages(messages);
             let usage = total_usage(messages);

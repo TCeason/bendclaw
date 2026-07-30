@@ -360,6 +360,7 @@ impl TestOutput {
                 AgentEvent::Error { .. } => "Error",
                 AgentEvent::LlmCallStart { .. } => "LlmCallStart",
                 AgentEvent::QuotaWait { .. } => "QuotaWait",
+                AgentEvent::OutageWait { .. } => "OutageWait",
                 AgentEvent::LlmCallRetry { .. } => "LlmCallRetry",
                 AgentEvent::LlmCallEnd { .. } => "LlmCallEnd",
                 AgentEvent::ContextCompactionStarted { .. } => "CompactionStart",

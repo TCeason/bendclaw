@@ -4,6 +4,18 @@ use tokio::sync::mpsc;
 
 const DEFAULT_QUOTA_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Probe cadence once the bounded retry budget is exhausted but the error is
+/// still retryable (sustained upstream/gateway outage). Like quota waits, the
+/// probes are cancellable and run indefinitely — an outage is a wait state,
+/// not a reason to discard the run.
+const OUTAGE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Bounds for a server-supplied `Retry-After` hint during outage probing: a
+/// short hint must not turn the calm cadence into a hammer loop, and an absurd
+/// hint must not stall the (cancellable) wait for hours.
+const OUTAGE_RETRY_MIN: std::time::Duration = std::time::Duration::from_secs(5);
+const OUTAGE_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(600);
+
 use super::config::default_convert_to_llm;
 use super::config::AgentLoopConfig;
 use crate::provider::ApiProtocol;
@@ -100,7 +112,10 @@ pub(super) async fn stream_assistant_response(
     // Retry loop for transient provider errors
     let retry = &config.retry_policy;
     let mut attempt = 0;
-    let mut quota_wait_started = false;
+    // Set once the call enters a cancellable long-wait (quota or outage).
+    // Re-probes remain part of the same logical call: no further
+    // LlmCallStart events are emitted until the call resolves.
+    let mut long_wait_started = false;
     let shared_metrics = std::sync::Arc::new(std::sync::Mutex::new(LlmCallMetrics::default()));
     let result = loop {
         let thinking_level = crate::provider::effective_thinking_level(
@@ -121,9 +136,10 @@ pub(super) async fn stream_assistant_response(
             prompt_cache_key: context.prompt_cache_key.clone(),
         };
 
-        // Emit one logical call start. Quota re-probes remain part of this call
-        // so they do not churn observability or the TUI status line.
-        if !quota_wait_started {
+        // Emit one logical call start. Long-wait re-probes (quota/outage)
+        // remain part of this call so they do not churn observability or the
+        // TUI status line.
+        if !long_wait_started {
             let llm_stats = crate::context::compute_call_stats(&llm_messages);
             tx.send(AgentEvent::LlmCallStart {
                 turn,
@@ -369,7 +385,7 @@ pub(super) async fn stream_assistant_response(
                     delay_ms: delay.as_millis() as u64,
                 })
                 .ok();
-                quota_wait_started = true;
+                long_wait_started = true;
                 let _idle_pause = idle_clock.as_ref().map(crate::context::IdleClock::pause);
                 tokio::select! {
                     _ = cancel.cancelled() => break Err(ProviderError::Cancelled),
@@ -380,6 +396,7 @@ pub(super) async fn stream_assistant_response(
             Err(e)
                 if crate::retry::should_retry(e)
                     && attempt < retry.max_retries()
+                    && !long_wait_started
                     && !cancel.is_cancelled() =>
             {
                 // Abort forwarder to prevent forwarding events from failed attempt
@@ -415,7 +432,43 @@ pub(super) async fn stream_assistant_response(
                     error: e.to_string(),
                 })
                 .ok();
-                tokio::time::sleep(delay).await;
+                tokio::select! {
+                    _ = cancel.cancelled() => break Err(ProviderError::Cancelled),
+                    _ = tokio::time::sleep(delay) => {}
+                }
+                continue;
+            }
+            Err(e)
+                if crate::retry::should_retry(e)
+                    && retry.max_retries() > 0
+                    && !cancel.is_cancelled() =>
+            {
+                // The bounded retry budget is exhausted (or a long wait is
+                // already underway) but the error is still retryable — a
+                // sustained upstream/gateway outage, not a fatal request.
+                // Failing here would discard the run's progress, so switch to
+                // the same cancellable long-wait used for quota exhaustion and
+                // probe at a calm cadence until the gateway recovers. The
+                // decision keys off the semantic classification
+                // (`should_retry`), never gateway-specific error wording, so it
+                // holds for any upstream. `RetryPolicy::disabled()` keeps its
+                // fail-fast contract and never enters this state.
+                forward_handle.abort();
+                let delay = e
+                    .retry_after()
+                    .map(|hint| hint.clamp(OUTAGE_RETRY_MIN, OUTAGE_RETRY_MAX))
+                    .unwrap_or(OUTAGE_RETRY_DELAY);
+                tx.send(AgentEvent::OutageWait {
+                    delay_ms: delay.as_millis() as u64,
+                    error: e.to_string(),
+                })
+                .ok();
+                long_wait_started = true;
+                let _idle_pause = idle_clock.as_ref().map(crate::context::IdleClock::pause);
+                tokio::select! {
+                    _ = cancel.cancelled() => break Err(ProviderError::Cancelled),
+                    _ = tokio::time::sleep(delay) => {}
+                }
                 continue;
             }
             _ => {

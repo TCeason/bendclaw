@@ -78,7 +78,8 @@ pub async fn send_stream_request(
 /// Check the HTTP status code. Non-2xx responses are read and classified.
 ///
 /// Extracts the `Retry-After` header (if present) so the retry policy can
-/// honour server-specified delays.
+/// honour server-specified delays, and the `x-should-retry` gateway hint so
+/// a gateway can mark an otherwise-unknown error as retryable.
 pub async fn check_error_status(
     response: reqwest::Response,
 ) -> Result<reqwest::Response, ProviderError> {
@@ -87,11 +88,13 @@ pub async fn check_error_status(
     }
     let status = response.status().as_u16();
     let retry_after_ms = parse_retry_after_header(&response);
+    let should_retry = parse_should_retry_header(&response);
     let body = response.text().await.unwrap_or_default();
-    Err(ProviderError::classify(
+    Err(ProviderError::classify_with_hints(
         status,
         &format!("HTTP {status}: {body}"),
         retry_after_ms,
+        should_retry,
     ))
 }
 
@@ -103,6 +106,25 @@ pub fn parse_retry_after_header(response: &reqwest::Response) -> Option<u64> {
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok())
         .map(|secs| secs * 1000)
+}
+
+/// Parse the `x-should-retry` hint header (sent by Anthropic and passed
+/// through by gateway proxies). Only explicit `true`/`false` values count;
+/// anything else is treated as absent.
+pub fn parse_should_retry_header(response: &reqwest::Response) -> Option<bool> {
+    match response
+        .headers()
+        .get("x-should-retry")?
+        .to_str()
+        .ok()?
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
