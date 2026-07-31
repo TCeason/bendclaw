@@ -4,7 +4,7 @@ import { RESUME_SELECTOR_TITLE } from '../src/term/app/resume.js'
 import { createSelectorState, selectorExpandItems, type SelectorItem } from '../src/term/selector.js'
 
 const char = (value: string) => ({ type: 'char' as const, char: value })
-const key = (type: 'up' | 'down' | 'backspace' | 'enter' | 'escape' | 'delete') => ({ type })
+const key = (type: 'up' | 'down' | 'tab' | 'shift-tab' | 'backspace' | 'enter' | 'escape' | 'delete') => ({ type })
 
 describe('repl selector control', () => {
   const items: SelectorItem[] = [
@@ -24,6 +24,18 @@ describe('repl selector control', () => {
     const up = handleSelectorControl(state, key('up'))
     expect(up.kind).toBe('update')
     if (up.kind === 'update') expect(up.state.focusIndex).toBe(0)
+  })
+
+  test('tab moves down and shift-tab moves up', () => {
+    const state = createSelectorState('Select model', items)
+    const next = handleSelectorControl(state, key('tab'))
+    expect(next.kind).toBe('update')
+    if (next.kind !== 'update') return
+    expect(next.state.focusIndex).toBe(1)
+
+    const previous = handleSelectorControl(next.state, key('shift-tab'))
+    expect(previous.kind).toBe('update')
+    if (previous.kind === 'update') expect(previous.state.focusIndex).toBe(0)
   })
 
   test('updates query on char and backspace', () => {

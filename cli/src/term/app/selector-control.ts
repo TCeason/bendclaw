@@ -33,8 +33,10 @@ function disarmDelete(state: SelectorState): SelectorState {
 export function handleSelectorControl(state: SelectorState, event: KeyEvent): SelectorControlAction {
   switch (event.type) {
     case 'up':
+    case 'shift-tab':
       return { kind: 'update', state: selectorUp(disarmDelete(state)) }
     case 'down':
+    case 'tab':
       return { kind: 'update', state: selectorDown(disarmDelete(state)) }
     case 'char':
       if (isQueueSelectorTitle(state.title)) return { kind: 'none' }
