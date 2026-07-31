@@ -218,6 +218,19 @@ fn validate_node(schema: &Value, input: &Value, path: &str, errors: &mut Vec<Str
         }
     }
 
+    if let (Some(actual), Some(minimum)) = (
+        value.as_f64(),
+        schema.get("minimum").and_then(Value::as_f64),
+    ) {
+        if actual < minimum {
+            errors.push(format!(
+                "The parameter `{}` value {value} is below the minimum {}",
+                display_path(path),
+                schema["minimum"]
+            ));
+        }
+    }
+
     if let (Some(properties), Some(object)) = (
         schema.get("properties").and_then(Value::as_object),
         value.as_object(),
@@ -296,7 +309,26 @@ fn try_coerce(val: &Value, expected: &str, schema: &Value) -> CoerceResult {
         return CoerceResult::AlreadyCorrect;
     }
 
-    // Only attempt coercion from strings.
+    // JavaScript-based providers can serialize an integer tool argument as
+    // `2000.0`. Preserve that cross-provider behavior without accepting a
+    // fractional value. Restrict float conversion to JavaScript's safe integer
+    // range so the normalization cannot silently lose precision.
+    if expected == "integer" {
+        const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+        if let Some(number) = val.as_f64() {
+            let is_integral = number.to_bits() == number.trunc().to_bits();
+            if number.is_finite() && is_integral && number.abs() <= MAX_SAFE_INTEGER {
+                let normalized = if number.is_sign_negative() {
+                    Value::Number((number as i64).into())
+                } else {
+                    Value::Number((number as u64).into())
+                };
+                return CoerceResult::Ok(normalized);
+            }
+        }
+    }
+
+    // Only attempt coercion from strings after numeric normalization.
     let s = match val.as_str() {
         Some(s) => s,
         None => return CoerceResult::Mismatch,

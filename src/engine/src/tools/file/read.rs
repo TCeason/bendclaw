@@ -19,6 +19,43 @@ const MAX_READ_LINES: usize = 2000;
 const MAX_READ_BYTES: usize = 100 * 1024; // 100KB
 /// Label used in truncation notices; keep in sync with MAX_READ_BYTES.
 const MAX_READ_BYTES_LABEL: &str = "100KB";
+/// Largest integer that can be represented exactly by a JavaScript number.
+const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
+fn optional_positive_usize(
+    params: &serde_json::Value,
+    name: &str,
+) -> Result<Option<usize>, ToolError> {
+    let Some(value) = params.get(name) else {
+        return Ok(None);
+    };
+
+    let raw = if let Some(integer) = value.as_u64() {
+        integer
+    } else if let Some(number) = value.as_f64() {
+        let is_integral = number.to_bits() == number.trunc().to_bits();
+        if !number.is_finite() || !is_integral || !(1.0..=MAX_SAFE_INTEGER).contains(&number) {
+            return Err(ToolError::InvalidArgs(format!(
+                "'{name}' must be a positive integer"
+            )));
+        }
+        number as u64
+    } else {
+        return Err(ToolError::InvalidArgs(format!(
+            "'{name}' must be a positive integer"
+        )));
+    };
+
+    if raw == 0 {
+        return Err(ToolError::InvalidArgs(format!(
+            "'{name}' must be a positive integer"
+        )));
+    }
+
+    usize::try_from(raw)
+        .map(Some)
+        .map_err(|_| ToolError::InvalidArgs(format!("'{name}' is too large for this platform")))
+}
 
 /// Returned instead of file content when the same read would repeat an
 /// earlier, still-current result. Saves re-sending large unchanged files.
@@ -101,11 +138,13 @@ impl AgentTool for ReadFileTool {
                     "description": "Path to the file to read (relative or absolute)"
                 },
                 "offset": {
-                    "type": "number",
+                    "type": "integer",
+                    "minimum": 1,
                     "description": "Line number to start reading from (1-indexed)"
                 },
                 "limit": {
-                    "type": "number",
+                    "type": "integer",
+                    "minimum": 1,
                     "description": "Maximum number of lines to read"
                 }
             },
@@ -115,8 +154,8 @@ impl AgentTool for ReadFileTool {
 
     fn preview_command(&self, params: &serde_json::Value) -> Option<String> {
         let path = params["path"].as_str()?;
-        let offset = params["offset"].as_u64();
-        let limit = params["limit"].as_u64();
+        let offset = optional_positive_usize(params, "offset").ok()?;
+        let limit = optional_positive_usize(params, "limit").ok()?;
         match (offset, limit) {
             (Some(off), Some(lim)) => {
                 let end = off.saturating_add(lim).saturating_sub(1);
@@ -186,9 +225,11 @@ impl AgentTool for ReadFileTool {
             });
         }
 
-        // Text files: check size limit and apply line offset/limit
-        let offset = params["offset"].as_u64().map(|v| v.max(1) as usize);
-        let limit = params["limit"].as_u64().map(|v| v as usize);
+        // Text files: check size limit and apply line offset/limit. Parse
+        // defensively here too because tools can be invoked directly without
+        // passing through the agent loop's schema validation.
+        let offset = optional_positive_usize(&params, "offset")?;
+        let limit = optional_positive_usize(&params, "limit")?;
 
         if metadata.len() as usize > self.max_bytes {
             let Some(lim) = limit else {

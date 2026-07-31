@@ -38,6 +38,69 @@ async fn test_read_file_with_offset_limit() {
 }
 
 #[tokio::test]
+async fn test_read_file_with_integral_float_offset_limit() {
+    let tmp = std::env::temp_dir().join("evot-test-float-read-range.txt");
+    let path = tmp.to_str().unwrap();
+    let content = (1..=2704)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&tmp, content).unwrap();
+
+    let tool = ReadFileTool::new();
+    let result = tool
+        .execute(
+            serde_json::json!({"path": path, "offset": 2000.0, "limit": 250.0}),
+            ctx("read"),
+        )
+        .await
+        .unwrap();
+    let Content::Text { text } = &result.content[0] else {
+        panic!("expected text");
+    };
+
+    assert!(text.starts_with("[Lines 2000-2249 of 2704]"));
+    assert!(text.contains("2000 | line 2000"));
+    assert!(text.contains("2249 | line 2249"));
+    assert!(!text.contains("1999 | line 1999"));
+    assert!(!text.contains("2250 | line 2250"));
+
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn test_read_file_rejects_invalid_ranges() {
+    let tmp = std::env::temp_dir().join("evot-test-invalid-read-range.txt");
+    let path = tmp.to_str().unwrap();
+    std::fs::write(&tmp, "one\ntwo\nthree").unwrap();
+    let tool = ReadFileTool::new();
+
+    for (label, params) in [
+        (
+            "zero offset",
+            serde_json::json!({"path": path, "offset": 0}),
+        ),
+        (
+            "negative offset",
+            serde_json::json!({"path": path, "offset": -1}),
+        ),
+        ("zero limit", serde_json::json!({"path": path, "limit": 0})),
+        (
+            "fractional limit",
+            serde_json::json!({"path": path, "limit": 1.5}),
+        ),
+    ] {
+        let result = tool.execute(params, ctx("read")).await;
+        assert!(
+            matches!(result, Err(ToolError::InvalidArgs(_))),
+            "{label} should be rejected, got {result:?}"
+        );
+    }
+
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
 async fn test_read_file_not_found() {
     let tool = ReadFileTool::new();
     let result = tool

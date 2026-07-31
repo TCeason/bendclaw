@@ -12,8 +12,8 @@ fn read_file_schema() -> serde_json::Value {
         "type": "object",
         "properties": {
             "path": { "type": "string", "description": "File path" },
-            "offset": { "type": "integer", "description": "Start line" },
-            "limit": { "type": "integer", "description": "Max lines" }
+            "offset": { "type": "integer", "minimum": 1, "description": "Start line" },
+            "limit": { "type": "integer", "minimum": 1, "description": "Max lines" }
         },
         "required": ["path"]
     })
@@ -91,6 +91,36 @@ fn coerce_string_to_integer() {
     assert_eq!(result["offset"], json!(10));
     assert_eq!(result["limit"], json!(20));
     assert_eq!(result["path"], json!("foo.rs"));
+}
+
+#[test]
+fn coerce_integral_float_to_integer() {
+    let input = json!({ "path": "foo.rs", "offset": 2000.0, "limit": 250.0 });
+    let result = validate_and_coerce("read", &read_file_schema(), &input).unwrap();
+    assert_eq!(result["offset"], json!(2000));
+    assert_eq!(result["limit"], json!(250));
+}
+
+#[test]
+fn reject_fractional_float_for_integer() {
+    let input = json!({ "path": "foo.rs", "limit": 1.5 });
+    let err = validate_and_coerce("read", &read_file_schema(), &input).unwrap_err();
+    assert!(
+        err.contains("expected as `integer` but provided as `number`"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn enforce_numeric_minimum_after_coercion() {
+    for input in [
+        json!({ "path": "foo.rs", "offset": 0 }),
+        json!({ "path": "foo.rs", "limit": "0" }),
+        json!({ "path": "foo.rs", "limit": -1.0 }),
+    ] {
+        let err = validate_and_coerce("read", &read_file_schema(), &input).unwrap_err();
+        assert!(err.contains("below the minimum 1"), "got: {err}");
+    }
 }
 
 #[test]
