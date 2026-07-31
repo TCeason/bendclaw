@@ -63,32 +63,39 @@ const MODERN: ModelProfile = ModelProfile {
     compaction_limit: Some(180_000),
     ..BASE
 };
+// 1M total context window; the input limit below is the window minus output
+// headroom, which is what users recognize as the model's window size.
 const OPUS_LONG_CONTEXT_XHIGH: ModelProfile = ModelProfile {
     max_input_tokens: 867_000,
+    advertised_context_window: Some(1_000_000),
     max_output_tokens: 128_000,
     reasoning: ADAPTIVE_XHIGH_REASONING,
     ..BASE
 };
 const SONNET_LONG_CONTEXT_XHIGH: ModelProfile = ModelProfile {
     max_input_tokens: 872_000,
+    advertised_context_window: Some(1_000_000),
     max_output_tokens: 128_000,
     reasoning: ADAPTIVE_XHIGH_REASONING,
     ..BASE
 };
 const FABLE: ModelProfile = ModelProfile {
     max_input_tokens: 867_000,
+    advertised_context_window: Some(1_000_000),
     max_output_tokens: 128_000,
     reasoning: FABLE_REASONING,
     ..BASE
 };
 const OPUS_LONG_CONTEXT_MAX: ModelProfile = ModelProfile {
     max_input_tokens: 867_000,
+    advertised_context_window: Some(1_000_000),
     max_output_tokens: 128_000,
     reasoning: ADAPTIVE_MAX_REASONING,
     ..BASE
 };
 const SONNET_LONG_CONTEXT_MAX: ModelProfile = ModelProfile {
     max_input_tokens: 931_000,
+    advertised_context_window: Some(1_000_000),
     max_output_tokens: 64_000,
     reasoning: ADAPTIVE_MAX_REASONING,
     ..BASE

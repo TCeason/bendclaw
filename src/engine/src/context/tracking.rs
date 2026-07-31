@@ -112,7 +112,7 @@ impl ContextTracker {
     ) -> ContextBudgetSnapshot {
         let estimated_tokens =
             self.estimate_context_tokens_for_model(messages, target_provider, target_model);
-        let (system_prompt_tokens, budget_tokens, context_window) = ctx_config
+        let (system_prompt_tokens, budget_tokens, max_context_tokens) = ctx_config
             .map(|c| {
                 (
                     c.system_prompt_tokens,
@@ -128,7 +128,13 @@ impl ContextTracker {
             tool_definition_tokens: self
                 .system_tool_overhead_tokens
                 .saturating_sub(system_prompt_tokens),
-            context_window,
+            // Display value: the model's documented total window. May exceed
+            // `budget_tokens` when the provider reserves output headroom
+            // inside the advertised window (e.g. DeepSeek V4: 1M total vs
+            // 616K real input budget).
+            context_window: ctx_config
+                .and_then(|c| c.advertised_context_window)
+                .unwrap_or(max_context_tokens),
         }
     }
 }
@@ -225,6 +231,11 @@ pub struct ContextBudgetSnapshot {
 pub struct ContextConfig {
     /// Effective request-input limit for the selected model and reasoning mode.
     pub max_context_tokens: usize,
+    /// Documented total context window for display; `None` falls back to
+    /// `max_context_tokens`. Purely cosmetic — all budget math uses
+    /// `max_context_tokens`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advertised_context_window: Option<usize>,
     /// Tokens reserved for the system prompt
     pub system_prompt_tokens: usize,
     /// Output headroom reserved before compaction triggers. `None` uses
@@ -245,6 +256,7 @@ impl Default for ContextConfig {
     fn default() -> Self {
         Self {
             max_context_tokens: 100_000,
+            advertised_context_window: None,
             system_prompt_tokens: 4_000,
             reserve_tokens: None,
             trigger_tokens: None,
@@ -262,6 +274,7 @@ impl ContextConfig {
         let max_context_tokens = model.context_window() as usize;
         Self {
             max_context_tokens,
+            advertised_context_window: Some(model.advertised_context_window() as usize),
             trigger_tokens: model
                 .profile_compaction_limit(thinking_level)
                 .map(|limit| (limit as usize).min(max_context_tokens)),

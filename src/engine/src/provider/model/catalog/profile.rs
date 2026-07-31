@@ -42,6 +42,11 @@ pub(super) const NO_REASONING: ReasoningProfile = ReasoningProfile {
 pub(super) struct ModelProfile {
     /// Maximum request input accepted by the model, excluding generated output.
     pub max_input_tokens: u32,
+    /// Documented total context window (input + output) for display. `None`
+    /// falls back to `max_input_tokens`. Only set when the provider documents
+    /// a total window larger than the request input limit (e.g. DeepSeek V4:
+    /// 1M total, 616K input at the maximum 384K output).
+    pub advertised_context_window: Option<u32>,
     /// Maximum generated output accepted by the model.
     pub max_output_tokens: u32,
     pub vision: bool,
@@ -57,6 +62,7 @@ pub(super) struct ModelProfile {
 
 pub(super) const BASE: ModelProfile = ModelProfile {
     max_input_tokens: 200_000,
+    advertised_context_window: None,
     max_output_tokens: 8_192,
     vision: true,
     reasoning: STANDARD_REASONING,
@@ -69,6 +75,9 @@ impl ModelProfile {
     pub(super) fn capabilities(self) -> ModelCapabilities {
         ModelCapabilities {
             max_input_tokens: self.max_input_tokens,
+            advertised_context_window: self
+                .advertised_context_window
+                .unwrap_or(self.max_input_tokens),
             max_output_tokens: self.max_output_tokens,
             input: if self.vision {
                 vec![InputModality::Text, InputModality::Image]

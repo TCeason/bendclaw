@@ -52,8 +52,11 @@ const LEGACY_REASONING: ReasoningProfile = ReasoningProfile {
     anthropic_wire: Some(AnthropicThinkingWire::Enabled),
 };
 
+// 1M total context window; the input limit below is the window minus output
+// headroom, which is what users recognize as the model's window size.
 const GPT_5_6: ModelProfile = ModelProfile {
     max_input_tokens: 922_000,
+    advertised_context_window: Some(1_000_000),
     max_output_tokens: 128_000,
     reasoning: GPT_5_6_REASONING,
     remote_compaction: true,
@@ -63,10 +66,10 @@ const GPT_5_6: ModelProfile = ModelProfile {
 
 #[rustfmt::skip]
 const PROFILES: &[(&str, ModelProfile)] = &[
-    ("gpt-5.4",       ModelProfile { max_input_tokens: 922_000, max_output_tokens: 128_000, reasoning: GPT_REASONING, remote_compaction: true, ..BASE }),
-    ("gpt-5.4-pro",   ModelProfile { max_input_tokens: 922_000, max_output_tokens: 128_000, reasoning: GPT_REASONING, remote_compaction: true, ..BASE }),
-    ("gpt-5.5",       ModelProfile { max_input_tokens: 922_000, max_output_tokens: 128_000, reasoning: GPT_REASONING, remote_compaction: true, default_verbosity: Some(Verbosity::Low), ..BASE }),
-    ("gpt-5.5-pro",   ModelProfile { max_input_tokens: 922_000, max_output_tokens: 128_000, reasoning: GPT_5_5_PRO_REASONING, remote_compaction: true, ..BASE }),
+    ("gpt-5.4",       ModelProfile { max_input_tokens: 922_000, advertised_context_window: Some(1_000_000), max_output_tokens: 128_000, reasoning: GPT_REASONING, remote_compaction: true, ..BASE }),
+    ("gpt-5.4-pro",   ModelProfile { max_input_tokens: 922_000, advertised_context_window: Some(1_000_000), max_output_tokens: 128_000, reasoning: GPT_REASONING, remote_compaction: true, ..BASE }),
+    ("gpt-5.5",       ModelProfile { max_input_tokens: 922_000, advertised_context_window: Some(1_000_000), max_output_tokens: 128_000, reasoning: GPT_REASONING, remote_compaction: true, default_verbosity: Some(Verbosity::Low), ..BASE }),
+    ("gpt-5.5-pro",   ModelProfile { max_input_tokens: 922_000, advertised_context_window: Some(1_000_000), max_output_tokens: 128_000, reasoning: GPT_5_5_PRO_REASONING, remote_compaction: true, ..BASE }),
     ("gpt-5.6-luna",  GPT_5_6),
     ("gpt-5.6-sol",   GPT_5_6),
     ("gpt-5.6-terra", GPT_5_6),

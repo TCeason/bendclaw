@@ -340,8 +340,12 @@ function truncateTailToWidth(text: string, width: number): string {
 
 function formatContextTokens(count: number): string {
   if (count < 1000) return `${count}`
-  if (count < 1000000) return `${(count / 1000).toFixed(1)}k`
-  return `${(count / 1000000).toFixed(1)}M`
+  if (count < 1000000) {
+    const k = count / 1000
+    return `${Number.isInteger(k) ? k : k.toFixed(1)}k`
+  }
+  const m = count / 1000000
+  return `${Number.isInteger(m) ? m : m.toFixed(1)}M`
 }
 
 export function wrapTextByWidth(text: string, width: number): { start: number; end: number }[] {

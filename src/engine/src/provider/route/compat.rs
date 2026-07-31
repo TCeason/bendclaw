@@ -211,7 +211,9 @@ impl OpenAiCompat {
 
     pub fn deepseek() -> Self {
         Self {
-            caps: CompatCaps::USAGE_IN_STREAMING | CompatCaps::REASONING_CONTENT_REQUIRED,
+            caps: CompatCaps::USAGE_IN_STREAMING
+                | CompatCaps::REASONING_EFFORT
+                | CompatCaps::REASONING_CONTENT_REQUIRED,
             max_tokens_field: MaxTokensField::MaxCompletionTokens,
             thinking_format: ThinkingFormat::DeepSeek,
         }

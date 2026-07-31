@@ -27,6 +27,8 @@ const K3_REASONING: ReasoningProfile = ReasoningProfile {
 
 const KIMI_CODING: ModelProfile = ModelProfile {
     max_input_tokens: 196_608,
+    // 256K total window (platform.moonshot.ai) minus the 65_536 output budget.
+    advertised_context_window: Some(256_000),
     max_output_tokens: 65_536,
     reasoning: KIMI_CODING_REASONING,
     ..BASE
@@ -35,6 +37,7 @@ const KIMI_CODING: ModelProfile = ModelProfile {
 // (platform.moonshot.ai model list + K3 guide).
 const K3: ModelProfile = ModelProfile {
     max_input_tokens: 917_504,
+    advertised_context_window: Some(1_000_000),
     max_output_tokens: 131_072,
     reasoning: K3_REASONING,
     ..BASE

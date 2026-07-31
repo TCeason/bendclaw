@@ -22,6 +22,7 @@ const GLM_5_2_REASONING: ReasoningProfile = ReasoningProfile {
 // 1M total window (docs.z.ai) minus the 131_072 output budget.
 const GLM_5_2: ModelProfile = ModelProfile {
     max_input_tokens: 917_504,
+    advertised_context_window: Some(1_000_000),
     max_output_tokens: 131_072,
     vision: false,
     reasoning: GLM_5_2_REASONING,

@@ -286,6 +286,66 @@ fn test_openrouter_uses_nested_reasoning_effort() {
 }
 
 #[test]
+fn test_deepseek_v4_uses_thinking_toggle_and_reasoning_effort() {
+    let model = resolved_model_config(
+        ApiProtocol::OpenAiCompletions,
+        "deepseek",
+        "deepseek-v4-pro",
+        "https://api.deepseek.com",
+        Some(OpenAiCompat::deepseek()),
+        Default::default(),
+        Default::default(),
+    );
+    let enabled = StreamConfigBuilder::openai()
+        .model("deepseek-v4-pro")
+        .model_config(model.clone())
+        .thinking(ThinkingLevel::Max)
+        .build();
+    let enabled_body = build_request_body(&enabled, &OpenAiCompat::deepseek());
+    assert_eq!(enabled_body["thinking"]["type"], "enabled");
+    assert_eq!(enabled_body["reasoning_effort"], "max");
+
+    let disabled = StreamConfigBuilder::openai()
+        .model("deepseek-v4-pro")
+        .model_config(model)
+        .thinking(ThinkingLevel::Off)
+        .build();
+    let disabled_body = build_request_body(&disabled, &OpenAiCompat::deepseek());
+    assert_eq!(disabled_body["thinking"]["type"], "disabled");
+    assert!(disabled_body.get("reasoning_effort").is_none());
+}
+
+#[test]
+fn test_legacy_deepseek_reasoner_still_emits_thinking_and_effort() {
+    // Pins the legacy-model wire contract after REASONING_EFFORT was added to
+    // the DeepSeek transport: selectable levels are unchanged (Off/High) and
+    // only an enabled model sends reasoning_effort. Guards against a regression
+    // where adding the cap changes what legacy deepseek-reasoner requests emit.
+    let model = resolved_model_config(
+        ApiProtocol::OpenAiCompletions,
+        "deepseek",
+        "deepseek-reasoner",
+        "https://api.deepseek.com",
+        Some(OpenAiCompat::deepseek()),
+        Default::default(),
+        Default::default(),
+    );
+    assert_eq!(model.supported_thinking_levels(), vec![
+        ThinkingLevel::Off,
+        ThinkingLevel::High
+    ]);
+
+    let enabled = StreamConfigBuilder::openai()
+        .model("deepseek-reasoner")
+        .model_config(model)
+        .thinking(ThinkingLevel::High)
+        .build();
+    let body = build_request_body(&enabled, &OpenAiCompat::deepseek());
+    assert_eq!(body["thinking"]["type"], "enabled");
+    assert_eq!(body["reasoning_effort"], "high");
+}
+
+#[test]
 fn test_kimi_k3_uses_transport_specific_reasoning_format() {
     let moonshot_model = resolved_model_config(
         ApiProtocol::OpenAiCompletions,

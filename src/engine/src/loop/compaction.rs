@@ -171,7 +171,7 @@ fn emit_compaction_events(
         tx.send(AgentEvent::ContextCompactionStarted {
             reason,
             estimated_tokens: response.context_tokens.unwrap_or(stats.before_tokens),
-            context_window: ctrl.config().context_window,
+            context_window: ctrl.config().displayed_window(),
             reserve_tokens: ctrl.config().reserve_tokens,
             trigger_threshold: ctrl.config().trigger_threshold(),
             will_retry,
@@ -183,7 +183,7 @@ fn emit_compaction_events(
             messages: messages.to_vec(),
             state: ctrl.state().clone(),
             summary: stats.summary.clone(),
-            context_window: ctrl.config().context_window,
+            context_window: ctrl.config().displayed_window(),
             will_retry,
         })
         .ok();

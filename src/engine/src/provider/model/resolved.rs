@@ -136,9 +136,18 @@ impl ModelConfig {
         self.route.capabilities
     }
 
-    /// Maximum request input accepted by the model.
+    /// Maximum request input accepted by the model. The real budget for
+    /// context math; may be smaller than [`Self::advertised_context_window`]
+    /// when the provider reserves output headroom inside the total window.
     pub fn context_window(&self) -> u32 {
         self.capabilities.max_input_tokens
+    }
+
+    /// Documented total context window for display (input + output). Falls
+    /// back to `context_window()` when the provider does not advertise a
+    /// larger total.
+    pub fn advertised_context_window(&self) -> u32 {
+        self.capabilities.advertised_context_window
     }
 
     /// Maximum generated output accepted by the model.

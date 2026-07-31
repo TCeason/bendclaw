@@ -40,6 +40,10 @@ pub struct CompactionConfig {
     // — Trigger —
     /// Effective request-input limit for the active model.
     pub context_window: usize,
+    /// Documented total context window for display; `None` falls back to
+    /// `context_window`. Purely cosmetic — all budget math uses
+    /// `context_window`.
+    pub advertised_context_window: Option<usize>,
     /// Tokens reserved for output + system prompt + tool defs.
     pub reserve_tokens: usize,
     /// Explicit compaction trigger. `None` uses `context_window - reserve_tokens`.
@@ -83,6 +87,7 @@ impl CompactionConfig {
     pub fn from_context_window(context_window: usize) -> Self {
         Self {
             context_window,
+            advertised_context_window: None,
             reserve_tokens: DEFAULT_RESERVE_TOKENS,
             trigger_tokens: None,
             keep_recent_tokens: DEFAULT_KEEP_RECENT_TOKENS,
@@ -97,6 +102,7 @@ impl CompactionConfig {
         // Output headroom is reserved here via reserve_tokens (single source
         // of headroom), so trigger threshold = window - reserve_tokens.
         let mut cfg = Self::from_context_window(ctx.max_context_tokens);
+        cfg.advertised_context_window = ctx.advertised_context_window;
         if let Some(reserve) = ctx.reserve_tokens {
             cfg.reserve_tokens = reserve;
         }
@@ -105,6 +111,13 @@ impl CompactionConfig {
             cfg.keep_recent_tokens = keep_recent;
         }
         cfg
+    }
+
+    /// Window size shown to the user: the model's documented total window
+    /// when known, otherwise the effective input limit.
+    pub fn displayed_window(&self) -> usize {
+        self.advertised_context_window
+            .unwrap_or(self.context_window)
     }
 
     pub fn post_compaction_target(&self) -> usize {

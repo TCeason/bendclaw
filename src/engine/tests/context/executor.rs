@@ -74,6 +74,7 @@ fn config_small() -> CompactionConfig {
     CompactionConfig {
         context_window: 10_000,
         reserve_tokens: 2_000,
+        advertised_context_window: None,
         trigger_tokens: None,
         keep_recent_tokens: 1_000,
         summarizer_mode: SummarizerMode::default(),

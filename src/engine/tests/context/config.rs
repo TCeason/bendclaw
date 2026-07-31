@@ -73,6 +73,7 @@ fn explicit_budgets_override_the_defaults() {
     let cfg = CompactionConfig::from_context_config(&ContextConfig {
         max_context_tokens: 1_000,
         system_prompt_tokens: 0,
+        advertised_context_window: None,
         reserve_tokens: Some(125),
         trigger_tokens: None,
         keep_recent_tokens: Some(200),

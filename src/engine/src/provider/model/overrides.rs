@@ -14,6 +14,9 @@ impl ModelOverrides {
     pub(super) fn apply(self, capabilities: &mut ModelCapabilities) {
         if let Some(context_window) = self.context_window {
             capabilities.max_input_tokens = context_window;
+            // An explicit user override wins for display too: the advertised
+            // window is not derived independently once the user sets one.
+            capabilities.advertised_context_window = context_window;
         }
         if let Some(max_output_tokens) = self.max_output_tokens {
             capabilities.max_output_tokens = max_output_tokens;

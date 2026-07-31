@@ -194,6 +194,7 @@ fn kimi_profiles_match_catalog_contracts() {
     for id in ["k2p7", "kimi-for-coding", "kimi-for-coding-highspeed"] {
         let config = ModelConfig::anthropic(id, id);
         assert_eq!(config.context_window(), 196_608, "{id}");
+        assert_eq!(config.advertised_context_window(), 256_000, "{id}");
         assert_eq!(config.max_tokens(), 65_536, "{id}");
         assert_eq!(
             config.input(),
@@ -208,6 +209,7 @@ fn kimi_profiles_match_catalog_contracts() {
     // 1M window minus the 131_072 default max_completion_tokens; K3 always
     // thinks, so Off is not offered and the official default effort is max.
     assert_eq!(k3.context_window(), 917_504);
+    assert_eq!(k3.advertised_context_window(), 1_000_000);
     assert_eq!(k3.max_tokens(), 131_072);
     assert_eq!(k3.supported_thinking_levels(), vec![Low, High, Max]);
     assert!(!k3.can_disable_thinking());
@@ -217,6 +219,7 @@ fn kimi_profiles_match_catalog_contracts() {
 
     let thinking = ModelConfig::anthropic("kimi-k2-thinking", "Kimi K2 Thinking");
     assert_eq!(thinking.context_window(), 196_608);
+    assert_eq!(thinking.advertised_context_window(), 256_000);
     assert_eq!(thinking.max_tokens(), 65_536);
     assert_eq!(thinking.input(), [InputModality::Text]);
 }
@@ -234,6 +237,7 @@ fn current_openai_profiles_expose_limits_and_verbosity() {
     ] {
         let config = ModelConfig::openai(id, id);
         assert_eq!(config.context_window(), 922_000, "{id}");
+        assert_eq!(config.advertised_context_window(), 1_000_000, "{id}");
         assert_eq!(config.max_tokens(), 128_000, "{id}");
         assert_eq!(
             config.default_thinking_level(),
@@ -279,6 +283,7 @@ fn anthropic_version_rules_cover_current_and_future_models() {
     for id in ["claude-opus-4-6", "claude-opus-4-8", "claude-opus-5-0"] {
         let config = ModelConfig::anthropic(id, id);
         assert_eq!(config.context_window(), 867_000, "{id}");
+        assert_eq!(config.advertised_context_window(), 1_000_000, "{id}");
         assert_eq!(config.max_tokens(), 128_000, "{id}");
         assert_eq!(config.default_thinking_level(), ThinkingLevel::High, "{id}");
     }
@@ -289,6 +294,7 @@ fn anthropic_version_rules_cover_current_and_future_models() {
     ] {
         let config = ModelConfig::anthropic(id, id);
         assert_eq!(config.context_window(), 200_000, "{id}");
+        assert_eq!(config.advertised_context_window(), 200_000, "{id}");
         assert_eq!(config.max_tokens(), 64_000, "{id}");
     }
     let opus_4_5 = ModelConfig::anthropic("claude-opus-4-5", "Claude Opus 4.5");
@@ -366,6 +372,7 @@ fn openai_compat_profiles_are_transport_only() {
         MaxTokensField::MaxCompletionTokens
     );
     assert_eq!(deepseek.thinking_format, ThinkingFormat::DeepSeek);
+    assert!(deepseek.caps.contains(CompatCaps::REASONING_EFFORT));
 }
 
 #[test]
@@ -399,6 +406,7 @@ fn glm_and_deepseek_profiles_are_explicit() {
 
     let glm = ModelConfig::openai("zai/glm-5.2", "GLM 5.2");
     assert_eq!(glm.context_window(), 917_504);
+    assert_eq!(glm.advertised_context_window(), 1_000_000);
     assert_eq!(glm.max_tokens(), 131_072);
     assert_eq!(glm.input(), [InputModality::Text]);
     assert_eq!(glm.supported_thinking_levels(), vec![Off, High, Xhigh]);
@@ -441,6 +449,35 @@ fn glm_and_deepseek_profiles_are_explicit() {
     assert_eq!(namespaced_reasoner.context_window(), 128_000);
     assert_eq!(namespaced_reasoner.max_tokens(), 64_000);
     assert_eq!(namespaced_reasoner.default_thinking_level(), High);
+
+    for id in ["deepseek-v4-flash", "deepseek-v4-pro"] {
+        let model = resolved(
+            ApiProtocol::OpenAiCompletions,
+            "deepseek",
+            id,
+            "https://api.deepseek.com",
+            Some(OpenAiCompat::deepseek()),
+            RouteCapabilities::default(),
+            ModelOverrides::default(),
+        );
+        assert_eq!(model.context_window(), 616_000, "model: {}", id);
+        assert_eq!(
+            model.advertised_context_window(),
+            1_000_000,
+            "model: {}",
+            id
+        );
+        assert_eq!(model.max_tokens(), 384_000, "model: {}", id);
+        assert_eq!(model.input(), [InputModality::Text], "model: {}", id);
+        assert_eq!(
+            model.supported_thinking_levels(),
+            vec![Off, Low, High, Xhigh, Max],
+            "model: {}",
+            id
+        );
+        assert_eq!(model.default_thinking_level(), High, "model: {}", id);
+        assert!(model.can_disable_thinking(), "model: {}", id);
+    }
 }
 
 #[test]

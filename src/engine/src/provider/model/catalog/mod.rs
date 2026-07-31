@@ -52,8 +52,10 @@ pub(super) fn normalize_model_id(model_id: &str) -> String {
 }
 
 pub(super) fn protocol_fallback(vision: bool) -> ModelCapabilities {
+    let max_input_tokens = if vision { 200_000 } else { 128_000 };
     ModelCapabilities {
-        max_input_tokens: if vision { 200_000 } else { 128_000 },
+        max_input_tokens,
+        advertised_context_window: max_input_tokens,
         max_output_tokens: if vision { 8_192 } else { 32_768 },
         input: if vision {
             vec![InputModality::Text, InputModality::Image]

@@ -115,7 +115,13 @@ impl ReasoningCapabilities {
 /// Intrinsic capabilities resolved from the model catalog.
 #[derive(Debug, Clone)]
 pub(super) struct ModelCapabilities {
+    /// Maximum request input accepted by the model — the real budget used for
+    /// compaction/overflow math.
     pub(super) max_input_tokens: u32,
+    /// Documented total context window (input + output) for display. May
+    /// exceed `max_input_tokens` when the provider carves output headroom out
+    /// of the advertised window (e.g. DeepSeek V4: 1M total, 616K input).
+    pub(super) advertised_context_window: u32,
     pub(super) max_output_tokens: u32,
     pub(super) input: Vec<InputModality>,
     pub(super) reasoning: ReasoningCapabilities,
