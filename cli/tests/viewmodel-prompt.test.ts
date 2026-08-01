@@ -185,7 +185,7 @@ describe('prompt footer', () => {
       contextWindow: 272000,
       dashboardUrl: 'http://127.0.0.1:8788',
     }))
-    expect(plain).toContain('context: 38.9% (105.8k/272.0k)')
+    expect(plain).toContain('context: 38.9% (105.8k/272k)')
     expect(plain).toContain('http://127.0.0.1:8788')
     // Session token totals are call/log data, not footer state.
     expect(plain).not.toContain('↑')
@@ -216,7 +216,7 @@ describe('prompt footer', () => {
       contextWindow: 272000,
     }))).map(stripAnsi)[0]!
 
-    expect(footer).toBe('~/github/evotai/evot (main) │ gpt-5.6-sol@anthropic • high │ context: 38.9% (105.8k/272.0k)')
+    expect(footer).toBe('~/github/evotai/evot (main) │ gpt-5.6-sol@anthropic • high │ context: 38.9% (105.8k/272k)')
   })
 
   test('shows last-call cache hit rate and drops it before provider when narrow', () => {
@@ -231,7 +231,7 @@ describe('prompt footer', () => {
     }))).map(stripAnsi)[0]!
 
     const wide = footerAt(160)
-    expect(wide).toContain('context: 38.9% (105.8k/272.0k)')
+    expect(wide).toContain('context: 38.9% (105.8k/272k)')
     expect(wide).toContain('cache: 99.7%')
 
     // cache is dropped before provider/branch/context.
@@ -272,9 +272,9 @@ describe('prompt footer', () => {
       contextWindow: 272000,
     }))).map(stripAnsi)[0]!
 
-    const withoutDashboard = footerAt(120)
+    const withoutDashboard = footerAt(119)
     expect(withoutDashboard).not.toContain('dashboard')
-    expect(withoutDashboard).toContain('context: 38.9% (105.8k/272.0k)')
+    expect(withoutDashboard).toContain('context: 38.9% (105.8k/272k)')
 
     const compactContext = footerAt(80)
     expect(compactContext).toContain('gpt-5.6-sol@anthropic • max')
@@ -294,7 +294,7 @@ describe('prompt footer', () => {
     expect(withoutContext).toContain('gpt-5.6-sol • max')
     expect(withoutContext).not.toContain('context:')
 
-    for (const columns of [120, 80, 70, 60, 50, 30, 20]) {
+    for (const columns of [119, 80, 70, 60, 50, 30, 20]) {
       expect(stringWidth(footerAt(columns))).toBeLessThanOrEqual(columns)
     }
   })

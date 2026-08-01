@@ -3518,8 +3518,8 @@ async fn test_empty_response_retried_then_succeeds() {
     assert!(llm_call_errors[0].contains("Empty response"));
 }
 
-#[tokio::test]
-async fn test_empty_response_exhausts_retries() {
+#[tokio::test(start_paused = true)]
+async fn test_empty_response_exhausts_bounded_retries_then_recovers() {
     let provider: std::sync::Arc<EmptyThenSucceedProvider> =
         std::sync::Arc::new(EmptyThenSucceedProvider {
             call_count: std::sync::atomic::AtomicUsize::new(0),
@@ -3566,34 +3566,51 @@ async fn test_empty_response_exhausts_retries() {
 
     let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
 
-    // Last message should be an error
-    let last = new_messages.last().map(|m| match m {
-        AgentMessage::Llm(msg) => msg.clone(),
-        _ => panic!("expected Llm message"),
-    });
-    if let Some(Message::Assistant {
+    // Empty responses are transient provider failures. Once bounded retries
+    // are exhausted, the loop enters cancellable outage probing and recovers
+    // when the provider eventually returns content.
+    let Some(AgentMessage::Llm(Message::Assistant {
+        content,
         stop_reason,
         error_message,
         ..
-    }) = last
-    {
-        assert_eq!(stop_reason, StopReason::Error);
-        assert!(error_message.as_ref().unwrap().contains("Empty response"));
-    } else {
-        panic!("Expected error assistant message");
-    }
+    })) = new_messages.last()
+    else {
+        panic!("Expected successful assistant message");
+    };
+    assert_eq!(*stop_reason, StopReason::Stop);
+    assert!(error_message.is_none());
+    assert!(matches!(
+        content.first(),
+        Some(Content::Text { text }) if text == "never reached"
+    ));
 
-    // 1 initial + 2 retries = 3 attempts
+    // 1 initial + 2 bounded retries + 8 outage probes = 11 attempts.
     assert_eq!(
         provider
             .call_count
             .load(std::sync::atomic::Ordering::SeqCst),
-        3
+        11
     );
 
     let events = collect_events(rx);
-    // Should have an Error event
-    assert!(events.iter().any(|e| matches!(e, AgentEvent::Error { .. })));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, AgentEvent::LlmCallRetry { .. }))
+            .count(),
+        2
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, AgentEvent::OutageWait { .. }))
+            .count(),
+        8
+    );
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::Error { .. })));
 }
 
 // ---------------------------------------------------------------------------
