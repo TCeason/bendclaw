@@ -15,10 +15,33 @@ async function collect(_params: AskUserParams): Promise<AskUserAnswer[]> {
 }
 
 describe('host tools', () => {
-  test('advertises the ask_user spec', () => {
+  test('advertises the ask_user spec with explicit object-array guidance', () => {
     const specs = JSON.parse(HOST_TOOL_SPECS_JSON)
     expect(specs).toHaveLength(1)
-    expect(specs[0].name).toBe('ask_user')
+
+    const spec = specs[0]
+    expect(spec.name).toBe('ask_user')
+    expect(spec.description).toContain('Every item in "questions" and "options" is an object')
+
+    const example = spec.description.split('Example: ')[1]?.split('\n\nUsers')[0]
+    expect(example).toBeDefined()
+    expect(JSON.parse(example!)).toEqual({
+      questions: [{
+        header: 'Scope',
+        question: 'Which scope?',
+        options: [
+          { label: 'Minimal (Recommended)', description: 'Make the smallest change.' },
+          { label: 'Complete', description: 'Cover the broader change.' },
+        ],
+      }],
+    })
+
+    const schema = spec.parameters_schema
+    expect(schema.additionalProperties).toBe(false)
+    expect(schema.properties.questions.description).toContain('complete JSON object')
+    expect(schema.properties.questions.items.additionalProperties).toBe(false)
+    expect(schema.properties.questions.items.properties.options.description).toContain('Each item must be enclosed in { }')
+    expect(schema.properties.questions.items.properties.options.items.additionalProperties).toBe(false)
   })
 
   test('dispatches ask_user and formats answers', async () => {

@@ -36,45 +36,44 @@ export interface HostToolResponse {
 const ASK_USER_SPEC = {
   name: 'ask_user',
   label: 'Ask User',
-  description: `Use this tool when you need to ask the user questions during execution. This allows you to:
-1. Gather user preferences or requirements
-2. Clarify ambiguous instructions
-3. Get decisions on implementation choices as you work
-4. Offer choices to the user about what direction to take.
+  description: `Ask the user one or more questions when input is required to proceed. Use this tool to clarify requirements, gather preferences, or confirm decisions. Batch related questions into one call.
 
-Usage notes:
-- You can ask 1-4 questions in a single call; batch related questions together
-- Users will always be able to select "None of the above" to provide custom text input
-- If you recommend a specific option, make it the first option and add "(Recommended)" at the end of the label`,
+Return strict JSON matching the schema. Every item in "questions" and "options" is an object and must be enclosed in { }.
+Example: {"questions":[{"header":"Scope","question":"Which scope?","options":[{"label":"Minimal (Recommended)","description":"Make the smallest change."},{"label":"Complete","description":"Cover the broader change."}]}]}
+
+Users can always provide a custom answer. If you recommend an option, put it first and append "(Recommended)" to its label.`,
   parameters_schema: {
     type: 'object',
+    additionalProperties: false,
     properties: {
       questions: {
         type: 'array',
         minItems: 1,
         maxItems: 4,
-        description: 'Questions to ask the user (1-4 questions).',
+        description: 'One to four question objects. Each array item must be a complete JSON object enclosed in { }.',
         items: {
           type: 'object',
+          additionalProperties: false,
           properties: {
-            question: { type: 'string', description: "Clear, specific question ending with '?'" },
             header: { type: 'string', description: 'Short tab label for this question.' },
+            question: { type: 'string', description: "Clear, specific question ending with '?'" },
             options: {
               type: 'array',
               minItems: 2,
               maxItems: 4,
-              description: "Distinct options. No 'Other' — provided automatically.",
+              description: "Two to four distinct option objects. Each item must be enclosed in { }. Do not add 'Other'; the UI provides it automatically.",
               items: {
                 type: 'object',
+                additionalProperties: false,
                 properties: {
                   label: { type: 'string', description: 'Concise choice (1-5 words).' },
-                  description: { type: 'string', description: 'Brief explanation of tradeoffs' },
+                  description: { type: 'string', description: 'Brief explanation of the tradeoff.' },
                 },
                 required: ['label', 'description'],
               },
             },
           },
-          required: ['question', 'header', 'options'],
+          required: ['header', 'question', 'options'],
         },
       },
     },
