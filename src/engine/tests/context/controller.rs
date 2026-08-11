@@ -80,6 +80,19 @@ fn big_text(n: usize) -> String {
     "x".repeat(n)
 }
 
+fn tool_result_msg(id: &str, text: &str) -> AgentMessage {
+    AgentMessage::Llm(Message::ToolResult {
+        tool_call_id: id.to_string(),
+        tool_name: "read".to_string(),
+        content: vec![Content::Text {
+            text: text.to_string(),
+        }],
+        is_error: false,
+        timestamp: 0,
+        retention: Retention::default(),
+    })
+}
+
 fn model_id() -> ModelId {
     ModelId {
         provider: "test".into(),
@@ -420,6 +433,65 @@ async fn cancelled_summarizer_does_not_fall_back_or_compact() {
         messages.last(),
         Some(AgentMessage::Llm(Message::User { content, .. }))
             if matches!(content.first(), Some(Content::Text { text }) if text == "recent")
+    ));
+}
+
+#[tokio::test]
+async fn overflow_recovery_compacts_unsplittable_tool_result_tail() {
+    let mut ctrl = CompactionController::new(config_small());
+    let mut messages = vec![
+        user_msg("generate the presentation"),
+        AgentMessage::Llm(Message::Assistant {
+            content: vec![Content::ToolCall {
+                id: "call-read".into(),
+                name: "read".into(),
+                arguments: serde_json::json!({"path": "slides.md"}),
+                metadata: None,
+            }],
+            stop_reason: StopReason::ToolUse,
+            model: "test".into(),
+            provider: "test".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+            response_id: None,
+        }),
+        tool_result_msg("call-read", &big_text(50_000)),
+        assistant_msg("overflow response"),
+    ];
+    let usage = UsageSnapshot {
+        input: 0,
+        cache_read: 0,
+        cache_write: 0,
+        output: 0,
+        total_tokens: 0,
+        model: model_id(),
+        timestamp: 1000,
+        stop_reason: StopReason::Error,
+        error_message: Some("prompt is too long: 50000 tokens > 10000 maximum".into()),
+    };
+
+    let response = ctrl
+        .after_response(
+            &mut messages,
+            &usage,
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+
+    assert_eq!(response.action, AfterResponseAction::Retry);
+    assert!(!response.overflow_recovery_failed);
+    let stats = match response.stats {
+        Some(stats) => stats,
+        None => panic!("overflow fallback should compact the oversized active turn"),
+    };
+    assert_eq!(stats.messages_evicted, 3);
+    assert_eq!(messages.len(), 1);
+    assert!(matches!(
+        messages.first(),
+        Some(AgentMessage::Llm(Message::User { .. }))
     ));
 }
 

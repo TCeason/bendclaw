@@ -149,6 +149,7 @@ impl CompactionController {
                         contexts,
                         request_overhead_tokens,
                         LlmPolicy::Required,
+                        0,
                         cancel.clone(),
                     )
                     .await;
@@ -156,16 +157,40 @@ impl CompactionController {
                     // Recovery must not depend on a second model call: the
                     // summarize request goes to the same provider that just
                     // rejected the oversized payload and can fail for the
-                    // same reason (e.g. a relay byte limit). Divergence from
-                    // pi, which gives up here: evot falls back to the
-                    // deterministic emergency summary so one compact-and-retry
-                    // still happens.
+                    // same reason (e.g. a relay byte limit). First retry the
+                    // same pi-style plan with a deterministic summary.
                     stats = self
                         .run_compaction(
                             messages,
                             SummaryContexts::default(),
                             request_overhead_tokens,
                             LlmPolicy::Skip,
+                            0,
+                            cancel.clone(),
+                        )
+                        .await;
+                }
+                if will_retry
+                    && stats.is_none()
+                    && !cancel.is_cancelled()
+                    && matches!(
+                        messages.last(),
+                        Some(AgentMessage::Llm(crate::types::Message::ToolResult { .. }))
+                    )
+                {
+                    // Pi's ordinary planner never cuts at a tool result. If a
+                    // single active tool turn fills the request, that leaves no
+                    // valid retained suffix and the normal plan is a no-op.
+                    // The provider has already rejected this exact payload, so
+                    // summarize the complete tool turn rather than resending it.
+                    let minimum_first_kept = messages.len();
+                    stats = self
+                        .run_compaction(
+                            messages,
+                            SummaryContexts::default(),
+                            request_overhead_tokens,
+                            LlmPolicy::Skip,
+                            minimum_first_kept,
                             cancel.clone(),
                         )
                         .await;
@@ -265,6 +290,7 @@ impl CompactionController {
             contexts,
             request_overhead_tokens,
             LlmPolicy::Required,
+            0,
             cancel,
         )
         .await
@@ -300,6 +326,7 @@ impl CompactionController {
                 contexts,
                 request_overhead_tokens,
                 LlmPolicy::Required,
+                0,
                 cancel,
             )
             .await;
@@ -348,6 +375,7 @@ impl CompactionController {
         contexts: SummaryContexts<'_>,
         request_overhead_tokens: usize,
         llm_policy: LlmPolicy,
+        minimum_first_kept: usize,
         cancel: CancellationToken,
     ) -> Option<CompactionStats> {
         // A resumed context already contains the previous summary as a user
@@ -366,7 +394,9 @@ impl CompactionController {
             .map(|index| (index, messages.remove(index)));
 
         let retained_tail = self.config.retained_tail_budget(request_overhead_tokens);
-        let Some(plan) = plan::plan_messages(messages, retained_tail) else {
+        let Some(plan) =
+            plan::plan_messages_from_boundary(messages, retained_tail, minimum_first_kept)
+        else {
             restore_removed_summary(messages, removed_summary);
             return None;
         };

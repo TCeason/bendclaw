@@ -173,6 +173,13 @@ export function cleanPastedText(text: string): string {
     .replace(/\t/g, '    ')                 // tab → 4 spaces
 }
 
+export function resolveHistoryText(
+  rawText: string,
+  pastedChunks: Map<number, string>,
+): string {
+  return stripImageRefs(expandPasteRefs(rawText, pastedChunks)).trim()
+}
+
 /**
  * Resolve the text to submit by expanding paste refs and optionally stripping
  * resolved image refs. This is the canonical submit-text resolution used by

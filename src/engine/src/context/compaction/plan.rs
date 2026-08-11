@@ -64,7 +64,7 @@ pub fn plan_compaction(
     let boundary = boundary_seq
         .and_then(|seq| entries.iter().position(|entry| entry.seq >= seq))
         .unwrap_or(0);
-    let core = plan_core(&messages, boundary, keep_recent_tokens)?;
+    let core = plan_core(&messages, boundary, keep_recent_tokens, boundary)?;
     Some(assemble(core, &messages, |index| entries[index].seq))
 }
 
@@ -74,8 +74,21 @@ pub fn plan_messages(
     messages: &[AgentMessage],
     keep_recent_tokens: usize,
 ) -> Option<CompactionPlan> {
+    plan_messages_from_boundary(messages, keep_recent_tokens, 0)
+}
+
+/// Plan automatic compaction while forcing the retained suffix to start no
+/// earlier than `minimum_first_kept`. Overflow recovery uses this after the
+/// normal pi-style cut cannot evict anything: the triggering request is already
+/// known to be too large, so retaining the same oldest message would only
+/// resend the rejected payload.
+pub fn plan_messages_from_boundary(
+    messages: &[AgentMessage],
+    keep_recent_tokens: usize,
+    minimum_first_kept: usize,
+) -> Option<CompactionPlan> {
     let refs: Vec<&AgentMessage> = messages.iter().collect();
-    let core = plan_core(&refs, 0, keep_recent_tokens)?;
+    let core = plan_core(&refs, 0, keep_recent_tokens, minimum_first_kept)?;
     Some(assemble(core, &refs, |index| index as u64 + 1))
 }
 
@@ -95,12 +108,14 @@ fn plan_core(
     messages: &[&AgentMessage],
     boundary: usize,
     keep_recent_tokens: usize,
+    minimum_first_kept: usize,
 ) -> Option<CorePlan> {
     if messages.is_empty() || boundary >= messages.len() {
         return None;
     }
 
-    let first_kept = find_first_kept(messages, boundary, keep_recent_tokens);
+    let first_kept = find_first_kept(messages, boundary, keep_recent_tokens)
+        .max(minimum_first_kept.min(messages.len()));
     if first_kept <= boundary {
         return None; // Nothing to evict.
     }
@@ -135,10 +150,18 @@ fn assemble(
         summarize: core.boundary..core.summarize_end,
         turn_prefix: core.turn_prefix,
         first_kept: core.first_kept,
-        first_kept_seq: seq_of(core.first_kept),
+        first_kept_seq: if core.first_kept < messages.len() {
+            seq_of(core.first_kept)
+        } else {
+            seq_of(messages.len() - 1).saturating_add(1)
+        },
         split_turn: core.turn_start.map(|start| SplitTurn {
             turn_start_seq: seq_of(start),
-            cut_seq: seq_of(core.first_kept),
+            cut_seq: if core.first_kept < messages.len() {
+                seq_of(core.first_kept)
+            } else {
+                seq_of(messages.len() - 1).saturating_add(1)
+            },
         }),
         tokens_before,
         messages_before: messages.len(),

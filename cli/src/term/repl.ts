@@ -101,7 +101,7 @@ import {
   formatPastedTextRef,
   formatImageRef,
   parsePasteRefs,
-  stripImageRefs,
+  resolveHistoryText,
   deleteRefBackspace,
   resolveSubmitText,
 } from './input/paste_refs.js'
@@ -1021,6 +1021,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     return getEditorText(editor).trim()
   }
 
+  /** Get history text: expand text pastes before their in-memory store is cleared. */
+  function getHistoryText(): string {
+    return resolveHistoryText(getEditorText(editor), pastedChunks)
+  }
+
   /** Clear editor and paste state. */
   function clearAll() {
     editor = clearEditor(editor)
@@ -1520,6 +1525,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function handleLoadingEnter() {
     const displayText = getDisplayText()
+    const historyText = getHistoryText()
     const imageResult = buildImageContentBlocks()
     const imageBlocks = imageResult?.blocks ?? null
     const expandedText = imageResult
@@ -1545,8 +1551,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           expandedText,
           ...(imageBlocks ? { contentJson: JSON.stringify(imageBlocks) } : {}),
         })
-        historyMgr.append(queuedDisplay)
-        historyState = pushHistory(historyState, queuedDisplay)
+        if (historyText) {
+          historyMgr.append(historyText)
+          historyState = pushHistory(historyState, historyText)
+        }
         clearAll()
         renderer.requestRender()
       }
@@ -1586,10 +1594,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         const queued = streamRef.steer(expandedText)
         if (displayText) queuedUserMessages.push({ ...queued, text: displayText, queue: 'steering' })
       }
-      // Save to input history like a normal submission.
-      if (displayText) {
-        historyMgr.append(displayText)
-        historyState = pushHistory(historyState, displayText)
+      // Save expanded text to input history before clearAll() drops the
+      // in-memory paste registry. Keep displayText only for compact rendering.
+      if (historyText) {
+        historyMgr.append(historyText)
+        historyState = pushHistory(historyState, historyText)
       }
       // Queue instead of committing now: history renders above the streaming
       // block, so an immediate commit lands above the incoming reply.
@@ -1769,6 +1778,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           return
         }
         const displayText = getDisplayText()
+        const historyText = getHistoryText()
         const imageResult = buildImageContentBlocks()
         const imageBlocks = imageResult?.blocks ?? null
         // expandedText: only strip image refs that have resolved data.
@@ -1781,23 +1791,24 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         clearAll()
         renderer.requestRender()
         if (isSlashCommand(expandedText || rawText)) {
-          if (displayText) {
-            historyMgr.append(displayText)
-            historyState = pushHistory(historyState, displayText)
+          if (historyText) {
+            historyMgr.append(historyText)
+            historyState = pushHistory(historyState, historyText)
           }
           handleSlashInput(expandedText || rawText)
         } else if (logMode) {
           // In log mode, send to forked agent
-          if (displayText) {
-            historyMgr.append(displayText)
-            historyState = pushHistory(historyState, displayText)
+          if (historyText) {
+            historyMgr.append(historyText)
+            historyState = pushHistory(historyState, historyText)
           }
           runLogQuery(logMode, expandedText)
         } else {
-          // Save to history
-          if (displayText) {
-            historyMgr.append(displayText)
-            historyState = pushHistory(historyState, displayText)
+          // Save expanded text rather than an ephemeral [Pasted text #N]
+          // marker so Up and process restarts restore a usable prompt.
+          if (historyText) {
+            historyMgr.append(historyText)
+            historyState = pushHistory(historyState, historyText)
           }
           commitLines(buildUserMessage(displayText))
           if (imageBlocks) {

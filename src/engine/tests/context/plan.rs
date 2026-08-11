@@ -283,6 +283,30 @@ fn messages_plan_does_not_cut_at_tool_result() {
 }
 
 #[test]
+fn messages_overflow_fallback_can_evict_the_entire_unsplittable_tail() {
+    let messages = vec![
+        user("generate the presentation"),
+        tool_call("read", "slides.md"),
+        tool_result(&big(20_000)),
+    ];
+
+    // The normal pi-style plan cannot cut after the final ToolResult, so it
+    // retains the same oversized turn and has nothing to summarize.
+    assert!(evotengine::plan_messages(&messages, 100).is_none());
+
+    // Once the provider has rejected that request, overflow recovery may evict
+    // the whole active turn. Keeping no verbatim suffix is preferable to
+    // resending a known-bad payload; the summary preserves the turn semantics.
+    let plan = match evotengine::plan_messages_from_boundary(&messages, 100, messages.len()) {
+        Some(plan) => plan,
+        None => panic!("overflow fallback should produce an emergency plan"),
+    };
+    assert_eq!(plan.summarize, 0..messages.len());
+    assert_eq!(plan.first_kept, messages.len());
+    assert!(plan.turn_prefix.is_none());
+}
+
+#[test]
 fn messages_plan_detects_split_turn() {
     // One old turn, then a single large turn that must be split.
     let mut messages = vec![user(&big(100))];

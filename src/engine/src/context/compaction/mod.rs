@@ -32,6 +32,7 @@ pub use controller::CompactionController;
 pub use controller::CompactionResponse;
 pub use plan::plan_compaction;
 pub use plan::plan_messages;
+pub use plan::plan_messages_from_boundary;
 pub use plan::CompactEntry;
 pub use plan::CompactionPlan;
 pub use plan::SplitTurn;

@@ -16,6 +16,7 @@ pub use agent::RunHandle;
 pub use context::now_ms;
 pub use context::plan_compaction;
 pub use context::plan_messages;
+pub use context::plan_messages_from_boundary;
 pub use context::resize_image;
 pub use context::sanitize_tool_pairs;
 pub use context::truncate_summary;

@@ -14,6 +14,7 @@ import {
   skipRefOnMove,
   shouldCollapse,
   cleanPastedText,
+  resolveHistoryText,
   resolveSubmitText,
 } from '../src/term/input/paste_refs.js'
 
@@ -396,6 +397,24 @@ describe('cursor operations with image refs', () => {
 
   test('skipRefOnMove left at image ref end → skip to start', () => {
     expect(skipRefOnMove(16, 'left', refs)).toBe(6)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveHistoryText
+// ---------------------------------------------------------------------------
+
+describe('resolveHistoryText', () => {
+  test('persists expanded paste content instead of an ephemeral marker', () => {
+    const chunks = new Map([[1, 'line one\nline two\nline three']])
+    expect(resolveHistoryText('prefix [Pasted text #1 +2 lines] suffix', chunks))
+      .toBe('prefix line one\nline two\nline three suffix')
+  })
+
+  test('strips image refs because binary image data is persisted separately', () => {
+    const chunks = new Map([[1, 'pasted content']])
+    expect(resolveHistoryText('[Pasted text #1] [Image #2]', chunks))
+      .toBe('pasted content')
   })
 })
 

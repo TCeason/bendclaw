@@ -9,6 +9,7 @@ pub mod tracking;
 
 pub use compaction::plan_compaction;
 pub use compaction::plan_messages;
+pub use compaction::plan_messages_from_boundary;
 pub use compaction::truncate_summary;
 pub use compaction::types::CompactReason;
 pub use compaction::AfterResponseAction;
