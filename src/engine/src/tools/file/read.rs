@@ -16,9 +16,9 @@ use crate::types::*;
 /// Max lines returned by a single Read call (matches industry standard).
 const MAX_READ_LINES: usize = 2000;
 /// Max bytes returned by a single Read call.
-const MAX_READ_BYTES: usize = 100 * 1024; // 100KB
+const MAX_READ_BYTES: usize = 50 * 1024; // 50KB
 /// Label used in truncation notices; keep in sync with MAX_READ_BYTES.
-const MAX_READ_BYTES_LABEL: &str = "100KB";
+const MAX_READ_BYTES_LABEL: &str = "50KB";
 /// Largest integer that can be represented exactly by a JavaScript number.
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
@@ -107,10 +107,9 @@ impl AgentTool for ReadFileTool {
 
     fn description(&self) -> &str {
         "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). \
-         Images are sent as attachments. \
-         Prefer reading the whole file by omitting offset/limit. \
-         For text files, output is truncated to 2000 lines or 100KB (whichever is hit first); \
-         use offset/limit only for very large files when you know which part you need."
+         Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB \
+         (whichever is hit first). Use offset/limit for large files. When you need the full file, \
+         continue with offset until complete."
     }
 
     fn prompt_snippet(&self) -> Option<&str> {
@@ -163,7 +162,7 @@ impl AgentTool for ReadFileTool {
             }
             (Some(off), None) => Some(format!("sed -n '{},$p' {}", off, path)),
             (None, Some(lim)) => Some(format!("head -n {} {}", lim, path)),
-            (None, None) => Some(format!("cat -n {}", path)),
+            (None, None) => Some(format!("cat {}", path)),
         }
     }
 
@@ -276,9 +275,9 @@ impl AgentTool for ReadFileTool {
             .await
             .map_err(|e| ToolError::Failed(format!("Cannot read {}: {}", path.display(), e)))?;
 
-        // Always show line numbers — helps agent reference exact lines
         let lines: Vec<&str> = content.lines().collect();
         let total = lines.len();
+        let user_limited = limit.is_some();
 
         let (start, end) = match (offset, limit) {
             (Some(off), Some(lim)) => {
@@ -293,30 +292,13 @@ impl AgentTool for ReadFileTool {
             (None, None) => (0, total),
         };
 
-        // Apply truncation limits (2000 lines / 100KB).
         let selected_lines = &lines[start..end];
         let (truncated_end, truncated_by) = truncate_selected(selected_lines, start, end, total);
+        let shown = &lines[start..truncated_end];
+        let mut output = shown.join("\n");
 
-        let numbered: Vec<String> = lines[start..truncated_end]
-            .iter()
-            .enumerate()
-            .map(|(i, line)| format!("{:>4} | {}", start + i + 1, line))
-            .collect();
-
-        let mut output = if start > 0 || truncated_end < total {
-            format!(
-                "[Lines {}-{} of {}]\n{}",
-                start + 1,
-                truncated_end,
-                total,
-                numbered.join("\n")
-            )
-        } else {
-            format!("[{} lines]\n{}", total, numbered.join("\n"))
-        };
-
+        let next_offset = truncated_end + 1;
         if let Some(reason_str) = truncated_by {
-            let next_offset = truncated_end + 1;
             output.push_str(&format!(
                 "\n\n[Showing lines {}-{} of {} ({} limit). Use offset={} to continue.]",
                 start + 1,
@@ -324,6 +306,11 @@ impl AgentTool for ReadFileTool {
                 total,
                 reason_str,
                 next_offset
+            ));
+        } else if user_limited && truncated_end < total {
+            let remaining = total - truncated_end;
+            output.push_str(&format!(
+                "\n\n[{remaining} more lines in file. Use offset={next_offset} to continue.]"
             ));
         }
 
@@ -392,13 +379,29 @@ impl ReadFileTool {
                 break;
             }
             if line_num >= start {
-                collected.push(format!("{:>4} | {}", line_num + 1, line));
+                collected.push(line);
             }
             line_num += 1;
         }
 
-        let header = format!("[Lines {}-{}]", start + 1, start + collected.len());
-        let output = format!("{}\n{}", header, collected.join("\n"));
+        let mut remaining = 0usize;
+        if line_num >= end {
+            while lines
+                .next_line()
+                .await
+                .map_err(|e| ToolError::Failed(format!("Read error: {e}")))?
+                .is_some()
+            {
+                remaining += 1;
+            }
+        }
+        let mut output = collected.join("\n");
+        if remaining > 0 {
+            let next_offset = start + collected.len() + 1;
+            output.push_str(&format!(
+                "\n\n[{remaining} more lines in file. Use offset={next_offset} to continue.]"
+            ));
+        }
 
         Ok(ToolResult {
             content: vec![Content::Text { text: output }],
@@ -426,8 +429,7 @@ fn truncate_selected(
     // Check byte limit (use UTF-8 byte length for correct CJK handling)
     let mut byte_count = 0usize;
     for (i, line) in lines.iter().enumerate() {
-        // Account for line number prefix "{:>4} | " = 7 bytes + line UTF-8 bytes + newline
-        byte_count += 7 + line.len() + 1;
+        byte_count += line.len() + 1;
         if byte_count > MAX_READ_BYTES {
             let truncated_end = start + i;
             if truncated_end > start {

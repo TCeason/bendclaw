@@ -59,11 +59,11 @@ async fn test_read_file_with_integral_float_offset_limit() {
         panic!("expected text");
     };
 
-    assert!(text.starts_with("[Lines 2000-2249 of 2704]"));
-    assert!(text.contains("2000 | line 2000"));
-    assert!(text.contains("2249 | line 2249"));
-    assert!(!text.contains("1999 | line 1999"));
-    assert!(!text.contains("2250 | line 2250"));
+    assert!(text.contains("line 2000"));
+    assert!(text.contains("line 2249"));
+    assert!(!text.contains("line 1999"));
+    assert!(!text.contains("line 2250"));
+    assert!(text.contains("455 more lines in file. Use offset=2250 to continue."));
 
     let _ = std::fs::remove_file(tmp);
 }
@@ -127,8 +127,9 @@ async fn test_read_file_line_numbers() {
         Content::Text { text } => text,
         _ => panic!("expected text"),
     };
-    assert!(text.contains("   1 | first"));
-    assert!(text.contains("   2 | second"));
+    assert!(text.contains("first"));
+    assert!(text.contains("second"));
+    assert!(!text.contains("   1 |"));
     let _ = std::fs::remove_file(tmp);
 }
 

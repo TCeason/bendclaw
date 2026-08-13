@@ -218,11 +218,7 @@ impl AgentTool for BashTool {
                 },
                 "timeout": {
                     "type": "number",
-                    "description": "Optional wall-clock timeout in seconds. Defaults to 600 and is hard-capped at 1800. Only raise it for a command you genuinely expect to run long (builds, test suites)."
-                },
-                "reason_to_increase_timeout": {
-                    "type": "string",
-                    "description": "ONLY fill this if you set `timeout` above the 600s default — explain why the command needs longer. Write exactly 'N/A' otherwise."
+                    "description": "Optional timeout in seconds."
                 }
             },
             "required": ["command"]

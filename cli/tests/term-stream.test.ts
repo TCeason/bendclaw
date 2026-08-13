@@ -915,7 +915,7 @@ describe('term stream machine', () => {
       name: 'read',
       args: { path: 'src/a.rs' },
       status: 'done',
-      result: '[1 lines]\n   1 | done',
+      result: 'done',
       durationMs: 12,
     })
     expect(completed[0]!.text).toBe('◫ read  src/a.rs')
