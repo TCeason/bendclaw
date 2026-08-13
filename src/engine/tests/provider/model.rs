@@ -146,6 +146,7 @@ fn remote_compaction_is_allowlisted_by_model_and_route() {
         "codex-mini",
         "gpt-5.7-nova",
         "grok-4.5",
+        "grok-4.6",
         "claude-opus-4-6",
         "unknown-model",
     ] {
@@ -187,6 +188,38 @@ fn date_suffixed_anthropic_ids_match_family_capabilities() {
             dated.id()
         );
     }
+}
+
+#[test]
+fn grok_profiles_match_xai_contracts() {
+    use evotengine::ThinkingLevel::*;
+
+    let grok_4_5 = ModelConfig::openai_responses("grok-4.5", "Grok 4.5");
+    assert_eq!(grok_4_5.context_window(), 500_000);
+    assert_eq!(grok_4_5.max_tokens(), 63_356);
+    assert_eq!(grok_4_5.input(), [
+        InputModality::Text,
+        InputModality::Image
+    ]);
+    assert_eq!(grok_4_5.supported_thinking_levels(), vec![
+        Low, Medium, High
+    ]);
+    assert_eq!(grok_4_5.default_thinking_level(), High);
+    assert!(!grok_4_5.can_disable_thinking());
+
+    let grok_4_6 = ModelConfig::openai_responses("grok-4.6", "Grok 4.6");
+    assert_eq!(grok_4_6.context_window(), 500_000);
+    assert_eq!(grok_4_6.max_tokens(), 500_000);
+    assert_eq!(grok_4_6.input(), [
+        InputModality::Text,
+        InputModality::Image
+    ]);
+    assert_eq!(grok_4_6.supported_thinking_levels(), vec![
+        Low, Medium, High, Xhigh
+    ]);
+    assert_eq!(grok_4_6.default_thinking_level(), High);
+    assert!(!grok_4_6.can_disable_thinking());
+    assert_eq!(grok_4_6.profile_compaction_limit(Xhigh), None);
 }
 
 #[test]

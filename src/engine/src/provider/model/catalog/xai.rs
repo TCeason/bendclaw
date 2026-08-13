@@ -9,8 +9,19 @@ const GROK_LEVELS: &[(ThinkingLevel, Option<&str>)] = &[
     (ThinkingLevel::Medium, Some("medium")),
     (ThinkingLevel::High, Some("high")),
 ];
+const GROK_4_6_LEVELS: &[(ThinkingLevel, Option<&str>)] = &[
+    (ThinkingLevel::Low, Some("low")),
+    (ThinkingLevel::Medium, Some("medium")),
+    (ThinkingLevel::High, Some("high")),
+    (ThinkingLevel::Xhigh, Some("xhigh")),
+];
 const GROK_REASONING: ReasoningProfile = ReasoningProfile {
     levels: GROK_LEVELS,
+    default: ThinkingLevel::High,
+    anthropic_wire: None,
+};
+const GROK_4_6_REASONING: ReasoningProfile = ReasoningProfile {
+    levels: GROK_4_6_LEVELS,
     default: ThinkingLevel::High,
     anthropic_wire: None,
 };
@@ -19,6 +30,7 @@ const GROK_REASONING: ReasoningProfile = ReasoningProfile {
 const PROFILES: &[(&str, ModelProfile)] = &[
     // xAI's 500k model window; 200k is only the higher-price prompt tier.
     ("grok-4.5", ModelProfile { max_input_tokens: 500_000, max_output_tokens: 63_356, reasoning: GROK_REASONING, ..BASE }),
+    ("grok-4.6", ModelProfile { max_input_tokens: 500_000, max_output_tokens: 500_000, reasoning: GROK_4_6_REASONING, ..BASE }),
     ("grok-composer-2.5-fast", ModelProfile { max_input_tokens: 200_000, max_output_tokens: 200_000, vision: false, reasoning: NO_REASONING, ..BASE }),
 ];
 
