@@ -99,14 +99,30 @@ use serde::Deserialize;
 use serde::Serialize;
 
 /// Provider stream outcome.
+///
+/// `message.model` is the requested model used for thinking replay.
+/// `served_model` is the upstream alias when it differs, for UI only.
 #[derive(Debug)]
 pub struct StreamOutcome {
     message: Message,
+    served_model: Option<String>,
 }
 
 impl StreamOutcome {
     pub fn complete(message: Message) -> Self {
-        Self { message }
+        Self {
+            message,
+            served_model: None,
+        }
+    }
+
+    pub fn served_by(mut self, served: Option<String>) -> Self {
+        let requested = match &self.message {
+            Message::Assistant { model, .. } => model.as_str(),
+            _ => return self,
+        };
+        self.served_model = served.filter(|name| !name.is_empty() && name != requested);
+        self
     }
 
     pub fn message(&self) -> &Message {
@@ -115,6 +131,10 @@ impl StreamOutcome {
 
     pub fn into_message(self) -> Message {
         self.message
+    }
+
+    pub fn served_model(&self) -> Option<&str> {
+        self.served_model.as_deref()
     }
 }
 

@@ -98,7 +98,7 @@ pub(crate) async fn decode_sse_stream(
     let message = Message::Assistant {
         content,
         stop_reason,
-        model: response_model.unwrap_or_else(|| config.model.clone()),
+        model: config.model.clone(),
         provider: config
             .model_config
             .as_ref()
@@ -112,7 +112,7 @@ pub(crate) async fn decode_sse_stream(
     let _ = tx.send(StreamEvent::Done {
         message: message.clone(),
     });
-    Ok(StreamOutcome::complete(message))
+    Ok(StreamOutcome::complete(message).served_by(response_model))
 }
 
 #[allow(clippy::too_many_arguments)]

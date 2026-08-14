@@ -35,6 +35,21 @@ pub fn text_chunk(text: &str, finish_reason: Option<&str>) -> String {
     )
 }
 
+/// A text chunk that also reports the upstream served model.
+pub fn text_chunk_with_model(text: &str, model: &str, finish_reason: Option<&str>) -> String {
+    format!(
+        "data: {}",
+        serde_json::json!({
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "delta": {"content": text},
+                "finish_reason": finish_reason
+            }]
+        })
+    )
+}
+
 pub fn reasoning_chunk(
     reasoning_content: Option<&str>,
     reasoning: Option<&str>,

@@ -655,3 +655,25 @@ async fn openai_json_fallback_error() {
         evotengine::provider::ProviderError::Transient { .. }
     ));
 }
+
+#[tokio::test]
+async fn openai_sse_keeps_requested_model_when_upstream_reports_alias() {
+    let sse = openai_sse::body(vec![
+        openai_sse::text_chunk_with_model("ok", "grok-4.6-build", None),
+        openai_sse::finish_with_usage("stop", 10, 2),
+        openai_sse::done(),
+    ]);
+
+    let (outcome, _) = run_provider_sse_outcome(&OpenAiCompatProvider, openai_config(), &sse, 200)
+        .await
+        .unwrap();
+
+    match outcome.message() {
+        Message::Assistant { model, content, .. } => {
+            assert_eq!(model, "gpt-4o");
+            assert!(matches!(&content[..], [Content::Text { text }] if text == "ok"));
+        }
+        _ => panic!("Expected Assistant message"),
+    }
+    assert_eq!(outcome.served_model(), Some("grok-4.6-build"));
+}

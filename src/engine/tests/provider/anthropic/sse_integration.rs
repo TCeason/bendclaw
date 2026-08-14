@@ -181,11 +181,12 @@ async fn anthropic_sse_ignores_unknown_fallback_block() {
     ]);
 
     let config = StreamConfigBuilder::anthropic().cache_disabled().build();
-    let (msg, _events) = run_provider_sse(&AnthropicProvider, config, &sse, 200)
+    let (outcome, _events) = run_provider_sse_outcome(&AnthropicProvider, config, &sse, 200)
         .await
         .unwrap();
+    let msg = outcome.message();
 
-    match &msg {
+    match msg {
         Message::Assistant {
             content,
             stop_reason,
@@ -199,9 +200,8 @@ async fn anthropic_sse_ignores_unknown_fallback_block() {
                 "expected the real text block to survive the ignored fallback block"
             );
             assert_eq!(*stop_reason, StopReason::Stop);
-            // The fallback block names the substitute model; the response must
-            // report it so the UI can show what actually served the request.
-            assert_eq!(model, "claude-opus-4-8");
+            assert_eq!(model, "claude-sonnet-4-20250514");
+            assert_eq!(outcome.served_model(), Some("claude-opus-4-8"));
         }
         _ => panic!("Expected Assistant message"),
     }

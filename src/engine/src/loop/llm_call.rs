@@ -489,23 +489,22 @@ pub(super) async fn stream_assistant_response(
 
     match result {
         Ok(outcome) => {
+            let response_model = outcome.served_model().map(str::to_string);
             let msg = outcome.message();
-            let (usage, stop_reason, content, response_model, response_id) = match msg {
+            let (usage, stop_reason, content, response_id) = match msg {
                 Message::Assistant {
                     usage,
                     stop_reason,
                     content,
-                    model,
                     response_id,
                     ..
                 } => (
                     usage.clone(),
                     stop_reason.clone(),
                     content.clone(),
-                    Some(model.clone()),
                     response_id.clone(),
                 ),
-                _ => (Usage::default(), StopReason::Stop, vec![], None, None),
+                _ => (Usage::default(), StopReason::Stop, vec![], None),
             };
 
             tx.send(AgentEvent::LlmCallEnd {

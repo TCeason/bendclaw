@@ -221,3 +221,31 @@ fn unsigned_same_model_thinking_is_downgraded_to_text() {
             if matches!(&content[..], [Content::Text { text }] if text == "plan")
     ));
 }
+
+#[test]
+fn served_alias_does_not_downgrade_same_requested_model_thinking() {
+    let message = assistant("openai", "grok-4.6", vec![Content::Thinking {
+        thinking: "plan".into(),
+        metadata: Some(ThinkingMetadata::OpenAiCompletions {
+            field: ReasoningField::ReasoningContent,
+        }),
+    }]);
+
+    let transformed = transform_messages_for_model(
+        vec![message],
+        "openai",
+        "grok-4.6",
+        ApiProtocol::OpenAiCompletions,
+    );
+
+    assert!(matches!(
+        &transformed[0],
+        Message::Assistant { content, .. }
+            if matches!(&content[..], [Content::Thinking {
+                thinking,
+                metadata: Some(ThinkingMetadata::OpenAiCompletions {
+                    field: ReasoningField::ReasoningContent,
+                }),
+            }] if thinking == "plan")
+    ));
+}

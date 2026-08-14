@@ -103,14 +103,11 @@ pub(crate) async fn decode_sse_stream(
         state.stop_reason = StopReason::ToolUse;
     }
 
+    let served_model = state.fallback_model;
     let message = Message::Assistant {
         content: state.content,
         stop_reason: state.stop_reason,
-        // Report the model that actually served the request. On server-side
-        // fallback (e.g. claude-fable-5 → claude-opus-4-8) this is the
-        // substitute model from the `fallback` block, so the TUI shows what
-        // really happened instead of the requested model.
-        model: state.fallback_model.unwrap_or_else(|| config.model.clone()),
+        model: config.model.clone(),
         provider: config
             .model_config
             .as_ref()
@@ -126,7 +123,7 @@ pub(crate) async fn decode_sse_stream(
         message: message.clone(),
     });
 
-    Ok(StreamOutcome::from(message))
+    Ok(StreamOutcome::complete(message).served_by(served_model))
 }
 
 fn has_effective_content(content: &[Content]) -> bool {
