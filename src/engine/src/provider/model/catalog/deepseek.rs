@@ -54,3 +54,8 @@ pub(super) fn resolve(id: &str) -> Option<ModelProfile> {
         .iter()
         .find_map(|(candidate, profile)| (*candidate == id).then_some(*profile))
 }
+
+/// Uncatalogued DeepSeek V4+ ids inherit the current 1M / 616K window.
+pub(super) fn fallback(id: &str) -> Option<ModelProfile> {
+    super::profile::version_at_least(id, "deepseek-v", (4, 0)).then_some(V4)
+}

@@ -72,6 +72,16 @@ pub(super) const BASE: ModelProfile = ModelProfile {
 };
 
 impl ModelProfile {
+    /// Copy the documented window from a newer-or-equal family profile.
+    /// Uncatalogued successors inherit this until they get their own entry.
+    pub(super) const fn with_window(self, from: Self) -> Self {
+        Self {
+            max_input_tokens: from.max_input_tokens,
+            advertised_context_window: from.advertised_context_window,
+            ..self
+        }
+    }
+
     pub(super) fn capabilities(self) -> ModelCapabilities {
         ModelCapabilities {
             max_input_tokens: self.max_input_tokens,
@@ -101,4 +111,22 @@ pub(super) fn levels_map(levels: ReasoningLevels) -> HashMap<ThinkingLevel, Opti
         .iter()
         .map(|(level, effort)| (*level, effort.map(str::to_string)))
         .collect()
+}
+
+/// First `major.minor` pair in `id`, ignoring non-digit separators.
+/// `"5.7-nova"` and `"5p2"` both parse as `(5, 7)` / `(5, 2)`.
+pub(super) fn parse_version(id: &str) -> Option<(u32, u32)> {
+    let mut parts = id
+        .split(|character: char| !character.is_ascii_digit())
+        .filter(|part| (1..=2).contains(&part.len()));
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
+    Some((major, minor))
+}
+
+/// True when `id` starts with `prefix` and the following version is `>= min`.
+pub(super) fn version_at_least(id: &str, prefix: &str, min: (u32, u32)) -> bool {
+    id.strip_prefix(prefix)
+        .and_then(parse_version)
+        .is_some_and(|version| version >= min)
 }

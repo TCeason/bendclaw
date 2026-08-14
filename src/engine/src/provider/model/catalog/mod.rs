@@ -28,6 +28,10 @@ pub(super) fn resolve(id: &str) -> Option<ModelCapabilities> {
         .or_else(|| xai::resolve(id))
         .or_else(|| openai::fallback(id))
         .or_else(|| anthropic::fallback(id))
+        .or_else(|| glm::fallback(id))
+        .or_else(|| deepseek::fallback(id))
+        .or_else(|| kimi::fallback(id))
+        .or_else(|| xai::fallback(id))
         .map(profile::ModelProfile::capabilities)
 }
 

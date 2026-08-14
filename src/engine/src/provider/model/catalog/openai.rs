@@ -82,6 +82,7 @@ pub(super) fn resolve(id: &str) -> Option<ModelProfile> {
 }
 
 /// Conservative metadata for uncatalogued OpenAI reasoning families.
+/// GPT 5.4+ inherits the current 1M window; older ids stay on 128k.
 pub(super) fn fallback(id: &str) -> Option<ModelProfile> {
     if id.starts_with("gpt-") || id.starts_with("codex-") {
         let reasoning = if id.contains("gpt-5.6") {
@@ -94,11 +95,16 @@ pub(super) fn fallback(id: &str) -> Option<ModelProfile> {
         } else {
             LEGACY_REASONING
         };
-        return Some(ModelProfile {
+        let profile = ModelProfile {
             max_input_tokens: 128_000,
             max_output_tokens: 32_768,
             reasoning,
             ..BASE
+        };
+        return Some(if super::profile::version_at_least(id, "gpt-", (5, 4)) {
+            profile.with_window(GPT_5_6)
+        } else {
+            profile
         });
     }
     if id.starts_with("o1") || id.starts_with("o3") || id.starts_with("o4") {

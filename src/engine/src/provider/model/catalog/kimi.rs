@@ -60,3 +60,14 @@ pub(super) fn resolve(id: &str) -> Option<ModelProfile> {
         .iter()
         .find_map(|(candidate, profile)| (*candidate == id).then_some(*profile))
 }
+
+/// Uncatalogued successors inherit the latest known family window.
+pub(super) fn fallback(id: &str) -> Option<ModelProfile> {
+    if id.starts_with("k3") || super::profile::version_at_least(id, "kimi-k", (3, 0)) {
+        Some(K3)
+    } else if super::profile::version_at_least(id, "kimi-k", (2, 0)) {
+        Some(KIMI_CODING)
+    } else {
+        None
+    }
+}

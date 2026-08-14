@@ -434,6 +434,44 @@ fn route_capability_names_are_parsed_separately_from_transport_caps() {
 }
 
 #[test]
+fn newer_uncatalogued_ids_inherit_family_windows() {
+    for id in ["glm-5.3", "glm-5.2-pro", "zai/glm-5.3", "glm-4.7"] {
+        let model = ModelConfig::openai(id, id);
+        assert_eq!(model.context_window(), 917_504, "{id}");
+        assert_eq!(model.advertised_context_window(), 1_000_000, "{id}");
+        assert_eq!(model.max_tokens(), 131_072, "{id}");
+    }
+
+    let gpt = ModelConfig::openai("gpt-5.7-nova", "GPT-5.7 Nova");
+    assert_eq!(gpt.context_window(), 922_000);
+    assert_eq!(gpt.advertised_context_window(), 1_000_000);
+    assert_eq!(gpt.max_tokens(), 32_768);
+    assert!(!gpt.can_remote_compact());
+
+    let gpt4 = ModelConfig::openai("gpt-4o", "GPT-4o");
+    assert_eq!(gpt4.context_window(), 128_000);
+    assert_eq!(gpt4.advertised_context_window(), 128_000);
+
+    let deepseek = ModelConfig::openai("deepseek-v5-pro", "DeepSeek V5");
+    assert_eq!(deepseek.context_window(), 616_000);
+    assert_eq!(deepseek.advertised_context_window(), 1_000_000);
+
+    for id in ["kimi-k3.1", "k3-preview"] {
+        let model = ModelConfig::anthropic(id, id);
+        assert_eq!(model.context_window(), 917_504, "{id}");
+        assert_eq!(model.advertised_context_window(), 1_000_000, "{id}");
+    }
+
+    let k2 = ModelConfig::anthropic("kimi-k2.8", "Kimi K2.8");
+    assert_eq!(k2.context_window(), 196_608);
+    assert_eq!(k2.advertised_context_window(), 256_000);
+
+    let grok = ModelConfig::openai("grok-5", "Grok 5");
+    assert_eq!(grok.context_window(), 500_000);
+    assert_eq!(grok.advertised_context_window(), 500_000);
+}
+
+#[test]
 fn glm_and_deepseek_profiles_are_explicit() {
     use evotengine::ThinkingLevel::*;
 

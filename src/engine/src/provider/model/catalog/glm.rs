@@ -41,3 +41,9 @@ pub(super) fn resolve(id: &str) -> Option<ModelProfile> {
         .iter()
         .find_map(|(candidate, profile)| (*candidate == id).then_some(*profile))
 }
+
+/// Any uncatalogued GLM id inherits the current 1M series window. Explicit
+/// catalog entries above still win; later per-model configs override this.
+pub(super) fn fallback(id: &str) -> Option<ModelProfile> {
+    id.starts_with("glm").then_some(GLM_5_2)
+}
