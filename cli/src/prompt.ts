@@ -27,11 +27,9 @@ export async function runPrompt(opts: CliOptions) {
   const resumeSessionId = await resolveResumeSessionId(agent, opts)
 
   const stream = await agent.query(
-    // When contentJson is present, the native layer uses it as the full input
-    // and ignores the prompt parameter. We pass empty string to make this explicit.
     contentJson ? '' : opts.prompt,
     resumeSessionId,
-    undefined,
+    opts.skillNames.length === 0 ? 'headless-no-skills' : undefined,
     contentJson,
   )
   for await (const event of stream) {

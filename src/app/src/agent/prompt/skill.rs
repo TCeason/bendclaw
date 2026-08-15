@@ -72,6 +72,8 @@ pub enum SkillLoadError {
     MissingField { path: PathBuf, field: &'static str },
     #[error("SKILL.md in {path} has invalid frontmatter: {detail}")]
     InvalidFrontmatter { path: PathBuf, detail: String },
+    #[error("unknown skill '{name}'. Available: {available}")]
+    UnknownSkill { name: String, available: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -79,16 +81,11 @@ pub enum SkillLoadError {
 // ---------------------------------------------------------------------------
 
 pub fn load_skills(dirs: &[impl AsRef<Path>]) -> Result<Vec<SkillSpec>, SkillLoadError> {
-    // Start with builtins. A malformed compiled-in skill is a build defect, so
-    // surface it instead of silently dropping that skill.
     let mut by_name: HashMap<String, SkillSpec> = builtin_specs()?
         .into_iter()
         .map(|s| (s.name.clone(), s))
         .collect();
 
-    // Filesystem skills override builtins with the same name.
-    // Invalid user-installed skills should not disable builtin skills for the
-    // whole run; keep filesystem-only loading strict via `load_fs_skills`.
     for dir in dirs {
         let dir = dir.as_ref();
         if !dir.exists() {
@@ -109,6 +106,36 @@ pub fn load_skills(dirs: &[impl AsRef<Path>]) -> Result<Vec<SkillSpec>, SkillLoa
     let mut specs: Vec<SkillSpec> = by_name.into_values().collect();
     specs.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(specs)
+}
+
+pub fn load_skills_by_name(
+    dirs: &[impl AsRef<Path>],
+    names: &[String],
+) -> Result<Vec<SkillSpec>, SkillLoadError> {
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let skills = load_skills(dirs)?;
+    let available = skills
+        .iter()
+        .map(|skill| skill.name.clone())
+        .collect::<Vec<_>>();
+    let mut by_name: HashMap<String, SkillSpec> = skills
+        .into_iter()
+        .map(|skill| (skill.name.clone(), skill))
+        .collect();
+    let mut selected = Vec::with_capacity(names.len());
+    for name in names {
+        let Some(skill) = by_name.remove(name) else {
+            return Err(SkillLoadError::UnknownSkill {
+                name: name.clone(),
+                available: available.join(", "),
+            });
+        };
+        selected.push(skill);
+    }
+    selected.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(selected)
 }
 
 /// Load skills from filesystem directories only (no builtins).

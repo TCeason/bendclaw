@@ -3,6 +3,7 @@ use std::path::Path;
 
 use evot::agent::prompt::skill::load_fs_skills;
 use evot::agent::prompt::skill::load_skills;
+use evot::agent::prompt::skill::load_skills_by_name;
 use evot::agent::prompt::skill::SkillLoadError;
 use tempfile::TempDir;
 
@@ -271,4 +272,31 @@ fn filesystem_skill_error_does_not_drop_builtins() -> Result<(), Box<dyn std::er
     assert!(specs.iter().any(|s| s.name == "harden"));
     assert!(specs.iter().all(|s| s.name != "bad"));
     Ok(())
+}
+
+#[test]
+fn selected_skills_can_mix_builtin_and_filesystem() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    create_skill(tmp.path(), "custom", "Custom skill");
+    let names = vec!["review".to_string(), "custom".to_string()];
+
+    let specs = load_skills_by_name(&[tmp.path().to_path_buf()], &names)?;
+    let loaded: Vec<&str> = specs.iter().map(|skill| skill.name.as_str()).collect();
+    assert_eq!(loaded, vec!["custom", "review"]);
+    Ok(())
+}
+
+#[test]
+fn empty_skill_selection_loads_nothing() -> Result<(), Box<dyn std::error::Error>> {
+    let empty: Vec<std::path::PathBuf> = Vec::new();
+    assert!(load_skills_by_name(&empty, &[])?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn unknown_selected_skill_returns_error() {
+    let empty: Vec<std::path::PathBuf> = Vec::new();
+    let error = load_skills_by_name(&empty, &["missing".to_string()])
+        .expect_err("missing skill should fail");
+    assert!(error.to_string().contains("unknown skill 'missing'"));
 }

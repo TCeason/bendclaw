@@ -71,6 +71,7 @@ pub struct QueryRequest {
     /// Host-owned tools (ask_user, …) to attach to this run. `None` when the
     /// caller has no host bridge (e.g. gateway/headless callers).
     pub host_tools: Option<HostTools>,
+    pub skill_names: Option<Vec<String>>,
 }
 
 impl QueryRequest {
@@ -83,6 +84,7 @@ impl QueryRequest {
             mode: ToolMode::Headless,
             source: String::new(),
             host_tools: None,
+            skill_names: None,
         }
     }
 
@@ -93,6 +95,7 @@ impl QueryRequest {
             mode: ToolMode::Headless,
             source: String::new(),
             host_tools: None,
+            skill_names: None,
         }
     }
 
@@ -119,6 +122,11 @@ impl QueryRequest {
 
     pub fn source(mut self, source: impl Into<String>) -> Self {
         self.source = source.into();
+        self
+    }
+
+    pub fn skill_names(mut self, names: Vec<String>) -> Self {
+        self.skill_names = Some(names);
         self
     }
 }
@@ -178,6 +186,7 @@ pub struct Agent {
     system_prompt_sections: RwLock<Vec<Section>>,
     limits: RwLock<ExecutionLimits>,
     skills_dirs: RwLock<Vec<PathBuf>>,
+    skill_names: RwLock<Option<Vec<String>>>,
     cwd: String,
     /// Root dir for spill files. Only set when storage backend is Fs.
     spill_root: Option<PathBuf>,
@@ -208,6 +217,7 @@ impl Agent {
             system_prompt_sections: RwLock::new(Vec::new()),
             limits: RwLock::new(ExecutionLimits::default()),
             skills_dirs: RwLock::new(Vec::new()),
+            skill_names: RwLock::new(None),
             cwd,
             spill_root: match config.storage.backend {
                 crate::conf::StorageBackend::Fs => Some(config.storage.fs.root_dir.clone()),
@@ -304,6 +314,13 @@ impl Agent {
     pub fn with_skills_dirs(self: &Arc<Self>, dirs: Vec<PathBuf>) -> Arc<Self> {
         *self.skills_dirs.write() = dirs;
         self.with_claude_skills_dirs()
+    }
+
+    pub fn set_skill_names(&self, names: Vec<String>) -> Result<()> {
+        crate::agent::prompt::skill::load_skills_by_name(&self.skills_dirs(), &names)
+            .map_err(|error| EvotError::Agent(error.to_string()))?;
+        *self.skill_names.write() = Some(names);
+        Ok(())
     }
 
     fn with_claude_skills_dirs(self: &Arc<Self>) -> Arc<Self> {
@@ -845,6 +862,7 @@ impl Agent {
             mode: request.mode,
             session_id: session_id.clone(),
             host_tools: request.host_tools.clone(),
+            skill_names: request.skill_names.clone(),
         });
 
         let run = runtime::execute_run(runtime::ExecuteRunArgs {
@@ -883,6 +901,7 @@ impl Agent {
             system_prompt_sections: _,
             limits,
             skills_dirs: _,
+            skill_names: _,
             cwd,
             spill_root: _,
             storage: _,
@@ -898,6 +917,7 @@ impl Agent {
             system_prompt_sections: RwLock::new(Vec::new()),
             limits: RwLock::new(limits.read().clone()),
             skills_dirs: RwLock::new(vec![]),
+            skill_names: RwLock::new(None),
             cwd: cwd.clone(),
             spill_root: None,
             storage: RwLock::new(Arc::new(MemoryStorage::new())),
@@ -1099,7 +1119,14 @@ impl Agent {
         // memory tool). Reuse it so the dump matches reality. The dump path has
         // no host bridge, so host tools are omitted — it reflects built-ins.
         let turn = self
-            .build_turn(mode, Arc::clone(session), &session_id, Vec::new(), None)
+            .build_turn(
+                mode,
+                Arc::clone(session),
+                &session_id,
+                Vec::new(),
+                None,
+                None,
+            )
             .await?;
 
         let dump = build_prompt_dump(self, mode, &turn);
@@ -1203,6 +1230,7 @@ impl Agent {
         session_id: &str,
         input: Vec<evot_engine::Content>,
         host_tools: Option<HostTools>,
+        skill_names: Option<Vec<String>>,
     ) -> Result<runtime::TurnInput> {
         let llm = self.llm.read().clone();
         if llm.provider.is_empty() {
@@ -1271,6 +1299,7 @@ impl Agent {
                     Some(self.limits.read().clone())
                 },
                 skills_dirs: skill_dirs,
+                skill_names: skill_names.or_else(|| self.skill_names.read().clone()),
                 tools,
                 thinking_level: llm.thinking_level,
                 cwd: cwd_path.to_path_buf(),
@@ -1301,6 +1330,7 @@ struct AgentTurnFactory {
     mode: ToolMode,
     session_id: String,
     host_tools: Option<HostTools>,
+    skill_names: Option<Vec<String>>,
 }
 
 #[async_trait::async_trait]
@@ -1313,6 +1343,7 @@ impl TurnFactory for AgentTurnFactory {
                 &self.session_id,
                 input,
                 self.host_tools.clone(),
+                self.skill_names.clone(),
             )
             .await
     }
@@ -1529,7 +1560,13 @@ fn build_prompt_dump(_agent: &Agent, mode: ToolMode, turn: &runtime::TurnInput) 
     // Skill instructions — loaded the same way the runtime would.
     let mut skill_instructions = std::collections::BTreeMap::new();
     if !opts.skills_dirs.is_empty() {
-        match crate::agent::prompt::skill::load_skills(&opts.skills_dirs) {
+        let skills = match &opts.skill_names {
+            Some(names) => {
+                crate::agent::prompt::skill::load_skills_by_name(&opts.skills_dirs, names)
+            }
+            None => crate::agent::prompt::skill::load_skills(&opts.skills_dirs),
+        };
+        match skills {
             Ok(specs) => {
                 for spec in specs {
                     let combined =

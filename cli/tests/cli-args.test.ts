@@ -28,6 +28,12 @@ describe('parseArgs', () => {
   test('files defaults to empty array', async () => {
     const opts = await parseArgs(['-p', 'hello'])
     expect(opts.files).toEqual([])
+    expect(opts.skillNames).toEqual([])
+  })
+
+  test('--skill selects skills by name', async () => {
+    const opts = await parseArgs(['-p', 'hello', '--skill', 'review', '--skill', 'custom'])
+    expect(opts.skillNames).toEqual(['review', 'custom'])
   })
 
   test('-p -f -r together', async () => {

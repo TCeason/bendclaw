@@ -14,6 +14,7 @@ export interface CliOptions {
   maxDuration: number
   appendSystemPrompt?: string
   skillsDirs: string[]
+  skillNames: string[]
   files: string[]
 }
 
@@ -26,6 +27,7 @@ export async function parseArgs(argv: string[]): Promise<CliOptions> {
     maxTokens: 100_000_000,
     maxDuration: 3600,
     skillsDirs: [],
+    skillNames: [],
     files: [],
   }
 
@@ -67,6 +69,7 @@ export async function parseArgs(argv: string[]): Promise<CliOptions> {
     if (arg === '--max-duration' && argv[i + 1]) { opts.maxDuration = parseIntArg(argv[++i], '--max-duration'); continue }
     if (arg === '--append-system-prompt' && argv[i + 1]) { opts.appendSystemPrompt = argv[++i]; continue }
     if (arg === '--skills' && argv[i + 1]) { opts.skillsDirs.push(argv[++i]); continue }
+    if (arg === '--skill' && argv[i + 1]) { opts.skillNames.push(argv[++i]); continue }
 
     if (arg === '--version' || arg === '-v') {
       const { version } = await import('./native/index.js')
@@ -116,6 +119,7 @@ export async function printHelp() {
   console.log('  --max-duration <secs>  Max duration (default: 3600)')
   console.log('  --append-system-prompt <text>')
   console.log('  --skills <dir>         Skills directory (repeatable)')
+  console.log('  --skill <name>         Enable a skill by name (repeatable)')
   console.log('  --version, -v          Show version')
   console.log('  --update               Update evot to latest version')
   console.log('  --help, -h             Show this help')
@@ -125,6 +129,7 @@ export function applyCliOpts(agent: Agent, opts: CliOptions): void {
   agent.setLimits(opts.maxTurns, opts.maxTokens, opts.maxDuration)
   if (opts.appendSystemPrompt) agent.appendSystemPrompt(opts.appendSystemPrompt)
   if (opts.skillsDirs.length > 0) agent.addSkillsDirs(opts.skillsDirs)
+  if (opts.skillNames.length > 0) agent.setSkillNames(opts.skillNames)
 }
 
 export async function createAgent(opts: CliOptions): Promise<Agent> {

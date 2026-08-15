@@ -121,6 +121,12 @@ impl NapiAgent {
             None
         };
 
+        let skill_names = if tool_mode.as_deref() == Some("headless-no-skills") {
+            Some(Vec::new())
+        } else {
+            None
+        };
+
         let request = if let Some(json) = content_json {
             let input = parse_content_blocks(&json).map_err(Error::from_reason)?;
 
@@ -139,6 +145,12 @@ impl NapiAgent {
                 .mode(mode)
                 .host_tools(host_tools)
                 .source("repl")
+        };
+
+        let request = if let Some(names) = skill_names {
+            request.skill_names(names)
+        } else {
+            request
         };
 
         let outcome = self
@@ -466,11 +478,17 @@ impl NapiAgent {
         self.agent.append_system_prompt(&extra);
     }
 
-    /// Add additional skills directories.
     #[napi]
     pub fn add_skills_dirs(&self, dirs: Vec<String>) {
         let paths: Vec<PathBuf> = dirs.into_iter().map(PathBuf::from).collect();
         self.agent.with_skills_dirs(paths);
+    }
+
+    #[napi]
+    pub fn set_skill_names(&self, names: Vec<String>) -> Result<()> {
+        self.agent
+            .set_skill_names(names)
+            .map_err(|error| Error::from_reason(error.to_string()))
     }
 
     /// The fully-resolved, ordered skills directories the agent scans (global

@@ -385,6 +385,10 @@ export class Agent {
     this.raw.addSkillsDirs(dirs)
   }
 
+  setSkillNames(names: string[]): void {
+    this.raw.setSkillNames(names)
+  }
+
   /**
    * The fully-resolved, ordered skills directories the agent scans (global
    * ~/.evotai/skills + config/env-file EVOT_SKILLS_DIRS + ~/.claude/skills).
