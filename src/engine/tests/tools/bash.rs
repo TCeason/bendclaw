@@ -435,7 +435,7 @@ async fn test_bash_truncated_output_saved_to_file() {
         Content::Text { text } => text,
         _ => panic!("expected text"),
     };
-    assert!(text.contains("Full output saved to:"));
+    assert!(text.contains("[Showing lines 3001-5000 of 5000. Full output:"));
 
     let path = result.details["full_output_path"]
         .as_str()
@@ -466,8 +466,66 @@ async fn test_bash_small_output_no_file() {
         Content::Text { text } => text,
         _ => panic!("expected text"),
     };
-    assert!(!text.contains("Full output saved to:"));
+    assert!(!text.contains("Full output"));
     assert!(result.details["full_output_path"].is_null());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// The spill file must hold the complete output even when it far exceeds the
+// in-memory tail cap.
+#[tokio::test]
+async fn test_bash_spill_complete_beyond_tail_cap() {
+    let dir = std::env::temp_dir().join(format!("evot-bash-fullcap-{}", std::process::id()));
+    let mut tool = BashTool::new();
+    tool.max_output_bytes = 2048;
+    let result = tool
+        .execute(
+            serde_json::json!({"command": "seq 1 5000"}),
+            ctx_with_spill("bash", dir.clone()),
+        )
+        .await
+        .unwrap();
+
+    let path = result.details["full_output_path"]
+        .as_str()
+        .expect("spilled when truncated");
+    let saved = std::fs::read_to_string(path).unwrap();
+    assert!(
+        saved.starts_with("1\n2\n3\n"),
+        "spill lost head: {} bytes",
+        saved.len()
+    );
+    assert!(saved.contains("4999\n5000"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// stdout and stderr are merged in arrival order in the spill file.
+#[tokio::test]
+async fn test_bash_stderr_merged_into_spill() {
+    let dir = std::env::temp_dir().join(format!("evot-bash-merge-{}", std::process::id()));
+    let tool = BashTool::new();
+    let result = tool
+        .execute(
+            serde_json::json!({"command": "seq 1 2500; echo 'boom on stderr' >&2"}),
+            ctx_with_spill("bash", dir.clone()),
+        )
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("boom on stderr"));
+
+    let path = result.details["full_output_path"]
+        .as_str()
+        .expect("spilled when truncated");
+    let saved = std::fs::read_to_string(path).unwrap();
+    assert!(saved.starts_with("1\n2\n3\n"));
+    assert!(saved.contains("boom on stderr\n"));
 
     let _ = std::fs::remove_dir_all(&dir);
 }

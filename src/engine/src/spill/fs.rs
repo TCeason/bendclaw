@@ -34,13 +34,18 @@ impl FsSpill {
         path.starts_with(&self.dir)
     }
 
+    /// Path a spill file for `key` would occupy, reusing the shared key
+    /// sanitization. Safe to call before any write.
+    pub fn path_for_key(&self, key: &str) -> PathBuf {
+        self.dir.join(format!("{}.txt", sanitize_key(key)))
+    }
+
     /// Write `text` to a spill file unconditionally, ignoring the size
     /// threshold. The caller decides when persistence is warranted (e.g. a
     /// tool that already truncated its own displayed output). Reuses the same
     /// key sanitization, directory handling, and preview logic as [`spill`].
     pub async fn spill_text(&self, key: &str, text: &str) -> Result<SpillRef, SpillError> {
-        let safe_key = sanitize_key(key);
-        let path = self.dir.join(format!("{safe_key}.txt"));
+        let path = self.path_for_key(key);
 
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;

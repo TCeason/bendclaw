@@ -4,6 +4,7 @@ use crate::types::*;
 
 /// Type alias for command confirmation callback.
 pub type ConfirmFn = Box<dyn Fn(&str) -> bool + Send + Sync>;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,7 +24,8 @@ pub struct BashTool {
     /// Hard ceiling on the per-command timeout. A model-requested `timeout`
     /// is clamped to this; no command may exceed it.
     pub max_timeout: Duration,
-    /// Max output bytes to capture (prevents OOM on huge outputs)
+    /// Cap on the in-memory rolling tail. The spill file holds the complete
+    /// output once it exceeds the display limits, so this only bounds memory.
     pub max_output_bytes: usize,
     /// Commands/patterns that are always blocked (e.g., "rm -rf /")
     pub deny_patterns: Vec<String>,
@@ -106,17 +108,133 @@ const MAX_DISPLAY_LINES: usize = 2000;
 /// Max bytes to include in the final tool result.
 const MAX_DISPLAY_BYTES: usize = 50 * 1024; // 50KB
 
-/// Extract the last N lines from a byte buffer (up to `max_bytes`).
-fn tail_lines(buf: &[u8], max_lines: usize, max_bytes: usize) -> String {
-    let text = String::from_utf8_lossy(buf);
-    let start = if text.len() > max_bytes {
-        text.ceil_char_boundary(text.len() - max_bytes)
-    } else {
-        0
-    };
-    let lines: Vec<&str> = text[start..].lines().collect();
-    let skip = lines.len().saturating_sub(max_lines);
-    lines[skip..].join("\n")
+/// Streaming capture of a command's merged stdout+stderr, mirroring pi's
+/// `OutputAccumulator`. Under the display limits everything stays in memory;
+/// once crossed, the spill file is opened (buffered bytes replayed into it)
+/// and every byte is written through, so the file always holds the complete
+/// output while memory keeps only a bounded rolling tail.
+struct OutputCapture {
+    /// Full output until the spill file opens, then the last `tail_cap` bytes.
+    buf: Vec<u8>,
+    total_bytes: usize,
+    newlines: usize,
+    open_line: bool,
+    file: Option<std::fs::File>,
+    path: Option<PathBuf>,
+    spill: Option<Arc<crate::spill::FsSpill>>,
+    key: String,
+    tail_cap: usize,
+}
+
+impl OutputCapture {
+    fn new(spill: Option<Arc<crate::spill::FsSpill>>, key: String, tail_cap: usize) -> Self {
+        Self {
+            buf: Vec::with_capacity(4096),
+            total_bytes: 0,
+            newlines: 0,
+            open_line: false,
+            file: None,
+            path: None,
+            spill,
+            key,
+            tail_cap,
+        }
+    }
+
+    fn append(&mut self, chunk: &[u8]) {
+        if chunk.is_empty() {
+            return;
+        }
+        self.total_bytes += chunk.len();
+        self.newlines += chunk.iter().filter(|&&b| b == b'\n').count();
+        self.open_line = chunk.last() != Some(&b'\n');
+
+        if self.file.is_none() && self.over_threshold() {
+            self.open_spill_file();
+        }
+
+        if let Some(file) = self.file.as_mut() {
+            let _ = file.write_all(chunk);
+        }
+        self.buf.extend_from_slice(chunk);
+        self.trim_tail();
+    }
+
+    /// Flush and close the spill file, if open.
+    fn finish(&mut self) {
+        if let Some(mut file) = self.file.take() {
+            let _ = file.flush();
+        }
+    }
+
+    /// Lossy-UTF-8 rolling tail, for display and progress snapshots.
+    fn tail_text(&self) -> String {
+        String::from_utf8_lossy(&self.buf).to_string()
+    }
+
+    fn total_lines(&self) -> usize {
+        self.newlines + usize::from(self.open_line)
+    }
+
+    fn path(&self) -> Option<&PathBuf> {
+        self.path.as_ref()
+    }
+
+    fn over_threshold(&self) -> bool {
+        self.total_bytes > MAX_DISPLAY_BYTES || self.total_lines() > MAX_DISPLAY_LINES
+    }
+
+    fn open_spill_file(&mut self) {
+        let Some(spill) = self.spill.clone() else {
+            return;
+        };
+        let path = spill.path_for_key(&self.key);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match std::fs::File::create(&path) {
+            Ok(mut file) => {
+                let _ = file.write_all(&self.buf);
+                self.file = Some(file);
+                self.path = Some(path);
+            }
+            Err(e) => {
+                tracing::warn!("bash full-output spill open failed: {e}");
+            }
+        }
+    }
+
+    /// Drain the front at a newline boundary. Not allowed before the spill
+    /// file opens (or before crossing the threshold without a spill store):
+    /// the buffer must stay complete for a lossless replay.
+    fn trim_tail(&mut self) {
+        if self.file.is_none() && !self.over_threshold() {
+            return;
+        }
+        if self.buf.len() > self.tail_cap * 2 {
+            let target = self.buf.len() - self.tail_cap;
+            let drain_to = self.buf[target..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map_or(target, |p| target + p + 1);
+            self.buf.drain(..drain_to);
+        }
+    }
+}
+
+/// Read a pipe to EOF into the shared capture.
+async fn read_into<R: tokio::io::AsyncRead + Unpin>(
+    mut pipe: R,
+    capture: Arc<parking_lot::Mutex<OutputCapture>>,
+) {
+    let mut tmp = [0u8; 4096];
+    loop {
+        match pipe.read(&mut tmp).await {
+            Ok(0) => break,
+            Ok(n) => capture.lock().append(&tmp[..n]),
+            Err(_) => break,
+        }
+    }
 }
 
 /// Tail-truncate output: keep last `MAX_DISPLAY_LINES` / `MAX_DISPLAY_BYTES`.
@@ -176,10 +294,6 @@ fn truncate_long_lines(text: &str) -> String {
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(3);
 /// Interval between partial output updates.
 const UPDATE_INTERVAL: Duration = Duration::from_secs(2);
-/// Max lines in timeout error last-output summary.
-const TIMEOUT_SUMMARY_LINES: usize = 10;
-/// Max bytes in timeout error last-output summary.
-const TIMEOUT_SUMMARY_BYTES: usize = 2048;
 /// Time to wait for IO drain after killing a child.
 const IO_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -297,8 +411,6 @@ impl AgentTool for BashTool {
                 .map_err(|e| ToolError::Failed(format!("Sandbox setup failed: {e}")))?;
         }
 
-        let max_bytes = self.max_output_bytes;
-
         // Spawn as a process group so we can kill the entire tree on timeout/cancel.
         // On Unix this creates a real process group; on Windows it uses a job object.
         let mut child = cmd
@@ -309,63 +421,21 @@ impl AgentTool for BashTool {
         let child_stdout = child.inner().stdout.take();
         let child_stderr = child.inner().stderr.take();
 
-        // Shared buffers for concurrent reading
-        let stdout_buf = Arc::new(parking_lot::Mutex::new(Vec::<u8>::with_capacity(4096)));
-        let stderr_buf = Arc::new(parking_lot::Mutex::new(Vec::<u8>::with_capacity(4096)));
+        // Merged stdout+stderr capture; spills the complete output to a file
+        // once the display limits are crossed.
+        let capture = Arc::new(parking_lot::Mutex::new(OutputCapture::new(
+            ctx.spill.clone(),
+            format!("{}-bash-output", ctx.tool_call_id),
+            self.max_output_bytes,
+        )));
 
-        // Spawn stdout reader task — tail-capture: keeps last max_bytes
-        let stdout_buf_ref = stdout_buf.clone();
-        let stdout_max = max_bytes;
-        let stdout_task = tokio::spawn(async move {
-            if let Some(mut pipe) = child_stdout {
-                let mut tmp = [0u8; 4096];
-                loop {
-                    match pipe.read(&mut tmp).await {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            let mut buf = stdout_buf_ref.lock();
-                            buf.extend_from_slice(&tmp[..n]);
-                            // Trim front when buffer exceeds 2x limit, drain to next newline
-                            if buf.len() > stdout_max * 2 {
-                                let target = buf.len() - stdout_max;
-                                let drain_to = buf[target..]
-                                    .iter()
-                                    .position(|&b| b == b'\n')
-                                    .map_or(target, |p| target + p + 1);
-                                buf.drain(..drain_to);
-                            }
-                        }
-                        Err(_) => break,
-                    }
-                }
-            }
+        let stdout_task = child_stdout.map(|pipe| {
+            let capture = capture.clone();
+            tokio::spawn(read_into(pipe, capture))
         });
-
-        // Spawn stderr reader task — tail-capture: keeps last max_bytes
-        let stderr_buf_ref = stderr_buf.clone();
-        let stderr_max = max_bytes;
-        let stderr_task = tokio::spawn(async move {
-            if let Some(mut pipe) = child_stderr {
-                let mut tmp = [0u8; 4096];
-                loop {
-                    match pipe.read(&mut tmp).await {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            let mut buf = stderr_buf_ref.lock();
-                            buf.extend_from_slice(&tmp[..n]);
-                            if buf.len() > stderr_max * 2 {
-                                let target = buf.len() - stderr_max;
-                                let drain_to = buf[target..]
-                                    .iter()
-                                    .position(|&b| b == b'\n')
-                                    .map_or(target, |p| target + p + 1);
-                                buf.drain(..drain_to);
-                            }
-                        }
-                        Err(_) => break,
-                    }
-                }
-            }
+        let stderr_task = child_stderr.map(|pipe| {
+            let capture = capture.clone();
+            tokio::spawn(read_into(pipe, capture))
         });
 
         let start = Instant::now();
@@ -375,14 +445,18 @@ impl AgentTool for BashTool {
         // Helper: kill the process group and drain IO tasks
         async fn kill_and_drain(
             child: &mut command_group::AsyncGroupChild,
-            stdout_task: tokio::task::JoinHandle<()>,
-            stderr_task: tokio::task::JoinHandle<()>,
+            stdout_task: Option<tokio::task::JoinHandle<()>>,
+            stderr_task: Option<tokio::task::JoinHandle<()>>,
         ) {
             let _ = child.kill().await;
             let _ = child.wait().await;
             let _ = tokio::time::timeout(IO_DRAIN_TIMEOUT, async {
-                let _ = stdout_task.await;
-                let _ = stderr_task.await;
+                if let Some(task) = stdout_task {
+                    let _ = task.await;
+                }
+                if let Some(task) = stderr_task {
+                    let _ = task.await;
+                }
             })
             .await;
         }
@@ -404,33 +478,23 @@ impl AgentTool for BashTool {
                     if elapsed >= timeout {
                         kill_and_drain(&mut child, stdout_task, stderr_task).await;
 
-                        let (summary, full_stdout) = {
-                            let buf = stdout_buf.lock();
-                            (
-                                tail_lines(&buf, TIMEOUT_SUMMARY_LINES, TIMEOUT_SUMMARY_BYTES),
-                                String::from_utf8_lossy(&buf).to_string(),
-                            )
-                        };
-                        // Persist the buffered output so the model can inspect
-                        // what ran before the timeout. Only worthwhile when it
-                        // exceeds the inline summary.
-                        let full_output_path = match &ctx.spill {
-                            Some(spill) if full_stdout.len() > summary.len() => {
-                                let key = format!("{}-bash-output", ctx.tool_call_id);
-                                spill.spill_text(&key, &full_stdout).await.ok()
-                            }
-                            _ => None,
+                        let (display, spill_path) = {
+                            let mut capture = capture.lock();
+                            let tail = capture.tail_text();
+                            capture.finish();
+                            let (display, _, _) = tail_truncate(&truncate_long_lines(&tail));
+                            (display, capture.path().cloned())
                         };
                         let mut msg = format!(
                             "Command timed out after {}s",
                             timeout.as_secs()
                         );
-                        if !summary.is_empty() {
+                        if !display.is_empty() {
                             msg.push_str("\nLast output:\n");
-                            msg.push_str(&summary);
+                            msg.push_str(&display);
                         }
-                        if let Some(spill_ref) = full_output_path {
-                            msg.push_str(&format!("\n\n[Full output saved to: {}]", spill_ref.path.display()));
+                        if let Some(path) = spill_path {
+                            msg.push_str(&format!("\n\n[Full output saved to: {}]", path.display()));
                         }
                         return Err(ToolError::Failed(msg));
                     }
@@ -448,10 +512,7 @@ impl AgentTool for BashTool {
                     // Send partial output update
                     if elapsed > UPDATE_INTERVAL && last_update.elapsed() >= UPDATE_INTERVAL {
                         if let Some(ref on_update) = ctx.on_update {
-                            let snippet = {
-                                let buf = stdout_buf.lock();
-                                String::from_utf8_lossy(&buf).to_string()
-                            };
+                            let snippet = capture.lock().tail_text();
                             if !snippet.is_empty() {
                                 on_update(ToolResult {
                                     content: vec![Content::Text { text: snippet }],
@@ -471,8 +532,12 @@ impl AgentTool for BashTool {
 
         // Child exited — wait for IO tasks to finish (bounded)
         let _ = tokio::time::timeout(IO_DRAIN_TIMEOUT, async {
-            let _ = stdout_task.await;
-            let _ = stderr_task.await;
+            if let Some(task) = stdout_task {
+                let _ = task.await;
+            }
+            if let Some(task) = stderr_task {
+                let _ = task.await;
+            }
         })
         .await;
 
@@ -485,110 +550,36 @@ impl AgentTool for BashTool {
             }
         };
 
-        let mut stdout = {
-            let buf = stdout_buf.lock();
-            String::from_utf8_lossy(&buf).to_string()
-        };
-        let mut stderr = {
-            let buf = stderr_buf.lock();
-            String::from_utf8_lossy(&buf).to_string()
-        };
-
-        // Preserve the untruncated output for spill before any display
-        // truncation discards the earlier portion.
-        let full_output = if stderr.is_empty() {
-            stdout.clone()
-        } else {
-            format!("STDOUT:\n{stdout}\nSTDERR:\n{stderr}")
+        // Readers are drained: finalize the capture and build the display view.
+        let (display, raw_tail, total_lines, spill_path) = {
+            let mut capture = capture.lock();
+            let tail = capture.tail_text();
+            capture.finish();
+            let total_lines = capture.total_lines();
+            let path = capture.path().cloned();
+            let (display, _, _) = tail_truncate(&truncate_long_lines(&tail));
+            (display, tail, total_lines, path)
         };
 
-        // Truncate individual long lines (e.g. binary/base64 blobs)
-        stdout = truncate_long_lines(&stdout);
-        stderr = truncate_long_lines(&stderr);
+        let mut output = display;
+        if let Some(path) = &spill_path {
+            let shown_lines = output.lines().count();
+            let start_line = total_lines.saturating_sub(shown_lines) + 1;
+            output.push_str(&format!(
+                "\n\n[Showing lines {start_line}-{total_lines} of {total_lines}. Full output: {}]",
+                path.display()
+            ));
+        }
 
-        // Tail-truncate: keep last 2000 lines / 50KB, discard earlier output
-        let (stdout, stdout_truncated, stdout_total) = tail_truncate(&stdout);
-        let (stderr, stderr_truncated, stderr_total) = tail_truncate(&stderr);
+        if exit_code != 0 {
+            output = format!("Exit code: {exit_code}\n{output}");
+        }
 
-        // When the display was truncated, persist the full retained output via
-        // the shared spill store so the model can Read it back. Reuses the same
-        // file/preview machinery as oversized tool results — no separate path.
-        let full_output_path = if stdout_truncated || stderr_truncated {
-            match &ctx.spill {
-                Some(spill) => {
-                    // Distinct key from the engine-level spill ({tool_call_id}.txt)
-                    // so a later oversized-result spill can't overwrite this file.
-                    let key = format!("{}-bash-output", ctx.tool_call_id);
-                    match spill.spill_text(&key, &full_output).await {
-                        Ok(spill_ref) => Some(spill_ref.path),
-                        Err(e) => {
-                            tracing::warn!("bash full-output spill failed: {e}");
-                            None
-                        }
-                    }
-                }
-                None => None,
-            }
-        } else {
-            None
-        };
-
-        let output = if stderr.is_empty() {
-            if stdout_truncated {
-                if exit_code == 0 {
-                    format!(
-                        "[Output truncated: showing last {} of {} lines]\n{}",
-                        stdout.lines().count(),
-                        stdout_total,
-                        stdout
-                    )
-                } else {
-                    format!(
-                        "Exit code: {}\n[Output truncated: showing last {} of {} lines]\n{}",
-                        exit_code,
-                        stdout.lines().count(),
-                        stdout_total,
-                        stdout
-                    )
-                }
-            } else if exit_code == 0 {
-                stdout.to_string()
-            } else {
-                format!("Exit code: {}\n{}", exit_code, stdout)
-            }
-        } else {
-            let mut out = if exit_code != 0 {
-                format!("Exit code: {}\n", exit_code)
-            } else {
-                String::new()
-            };
-            if stdout_truncated {
-                out.push_str(&format!(
-                    "STDOUT [truncated: showing last {} of {} lines]:\n{}\n",
-                    stdout.lines().count(),
-                    stdout_total,
-                    stdout
-                ));
-            } else {
-                out.push_str(&format!("STDOUT:\n{}\n", stdout));
-            }
-            if stderr_truncated {
-                out.push_str(&format!(
-                    "STDERR [truncated: showing last {} of {} lines]:\n{}",
-                    stderr.lines().count(),
-                    stderr_total,
-                    stderr
-                ));
-            } else {
-                out.push_str(&format!("STDERR:\n{}", stderr));
-            }
-            out
-        };
-
-        // Append sandbox hint when command fails with permission errors
+        // Append sandbox hint on sandbox permission failures
         let output = if self.sandbox_dirs.is_some()
             && exit_code != 0
-            && (stderr.contains("Operation not permitted") || stderr.contains("Permission denied"))
+            && (raw_tail.contains("Operation not permitted")
+                || raw_tail.contains("Permission denied"))
         {
             format!(
                 "{output}\n\n[Sandbox] This command failed due to OS-level sandbox restrictions. \
@@ -599,18 +590,13 @@ impl AgentTool for BashTool {
             output
         };
 
-        let output = match &full_output_path {
-            Some(path) => format!("{output}\n\n[Full output saved to: {}]", path.display()),
-            None => output,
-        };
-
         // Return output even on failure — LLMs need error output to self-correct
         Ok(ToolResult {
             content: vec![Content::Text { text: output }],
             details: serde_json::json!({
                 "exit_code": exit_code,
                 "success": exit_code == 0,
-                "full_output_path": full_output_path
+                "full_output_path": spill_path
                     .as_ref()
                     .map(|p| p.to_string_lossy().to_string()),
             }),
