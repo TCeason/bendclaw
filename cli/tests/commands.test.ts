@@ -1,11 +1,9 @@
 import { describe, test, expect } from 'bun:test'
 import { mkdirSync, rmSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import { resolveCommand, isSlashCommand, buildHardenPrompt } from '../src/commands/index.js'
-import { skillListFromDirs, resolveSkillsDirs, skillList } from '../src/commands/skill.js'
-import { getSkillNames } from '../src/term/banner-skills.js'
-import { homedir } from 'os'
+import { getSkillEntries, skillListFromDirs, resolveSkillsDirs, skillList } from '../src/commands/skill.js'
 
 describe('isSlashCommand', () => {
   test('recognizes slash commands', () => {
@@ -228,36 +226,48 @@ describe('resolveSkillsDirs', () => {
   })
 })
 
-describe('skillList / getSkillNames honor an explicit dirs override (issue #38)', () => {
+describe('skill discovery', () => {
   // The agent resolves EVOT_SKILLS_DIRS from ~/.evotai/evot.env, which
-  // resolveSkillsDirs() (process.env only) can't see. Both display helpers must
-  // scan the caller-provided dirs verbatim so `/skill list` and the banner match
-  // what the agent actually loaded.
-  test('skillList scans provided dirs, not process.env', () => {
+  // resolveSkillsDirs() (process.env only) cannot see. Callers with a live
+  // agent must pass its resolved directories through unchanged.
+  test('scans explicit directories instead of process.env', () => {
     const home = join(tmpdir(), `evot-skill-override-${Date.now()}`)
     const envFileDir = join(home, 'from-env-file', 'skills')
     try {
       mkdirSync(join(envFileDir, 'env-skill'), { recursive: true })
       writeFileSync(join(envFileDir, 'env-skill', 'SKILL.md'), '---\ndescription: x\n---\n')
-      const out = skillList([envFileDir])
-      expect(out).toContain('[env-skill]')
-      expect(out).toContain(join(envFileDir, 'env-skill'))
+
+      const entries = getSkillEntries([envFileDir])
+      expect(entries).toEqual([{
+        name: 'env-skill',
+        dir: join(envFileDir, 'env-skill'),
+      }])
+      expect(skillList([envFileDir])).toContain(join(envFileDir, 'env-skill'))
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
   })
 
-  test('getSkillNames scans provided dirs, not process.env', () => {
-    const home = join(tmpdir(), `evot-skill-names-${Date.now()}`)
-    const envFileDir = join(home, 'from-env-file', 'skills')
+  test('uses the later directory when skill names overlap', () => {
+    const home = join(tmpdir(), `evot-skill-precedence-${Date.now()}`)
+    const builtinDir = join(home, 'builtin')
+    const overrideDir = join(home, 'override')
     try {
-      mkdirSync(join(envFileDir, 'alpha'), { recursive: true })
-      mkdirSync(join(envFileDir, 'beta'), { recursive: true })
-      writeFileSync(join(envFileDir, 'alpha', 'SKILL.md'), '---\n---\n')
-      writeFileSync(join(envFileDir, 'beta', 'SKILL.md'), '---\n---\n')
-      expect(getSkillNames([envFileDir])).toEqual(['alpha', 'beta'])
+      for (const dir of [builtinDir, overrideDir]) {
+        mkdirSync(join(dir, 'shared'), { recursive: true })
+        writeFileSync(join(dir, 'shared', 'SKILL.md'), '---\n---\n')
+      }
+
+      expect(getSkillEntries([builtinDir, overrideDir])).toEqual([{
+        name: 'shared',
+        dir: join(overrideDir, 'shared'),
+      }])
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
+  })
+
+  test('skips missing directories', () => {
+    expect(getSkillEntries(['/path/that/does/not/exist'])).toEqual([])
   })
 })

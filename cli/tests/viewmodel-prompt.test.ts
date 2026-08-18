@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, test } from 'bun:test'
 import chalk from 'chalk'
 import stringWidth from 'string-width'
 import stripAnsi from 'strip-ansi'
+import { resetThemeCache } from '../src/render/theme.js'
 import { CURSOR_MARKER } from '../src/term/renderer.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
 import { buildPromptBlocks, buildPromptFooterBlocks, type PromptVMInput } from '../src/term/viewmodel/prompt.js'
@@ -59,6 +60,23 @@ describe('prompt editor', () => {
     expect(plain).toContain('❯')
     expect(plain).toContain('Type a message...')
     expect(ansi).toContain('\x1b[7m')
+  })
+
+  test('uses the theme-aware EVOT brand color for both input borders', () => {
+    const previousTheme = process.env.EVOT_THEME
+    try {
+      for (const [scheme, hex] of [['dark', '#b5bcf9'], ['light', '#5769f7']] as const) {
+        process.env.EVOT_THEME = scheme
+        resetThemeCache()
+        const lines = render(defaultInput()).split('\n')
+        const expectedBorder = chalk.hex(hex)('─'.repeat(80))
+        expect(lines.filter(line => line === expectedBorder)).toHaveLength(2)
+      }
+    } finally {
+      if (previousTheme === undefined) delete process.env.EVOT_THEME
+      else process.env.EVOT_THEME = previousTheme
+      resetThemeCache()
+    }
   })
 
   test('renders input and known command styling', () => {

@@ -36,7 +36,7 @@ function expandHome(dir: string): string {
  *
  * This reads only `process.env`, so it MISSES EVOT_SKILLS_DIRS set in
  * ~/.evotai/evot.env (or a custom --env-file / TOML config). Prefer passing the
- * agent's resolved `skillsDirs()` to skillList()/getSkillNames() when a live
+ * agent's resolved `skillsDirs()` to skillList()/getSkillEntries() when a live
  * agent is available (see issue #38); this remains the fallback for contexts
  * without one.
  */
@@ -61,19 +61,35 @@ export function resolveSkillsDirs(env: NodeJS.ProcessEnv = process.env): string[
 // /skill list
 // ---------------------------------------------------------------------------
 
-export function skillListFromDirs(dirs: string[]): string {
-  const entries = dirs.flatMap((dir) => {
-    if (!existsSync(dir)) return []
-    return readdirSync(dir)
-      .filter((name) => existsSync(join(dir, name, 'SKILL.md')))
-      .map((name) => ({ name, dir: join(dir, name) }))
-  }).sort((a, b) => a.name.localeCompare(b.name))
+export interface SkillEntry {
+  name: string
+  dir: string
+}
 
+export function getSkillEntries(dirs: string[] = resolveSkillsDirs()): SkillEntry[] {
+  const byName = new Map<string, SkillEntry>()
+
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue
+    try {
+      for (const name of readdirSync(dir)) {
+        const skillDir = join(dir, name)
+        if (existsSync(join(skillDir, 'SKILL.md'))) {
+          // Match the runtime: later directories override earlier ones.
+          byName.set(name, { name, dir: skillDir })
+        }
+      }
+    } catch { /* skip unreadable directories */ }
+  }
+
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export function skillListFromDirs(dirs: string[]): string {
+  const entries = getSkillEntries(dirs)
   if (entries.length === 0) return '  no skills installed'
 
-  return `\n  Skills:\n${entries
-    .map(({ name, dir }) => `  • [${name}] ${dir}`)
-    .join('\n')}`
+  return `\n  Skills:\n${entries.map(({ name, dir }) => `  • [${name}] ${dir}`).join('\n')}`
 }
 
 export function skillList(dirs?: string[]): string {

@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { renderBanner } from '../src/term/banner.js'
+import { resetThemeCache } from '../src/render/theme.js'
 
 beforeAll(() => {
   chalk.level = 3
@@ -17,26 +18,133 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-describe('renderBanner terminal width', () => {
-  test('wraps long skill lists to physical lines within terminal width', () => {
-    const root = mkdtempSync(join(tmpdir(), 'evot-banner-'))
-    roots.push(root)
-    for (let index = 0; index < 40; index++) {
-      const skill = join(root, `skill-${index.toString().padStart(2, '0')}`)
-      mkdirSync(skill)
-      writeFileSync(join(skill, 'SKILL.md'), '# Skill\n')
-    }
+function createFixture(skillCount: number) {
+  const root = mkdtempSync(join(tmpdir(), 'evot-banner-'))
+  roots.push(root)
+  const cwd = join(root, 'project')
+  const skillsDir = join(root, 'skills')
+  mkdirSync(cwd)
+  mkdirSync(skillsDir)
+  writeFileSync(join(cwd, 'AGENTS.md'), '# Context\n')
+  for (let index = 0; index < skillCount; index++) {
+    const skill = join(skillsDir, `skill-${index.toString().padStart(2, '0')}`)
+    mkdirSync(skill)
+    writeFileSync(join(skill, 'SKILL.md'), '# Skill\n')
+  }
+  return { cwd, skillsDir }
+}
 
-    const columns = 40
-    const banner = renderBanner({
+describe('renderBanner', () => {
+  test('renders Pi-style context and skill name sections without metadata or paths', () => {
+    const { cwd, skillsDir } = createFixture(12)
+    const banner = stripAnsi(renderBanner({
       version: 'test',
       model: 'model',
-      cwd: root,
-      configInfo: undefined,
-      columns,
-      skillsDirs: [root],
-    })
+      cwd,
+      configInfo: { provider: 'provider', hasApiKey: true },
+      columns: 80,
+      rows: 30,
+      skillsDirs: [skillsDir],
+    }))
 
+    expect(banner).toContain('███████╗██╗   ██╗ ██████╗ ████████╗')
+    expect(banner).toContain('vtest')
+    expect(banner).toContain('[Context]')
+    expect(banner).toContain('AGENTS.md')
+    expect(banner).toContain('[Skills]')
+    expect(banner).toContain('skill-00, skill-01')
+    expect(banner).toContain('skill-11')
+    expect(banner).not.toContain('Directory')
+    expect(banner).not.toContain('Model')
+    expect(banner).not.toContain('available')
+    expect(banner).not.toContain('/skill list')
+    expect(banner).not.toContain(join(skillsDir, 'skill-00'))
+  })
+
+  test('uses EVOT primary for logos and gold accent for section headings', () => {
+    const { cwd, skillsDir } = createFixture(1)
+    const previousTheme = process.env.EVOT_THEME
+    try {
+      for (const [scheme, brandHex, accentHex] of [
+        ['dark', '#b5bcf9', '#f0c674'],
+        ['light', '#5769f7', '#b8860b'],
+      ] as const) {
+        process.env.EVOT_THEME = scheme
+        resetThemeCache()
+
+        const full = renderBanner({
+          version: 'test',
+          model: 'model',
+          cwd,
+          configInfo: undefined,
+          columns: 80,
+          rows: 40,
+          skillsDirs: [skillsDir],
+        })
+        expect(full).toContain(chalk.hex(brandHex).bold(' ███████╗██╗   ██╗ ██████╗ ████████╗'))
+        expect(full).toContain(chalk.hex(accentHex)('  [Context]'))
+        expect(full).toContain(chalk.hex(accentHex)('  [Skills]'))
+
+        const compact = renderBanner({
+          version: 'test',
+          model: 'model',
+          cwd,
+          configInfo: undefined,
+          columns: 40,
+          rows: 20,
+          skillsDirs: [skillsDir],
+        })
+        expect(compact).toContain(chalk.hex(brandHex).bold('evot'))
+      }
+    } finally {
+      if (previousTheme === undefined) delete process.env.EVOT_THEME
+      else process.env.EVOT_THEME = previousTheme
+      resetThemeCache()
+    }
+  })
+
+  test('falls back to a one-line brand when width or rendered height is constrained', () => {
+    const { cwd, skillsDir } = createFixture(1)
+    const cases = [
+      { columns: 40, rows: 30 },
+      { columns: 80, rows: 20 },
+      { columns: 80, rows: 24, updateAvailable: { version: 'next' } },
+    ]
+    for (const dimensions of cases) {
+      const banner = stripAnsi(renderBanner({
+        version: 'test',
+        model: 'model',
+        cwd,
+        configInfo: undefined,
+        ...dimensions,
+        skillsDirs: [skillsDir],
+      }))
+
+      expect(banner).toContain('  evot vtest')
+      expect(banner).not.toContain('███████╗')
+      expect(banner).toContain('[Skills]')
+      expect(banner).toContain('skill-00')
+    }
+  })
+
+  test('wraps long skill lists and hides the large logo when they need the space', () => {
+    const { cwd, skillsDir } = createFixture(40)
+    const columns = 32
+    const banner = renderBanner({
+      version: 'test',
+      model: 'a-very-long-model-name',
+      cwd,
+      configInfo: { provider: 'long-provider-name', hasApiKey: true },
+      columns,
+      rows: 20,
+      skillsDirs: [skillsDir],
+    })
+    const plain = stripAnsi(banner)
+
+    expect(plain).toContain('  evot vtest')
+    expect(plain).not.toContain('███████╗')
+    expect(plain).toContain('skill-00')
+    expect(plain).toContain('skill-39')
     for (const line of banner.split('\n')) {
       expect(stringWidth(stripAnsi(line))).toBeLessThanOrEqual(columns)
     }

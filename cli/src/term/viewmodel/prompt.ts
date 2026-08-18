@@ -5,6 +5,7 @@ import { nextGraphemeBoundary, wrapEditorText } from '../input/grapheme.js'
 import { CURSOR_MARKER } from '../renderer.js'
 import { line, block, plain, dim, colored, inverse, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
 import { formatCacheHitPercent, type PromptUsageBuckets } from '../../render/cache.js'
+import { getTheme } from '../../render/theme.js'
 
 export interface PromptVMInput {
   lines: string[]
@@ -299,9 +300,11 @@ function styleInputText(text: string): StyledSpan[] {
 }
 
 function borderLine(columns: number, label: string): StyledLine {
-  if (!label) return line(dim('─'.repeat(columns)))
-  const prefix = `── ${label} `
-  return line(dim(truncateToWidth(prefix, columns) + '─'.repeat(Math.max(0, columns - stringWidth(prefix)))))
+  const text = !label
+    ? '─'.repeat(columns)
+    : truncateToWidth(`── ${label} `, columns) +
+      '─'.repeat(Math.max(0, columns - stringWidth(`── ${label} `)))
+  return line({ text, hex: getTheme().brandHex })
 }
 
 function finiteSize(value: number, fallback: number): number {

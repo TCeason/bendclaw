@@ -19,6 +19,14 @@ function style(fn: (s: string) => string): Style {
 }
 
 export interface Theme {
+  // Brand: periwinkle primary + gold structural accent.
+  brand: Style
+  brandBold: Style
+  brandHex: string
+  accent: Style
+  accentBold: Style
+  accentHex: string
+
   // Inline
   text: Style
   bold: Style
@@ -69,7 +77,17 @@ function darkTheme(): Theme {
   // first built while chalk.level is 0/1 (no TTY, CI), headings/fences stay stuck
   // on 16-color SGR even after log-shot forces level 3. Lazy hex matches codeInline
   // / tableBorder and keeps truecolor stable across environments.
+  // EVOT's primary periwinkle, sampled from the canonical terminal wordmark.
+  const brandHex = '#b5bcf9'
+  const accentHex = '#f0c674'
   return {
+    brand: style(s => chalk.hex(brandHex)(s)),
+    brandBold: style(s => chalk.hex(brandHex).bold(s)),
+    brandHex,
+    accent: style(s => chalk.hex(accentHex)(s)),
+    accentBold: style(s => chalk.hex(accentHex).bold(s)),
+    accentHex,
+
     text: plain,
     bold: style(s => chalk.bold(s)),
     italic: style(s => chalk.italic(s)),
@@ -124,7 +142,16 @@ function darkTheme(): Theme {
 
 function lightTheme(): Theme {
   // Same lazy-hex rule as darkTheme — see comment there.
+  const brandHex = '#5769f7'
+  const accentHex = '#b8860b'
   return {
+    brand: style(s => chalk.hex(brandHex)(s)),
+    brandBold: style(s => chalk.hex(brandHex).bold(s)),
+    brandHex,
+    accent: style(s => chalk.hex(accentHex)(s)),
+    accentBold: style(s => chalk.hex(accentHex).bold(s)),
+    accentHex,
+
     text: plain,
     bold: style(s => chalk.bold(s)),
     italic: style(s => chalk.italic(s)),

@@ -467,6 +467,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       cwd: agent.cwd,
       configInfo,
       columns: renderer.termCols,
+      rows: renderer.termRows,
       serverState,
       releaseNotes,
       updateAvailable,
