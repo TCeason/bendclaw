@@ -29,7 +29,7 @@ export async function runPrompt(opts: CliOptions) {
   const stream = await agent.query(
     contentJson ? '' : opts.prompt,
     resumeSessionId,
-    opts.skillNames.length === 0 ? 'headless-no-skills' : undefined,
+    undefined,
     contentJson,
   )
   for await (const event of stream) {

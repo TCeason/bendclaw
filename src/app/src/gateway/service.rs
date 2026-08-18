@@ -53,9 +53,11 @@ pub async fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
     let (system_prompt_text, system_prompt_sections) = SystemPrompt::base(&cwd, &tools, &model);
 
     let mut skills_dirs = Vec::new();
-    if let Ok(global) = crate::conf::paths::skills_dir() {
-        skills_dirs.push(global);
-    }
+    let builtin = crate::agent::prompt::skill::ensure_builtin_skills_dir()
+        .map_err(|error| EvotError::Agent(format!("cannot initialize builtin skills: {error}")))?;
+    skills_dirs.push(builtin);
+    let global = crate::conf::paths::skills_dir()?;
+    skills_dirs.push(global);
     skills_dirs.extend(conf.skills_dirs.clone());
 
     tracing::info!(skills_dirs = ?skills_dirs, "agent skills directories");

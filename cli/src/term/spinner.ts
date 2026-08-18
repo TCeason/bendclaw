@@ -69,7 +69,6 @@ export function toolActionLabel(toolName: string): string {
     case 'bash': return 'Running command'
     case 'web_fetch': case 'webfetch': return 'Fetching'
     case 'plan': return 'Planning'
-    case 'skill': return 'Loading skill'
     case 'compact': return 'Compacting'
     case 'compact_remote': return 'Compacting remote'
     case 'compact_local': return 'Compacting local'

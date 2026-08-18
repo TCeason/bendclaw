@@ -6,10 +6,9 @@
 import { join } from 'path'
 import { homedir } from 'os'
 import {
-  readdirSync, existsSync, readFileSync, rmSync, mkdirSync,
-  cpSync, statSync,
+  readdirSync, existsSync, rmSync, statSync,
 } from 'fs'
-import type { ForkedAgent } from '../native/index.js'
+import { mkdtemp, cp, mkdir, rename, rm } from 'fs/promises'
 
 // Install target: the global ~/.evotai/skills dir. `/skill install` and
 // `/skill remove` always operate here; EVOT_SKILLS_DIRS entries are
@@ -30,9 +29,10 @@ function expandHome(dir: string): string {
 /**
  * Resolve the ordered list of skill directories to scan, matching the engine's
  * precedence (see gateway/service.rs + conf/load.rs):
- *   1. global ~/.evotai/skills
- *   2. EVOT_SKILLS_DIRS entries (colon-separated, `~` expanded)
- *   3. ~/.claude/skills
+ *   1. managed builtin ~/.evotai/builtin-skills
+ *   2. global ~/.evotai/skills
+ *   3. EVOT_SKILLS_DIRS entries (colon-separated, `~` expanded)
+ *   4. ~/.claude/skills
  *
  * This reads only `process.env`, so it MISSES EVOT_SKILLS_DIRS set in
  * ~/.evotai/evot.env (or a custom --env-file / TOML config). Prefer passing the
@@ -41,7 +41,10 @@ function expandHome(dir: string): string {
  * without one.
  */
 export function resolveSkillsDirs(env: NodeJS.ProcessEnv = process.env): string[] {
-  const dirs = [join(homedir(), '.evotai', 'skills')]
+  const dirs = [
+    join(homedir(), '.evotai', 'builtin-skills'),
+    join(homedir(), '.evotai', 'skills'),
+  ]
   const extra = env.EVOT_SKILLS_DIRS
   if (extra) {
     for (const part of extra.split(':')) {
@@ -116,42 +119,55 @@ export function isValidSkillName(name: string): boolean {
 
 export type ProgressFn = (msg: string, level: 'info' | 'warn' | 'error') => void
 
+async function githubToken(): Promise<string> {
+  try {
+    const proc = Bun.spawn(['gh', 'auth', 'token'], { stdout: 'pipe', stderr: 'ignore' })
+    const [exitCode, stdout] = await Promise.all([proc.exited, new Response(proc.stdout).text()])
+    return exitCode === 0 ? stdout.trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+async function runCommand(command: string[], action: string): Promise<void> {
+  const proc = Bun.spawn(command, { stdout: 'ignore', stderr: 'pipe' })
+  const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()])
+  if (exitCode !== 0) {
+    const detail = stderr.trim()
+    throw new Error(`${action} failed${detail ? `: ${detail}` : ''}`)
+  }
+}
+
 export async function skillInstall(
   source: string,
-  forkedAgent?: ForkedAgent,
   progress?: ProgressFn,
-): Promise<string | null> {
+): Promise<string> {
   const parsed = parseGitHubSource(source)
   const repoName = parsed.repo.split('/')[1] ?? parsed.repo
 
   // Clone to temp dir
-  const { mkdtempSync } = await import('fs')
   const { tmpdir } = await import('os')
-  const tempDir = mkdtempSync(join(tmpdir(), 'evot-skill-'))
+  const tempDir = await mkdtemp(join(tmpdir(), 'evot-skill-'))
 
   try {
     // Download repo tarball via GitHub API (avoids git-remote-https issues)
     const gitRef = parsed.gitRef ?? 'main'
     const tarFile = join(tempDir, 'repo.tar.gz')
-    const ghToken = Bun.spawnSync(['gh', 'auth', 'token'], { stdout: 'pipe', stderr: 'pipe' })
-    const token = ghToken.exitCode === 0 ? ghToken.stdout.toString().trim() : ''
+    progress?.(`downloading ${parsed.repo}@${gitRef}...`, 'info')
+    const token = await githubToken()
     const headers: string[] = token
       ? ['-H', `Authorization: token ${token}`, '-H', 'Accept: application/vnd.github+json']
       : ['-H', 'Accept: application/vnd.github+json']
-    const download = Bun.spawnSync(
+    await runCommand(
       ['curl', '-fsSL', ...headers, '-o', tarFile, `https://api.github.com/repos/${parsed.repo}/tarball/${gitRef}`],
-      { stdout: 'pipe', stderr: 'pipe' },
+      'download repo',
     )
-    if (download.exitCode !== 0) {
-      throw new Error(`failed to download repo: ${download.stderr.toString()}`)
-    }
-    const extract = Bun.spawnSync(
+
+    progress?.('extracting archive...', 'info')
+    await runCommand(
       ['tar', 'xzf', tarFile, '--strip-components=1', '-C', tempDir],
-      { stdout: 'pipe', stderr: 'pipe' },
+      'extract tarball',
     )
-    if (extract.exitCode !== 0) {
-      throw new Error(`failed to extract tarball: ${extract.stderr.toString()}`)
-    }
 
     // Determine source dir
     let srcDir = tempDir
@@ -162,12 +178,13 @@ export async function skillInstall(
       }
     }
 
+    progress?.('installing skills...', 'info')
     const installed: string[] = []
 
     // Check if srcDir itself is a skill (has SKILL.md)
     if (existsSync(join(srcDir, 'SKILL.md'))) {
       const name = parsed.subpath?.split('/').pop() ?? repoName
-      installSkillDir(srcDir, name)
+      await installSkillDir(srcDir, name)
       installed.push(name)
     } else {
       // Multi-skill repo: scan top-level subdirs
@@ -179,47 +196,50 @@ export async function skillInstall(
         throw new Error('No SKILL.md found in repo or subdirectories.')
       }
       for (const d of subdirs) {
-        installSkillDir(join(srcDir, d), d)
+        await installSkillDir(join(srcDir, d), d)
         installed.push(d)
       }
     }
 
-    // Report installed skills
-    for (const name of installed) {
-      progress?.(`  ✓ installed skill: ${name}`, 'info')
-    }
-
-    // Post-install LLM analysis (single skill only)
-    if (forkedAgent && installed.length === 1) {
-      progress?.('  analyzing skill...', 'info')
-      const guide = await printSetupGuide(forkedAgent, installed[0]!)
-      if (guide) {
-        progress?.(guide, 'info')
-      }
-    } else if (installed.length > 1) {
-      progress?.(`  installed ${installed.length} skills; use the skill tool to explore each one`, 'info')
-    }
-
-    return null
+    return installed.length === 1
+      ? `✓ installed skill: ${installed[0]}`
+      : `✓ installed ${installed.length} skills: ${installed.join(', ')}`
   } finally {
-    rmSync(tempDir, { recursive: true, force: true })
+    await rm(tempDir, { recursive: true, force: true })
   }
 }
 
-function installSkillDir(srcDir: string, name: string): void {
+async function installSkillDir(srcDir: string, name: string): Promise<void> {
   if (!isValidSkillName(name)) {
     throw new Error(`Invalid skill name: ${name}`)
   }
+  const suffix = `${process.pid}-${Date.now()}`
+  const stageDir = join(SKILLS_DIR, `.${name}.install-${suffix}`)
+  const backupDir = join(SKILLS_DIR, `.${name}.backup-${suffix}`)
   const destDir = join(SKILLS_DIR, name)
-  mkdirSync(destDir, { recursive: true })
+  await mkdir(SKILLS_DIR, { recursive: true })
+  await rm(stageDir, { recursive: true, force: true })
+  await mkdir(stageDir, { recursive: true })
 
-  // Copy excluding .git
-  const entries = readdirSync(srcDir)
-  for (const entry of entries) {
-    if (entry === '.git') continue
-    const src = join(srcDir, entry)
-    const dst = join(destDir, entry)
-    cpSync(src, dst, { recursive: true })
+  let backedUp = false
+  try {
+    for (const entry of readdirSync(srcDir)) {
+      if (entry === '.git') continue
+      await cp(join(srcDir, entry), join(stageDir, entry), { recursive: true })
+    }
+    if (existsSync(destDir)) {
+      await rename(destDir, backupDir)
+      backedUp = true
+    }
+    try {
+      await rename(stageDir, destDir)
+    } catch (error) {
+      if (backedUp) await rename(backupDir, destDir)
+      throw error
+    }
+    if (backedUp) await rm(backupDir, { recursive: true, force: true })
+  } finally {
+    await rm(stageDir, { recursive: true, force: true })
   }
 }
 
@@ -237,63 +257,4 @@ export function skillRemove(name: string): string {
   }
   rmSync(skillDir, { recursive: true, force: true })
   return `  ✓ removed skill: ${name}`
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function extractDescription(skillMdPath: string): string {
-  try {
-    const content = readFileSync(skillMdPath, 'utf-8')
-    // Look for description in YAML frontmatter
-    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/)
-    if (fmMatch) {
-      const descMatch = fmMatch[1]!.match(/description:\s*(.+)/)
-      if (descMatch) return descMatch[1]!.trim()
-    }
-    // Fallback: first non-empty, non-heading line
-    for (const line of content.split('\n')) {
-      const trimmed = line.trim()
-      if (trimmed && !trimmed.startsWith('#') && !trimmed.startsWith('---')) {
-        return trimmed.slice(0, 80)
-      }
-    }
-  } catch { /* ignore */ }
-  return '(no description)'
-}
-
-async function printSetupGuide(forked: ForkedAgent, skillName: string): Promise<string | null> {
-  const skillDir = join(SKILLS_DIR, skillName)
-  const context = collectSkillContext(skillDir)
-  if (!context) return null
-
-  const prompt = `Analyze this skill and provide a brief setup guide with:\n## Configuration\nWhat env vars or settings are needed.\n## Security\nAny security considerations.\n\n${context}`
-
-  try {
-    const stream = await forked.query(prompt)
-    let text = ''
-    for await (const event of stream) {
-      if (event.kind === 'assistant_delta' && event.payload?.content_type === 'text' && event.payload?.delta) {
-        text += event.payload.delta as string
-      }
-    }
-    return text || null
-  } catch {
-    return null
-  }
-}
-
-function collectSkillContext(skillDir: string): string | null {
-  const parts: string[] = []
-  for (const file of ['SKILL.md', 'README.md', '.env.example', '.env.template']) {
-    const p = join(skillDir, file)
-    if (existsSync(p)) {
-      try {
-        const content = readFileSync(p, 'utf-8').slice(0, 4000)
-        parts.push(`<${file}>\n${content}\n</${file}>`)
-      } catch { /* ignore */ }
-    }
-  }
-  return parts.length > 0 ? parts.join('\n\n') : null
 }

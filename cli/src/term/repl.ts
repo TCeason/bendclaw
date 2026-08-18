@@ -2375,16 +2375,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       if (!source) {
         commitSystem('sys-skill-err', '  Usage: /skill install <owner/repo>')
       } else {
-        commitSystem('sys-skill-inst', `  cloning ${source}`)
+        commitSystem('sys-skill-inst', `  installing ${source}...`)
         renderer.requestRender()
         try {
           const { skillInstall } = await import('../commands/skill.js')
-          const forked = agent.fork('You analyze skills and provide setup guides.')
-          const result = await skillInstall(source, forked, (msg, level) => {
+          const result = await skillInstall(source, (msg) => {
             commitLines([{ id: `sys-skill-${Date.now()}`, kind: 'system', text: `  ${msg}` }])
             renderer.requestRender()
           })
-          if (result) commitSystem('sys-skill-done', `  ${result}`)
+          commitSystem('sys-skill-done', `  ${result}`)
         } catch (err: any) {
           commitSystem('sys-skill-err', chalk.red(`  install failed: ${err?.message ?? err}`))
         }

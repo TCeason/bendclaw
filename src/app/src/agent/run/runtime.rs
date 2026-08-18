@@ -60,8 +60,6 @@ pub struct EngineOptions {
     /// Execution limits, or `None` for interactive runs (no limits — the loop
     /// stops only on error, abort, or when there is no more work, matching pi).
     pub limits: Option<crate::agent::ExecutionLimits>,
-    pub skills_dirs: Vec<std::path::PathBuf>,
-    pub skill_names: Option<Vec<String>>,
     pub tools: Vec<Box<dyn evot_engine::AgentTool>>,
     pub thinking_level: evot_engine::ThinkingLevel,
     pub cwd: std::path::PathBuf,
@@ -1192,25 +1190,6 @@ pub(crate) fn build_agent(
             max_duration: std::time::Duration::from_secs(l.max_duration_secs),
         });
 
-    let skills = match options.skill_names {
-        Some(names) => {
-            match crate::agent::prompt::skill::load_skills_by_name(&options.skills_dirs, &names) {
-                Ok(specs) => evot_engine::SkillSet::new(specs),
-                Err(e) => {
-                    tracing::warn!("failed to load skills: {e}");
-                    evot_engine::SkillSet::empty()
-                }
-            }
-        }
-        None => match crate::agent::prompt::skill::load_skills(&options.skills_dirs) {
-            Ok(specs) => evot_engine::SkillSet::new(specs),
-            Err(e) => {
-                tracing::warn!("failed to load skills: {e}");
-                evot_engine::SkillSet::empty()
-            }
-        },
-    };
-
     provider_agent
         .with_model(&options.model)
         .with_api_key(&options.api_key)
@@ -1222,7 +1201,6 @@ pub(crate) fn build_agent(
         .with_tools(options.tools)
         .with_cwd(options.cwd)
         .with_path_guard(options.path_guard)
-        .with_skills(skills)
         .with_thinking(options.thinking_level)
         .with_compaction_state_opt(options.compaction_state)
         .with_prompt_cache_key_opt(options.prompt_cache_key)

@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
 
+use evot::agent::prompt::skill::ensure_builtin_skills_dir;
+use evot::agent::prompt::skill::format_skills_for_prompt;
 use evot::agent::prompt::skill::load_fs_skills;
 use evot::agent::prompt::skill::load_skills;
 use evot::agent::prompt::skill::load_skills_by_name;
@@ -20,17 +22,18 @@ fn create_skill(dir: &Path, name: &str, description: &str) {
 }
 
 #[test]
-fn load_from_directory() {
-    let tmp = TempDir::new().unwrap();
+fn load_from_directory() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
     create_skill(tmp.path(), "weather", "Get weather");
     create_skill(tmp.path(), "git", "Git ops");
 
-    let specs = load_fs_skills(&[tmp.path().to_path_buf()]).unwrap();
+    let specs = load_fs_skills(&[tmp.path().to_path_buf()])?;
     assert_eq!(specs.len(), 2);
     assert_eq!(specs[0].name, "git");
     assert_eq!(specs[1].name, "weather");
     assert_eq!(specs[1].description, "Get weather");
-    assert!(specs[1].instructions.contains("# Instructions"));
+    assert!(std::fs::read_to_string(&specs[1].file_path)?.contains("# Instructions"));
+    Ok(())
 }
 
 #[test]
@@ -63,7 +66,10 @@ fn handles_crlf_frontmatter() -> Result<(), Box<dyn std::error::Error>> {
 
     let specs = load_fs_skills(&[tmp.path().to_path_buf()])?;
     assert_eq!(specs[0].description, "CRLF skill");
-    assert_eq!(specs[0].instructions, "\r\n# Body\r\n");
+    assert_eq!(
+        evot::agent::prompt::skill::load_skill_instructions(&specs[0])?,
+        "\r\n# Body\r\n"
+    );
     Ok(())
 }
 
@@ -148,13 +154,15 @@ fn error_on_empty_description() {
 }
 
 #[test]
-fn strips_frontmatter_from_instructions() {
-    let tmp = TempDir::new().unwrap();
+fn strips_frontmatter_from_instructions() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
     create_skill(tmp.path(), "test-skill", "A test");
 
-    let specs = load_fs_skills(&[tmp.path().to_path_buf()]).unwrap();
-    assert!(!specs[0].instructions.contains("---"));
-    assert!(specs[0].instructions.contains("# Instructions"));
+    let specs = load_fs_skills(&[tmp.path().to_path_buf()])?;
+    let instructions = evot::agent::prompt::skill::load_skill_instructions(&specs[0])?;
+    assert!(!instructions.contains("---"));
+    assert!(instructions.contains("# Instructions"));
+    Ok(())
 }
 
 #[test]
@@ -177,6 +185,15 @@ fn handles_quoted_description() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn builtin_directory_contains_all_builtin_skills() -> Result<(), Box<dyn std::error::Error>> {
+    let root = ensure_builtin_skills_dir()?;
+    for name in ["review", "harden", "opencli", "humanize", "memory"] {
+        assert!(root.join(name).join("SKILL.md").is_file());
+    }
+    Ok(())
+}
+
+#[test]
 fn all_builtin_skills_load() -> Result<(), Box<dyn std::error::Error>> {
     let empty: Vec<std::path::PathBuf> = vec![];
     let specs = load_skills(&empty)?;
@@ -190,16 +207,18 @@ fn all_builtin_skills_load() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn builtin_review_skill_loaded() {
+fn builtin_review_skill_loaded() -> Result<(), Box<dyn std::error::Error>> {
     // load_skills with no dirs should still return builtins
     let empty: Vec<std::path::PathBuf> = vec![];
-    let specs = load_skills(&empty).unwrap();
-    let review = specs.iter().find(|s| s.name == "review");
-    assert!(review.is_some(), "builtin review skill should be present");
-    let review = review.unwrap();
+    let specs = load_skills(&empty)?;
+    let review = specs
+        .iter()
+        .find(|s| s.name == "review")
+        .ok_or("builtin review skill should be present")?;
     assert!(!review.description.is_empty());
-    assert!(review.instructions.contains("# Code Review"));
-    assert!(review.base_dir.as_os_str().is_empty());
+    assert!(std::fs::read_to_string(&review.file_path)?.contains("# Code Review"));
+    assert!(review.file_path.ends_with("review/SKILL.md"));
+    Ok(())
 }
 
 #[test]
@@ -211,8 +230,8 @@ fn builtin_harden_skill_loaded() -> Result<(), Box<dyn std::error::Error>> {
         None => return Err("builtin harden skill should be present".into()),
     };
     assert!(!harden.description.is_empty());
-    assert!(harden.instructions.contains("# Harden"));
-    assert!(harden.base_dir.as_os_str().is_empty());
+    assert!(std::fs::read_to_string(&harden.file_path)?.contains("# Harden"));
+    assert!(harden.file_path.ends_with("harden/SKILL.md"));
     Ok(())
 }
 
@@ -225,8 +244,8 @@ fn builtin_humanize_skill_loaded() -> Result<(), Box<dyn std::error::Error>> {
         None => return Err("builtin humanize skill should be present".into()),
     };
     assert!(!humanize.description.is_empty());
-    assert!(humanize.instructions.contains("# Humanize"));
-    assert!(humanize.base_dir.as_os_str().is_empty());
+    assert!(std::fs::read_to_string(&humanize.file_path)?.contains("# Humanize"));
+    assert!(humanize.file_path.ends_with("humanize/SKILL.md"));
     Ok(())
 }
 
@@ -240,9 +259,10 @@ fn builtin_memory_skill_loaded() -> Result<(), Box<dyn std::error::Error>> {
     };
     assert!(!memory.description.is_empty());
     assert!(memory.description.contains("/clip all"));
-    assert!(memory.instructions.contains("# Memory"));
-    assert!(memory.instructions.contains(".evotai/memory"));
-    assert!(memory.base_dir.as_os_str().is_empty());
+    let instructions = evot::agent::prompt::skill::load_skill_instructions(memory)?;
+    assert!(instructions.contains("# Memory"));
+    assert!(instructions.contains(".evotai/memory"));
+    assert!(memory.file_path.ends_with("memory/SKILL.md"));
     Ok(())
 }
 
@@ -255,21 +275,24 @@ fn fs_skill_overrides_builtin() {
     let review = specs.iter().find(|s| s.name == "review").unwrap();
     assert_eq!(review.description, "Custom review");
     assert!(
-        !review.base_dir.as_os_str().is_empty(),
-        "fs skill should have a base_dir"
+        review.file_path.ends_with("review/SKILL.md"),
+        "fs skill should point at SKILL.md"
     );
 }
 
 #[test]
-fn filesystem_skill_error_does_not_drop_builtins() -> Result<(), Box<dyn std::error::Error>> {
+fn filesystem_skill_error_does_not_drop_builtins_or_valid_siblings(
+) -> Result<(), Box<dyn std::error::Error>> {
     let tmp = TempDir::new()?;
     let skill_dir = tmp.path().join("bad");
     fs::create_dir_all(&skill_dir)?;
     fs::write(skill_dir.join("SKILL.md"), "No frontmatter here.")?;
+    create_skill(tmp.path(), "valid", "Valid sibling");
 
     let specs = load_skills(&[tmp.path().to_path_buf()])?;
     assert!(specs.iter().any(|s| s.name == "review"));
     assert!(specs.iter().any(|s| s.name == "harden"));
+    assert!(specs.iter().any(|s| s.name == "valid"));
     assert!(specs.iter().all(|s| s.name != "bad"));
     Ok(())
 }
@@ -287,6 +310,19 @@ fn selected_skills_can_mix_builtin_and_filesystem() -> Result<(), Box<dyn std::e
 }
 
 #[test]
+fn load_single_skill_uses_runtime_precedence() -> Result<(), Box<dyn std::error::Error>> {
+    use evot::agent::prompt::skill::load_skill;
+
+    let tmp = TempDir::new()?;
+    create_skill(tmp.path(), "memory", "Custom memory workflow");
+
+    let memory = load_skill(&[tmp.path().to_path_buf()], "memory")?;
+    assert_eq!(memory.description, "Custom memory workflow");
+    assert!(memory.file_path.ends_with("memory/SKILL.md"));
+    Ok(())
+}
+
+#[test]
 fn empty_skill_selection_loads_nothing() -> Result<(), Box<dyn std::error::Error>> {
     let empty: Vec<std::path::PathBuf> = Vec::new();
     assert!(load_skills_by_name(&empty, &[])?.is_empty());
@@ -299,4 +335,38 @@ fn unknown_selected_skill_returns_error() {
     let error = load_skills_by_name(&empty, &["missing".to_string()])
         .expect_err("missing skill should fail");
     assert!(error.to_string().contains("unknown skill 'missing'"));
+}
+
+#[test]
+fn filtered_skill_index_contains_only_selected_names() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    create_skill(tmp.path(), "alpha", "Alpha skill");
+    create_skill(tmp.path(), "beta", "Beta skill");
+
+    let selected = load_skills_by_name(&[tmp.path().to_path_buf()], &["beta".to_string()])?;
+    let prompt = format_skills_for_prompt(&selected);
+    assert!(prompt.contains("<name>beta</name>"));
+    assert!(!prompt.contains("<name>alpha</name>"));
+    assert!(!prompt.contains("<name>memory</name>"));
+    Ok(())
+}
+
+#[test]
+fn empty_skill_index_is_omitted() {
+    assert!(format_skills_for_prompt(&[]).is_empty());
+}
+
+#[test]
+fn formats_skill_index_for_prompt() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    create_skill(tmp.path(), "weather", "Get weather");
+    let specs = load_fs_skills(&[tmp.path().to_path_buf()])?;
+    let prompt = format_skills_for_prompt(&specs);
+    assert!(prompt.contains("<available_skills>"));
+    assert!(prompt.contains("<name>weather</name>"));
+    assert!(prompt.contains("<description>Get weather</description>"));
+    assert!(prompt.contains("<location>"));
+    assert!(prompt.contains("SKILL.md"));
+    assert!(prompt.contains("Use the read tool to load a skill's file"));
+    Ok(())
 }

@@ -119,7 +119,7 @@ export async function printHelp() {
   console.log('  --max-duration <secs>  Max duration (default: 3600)')
   console.log('  --append-system-prompt <text>')
   console.log('  --skills <dir>         Skills directory (repeatable)')
-  console.log('  --skill <name>         Enable a skill by name (repeatable)')
+  console.log('  --skill <name>         One-shot only: enable a skill by name (repeatable)')
   console.log('  --version, -v          Show version')
   console.log('  --update               Update evot to latest version')
   console.log('  --help, -h             Show this help')
@@ -129,7 +129,11 @@ export function applyCliOpts(agent: Agent, opts: CliOptions): void {
   agent.setLimits(opts.maxTurns, opts.maxTokens, opts.maxDuration)
   if (opts.appendSystemPrompt) agent.appendSystemPrompt(opts.appendSystemPrompt)
   if (opts.skillsDirs.length > 0) agent.addSkillsDirs(opts.skillsDirs)
-  if (opts.skillNames.length > 0) agent.setSkillNames(opts.skillNames)
+  // One-shot runs expose only explicitly selected skills; an empty selection
+  // omits the skill index entirely.
+  if (opts.command === 'prompt') {
+    agent.setSkillNames(opts.skillNames)
+  }
 }
 
 export async function createAgent(opts: CliOptions): Promise<Agent> {

@@ -10,8 +10,6 @@ mod guard;
 mod host_tool;
 #[path = "tools/naming.rs"]
 mod naming;
-#[path = "tools/skill.rs"]
-mod skill;
 #[path = "tools/spill.rs"]
 mod spill;
 #[path = "tools/tool_sets.rs"]

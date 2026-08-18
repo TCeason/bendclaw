@@ -52,11 +52,81 @@ fn parse_bare_or_invalid_clip_is_usage_error() {
 }
 
 #[test]
-fn clip_session_prompt_mentions_skill() {
+fn clip_session_prompt_pre_activates_memory_workflow() {
     use evot::gateway::command::clip_session_prompt;
-    let prompt = clip_session_prompt();
-    assert!(prompt.contains("memory"));
-    assert!(prompt.contains("archive"));
+    let prompt = clip_session_prompt("MEMORY WORKFLOW SENTINEL");
+    assert!(prompt.contains("already loaded"));
+    assert!(prompt.contains("MEMORY WORKFLOW SENTINEL"));
+    assert!(!prompt.contains("skill tool"));
+    assert!(!prompt.starts_with("Activate the `memory` skill"));
+}
+
+#[tokio::test]
+async fn clip_all_persists_pre_activated_memory_workflow() -> Result<(), Box<dyn std::error::Error>>
+{
+    use std::sync::Arc;
+
+    use evot::agent::Agent;
+    use evot::agent::QueryRequest;
+    use evot::agent::SubmitOutcome;
+    use evot::conf::Config;
+    use evot::conf::Protocol;
+    use evot::conf::ProviderProfile;
+    use evot::storage::MemoryStorage;
+    use evot::types::TranscriptItem;
+    use evot_engine::provider::MockProvider;
+
+    let tmp = tempfile::TempDir::new()?;
+    let mut config = Config::new(tmp.path().to_path_buf());
+    config.providers.insert("test".into(), ProviderProfile {
+        protocol: Protocol::OpenAi,
+        api_key: "test-key".into(),
+        base_url: "http://localhost".into(),
+        models: vec!["test-model".into()],
+        compat_caps: Default::default(),
+        route_capabilities: Default::default(),
+        thinking_level: None,
+        context_window: None,
+        max_tokens: None,
+        supports_image: None,
+    });
+    config.llm.provider = "test".into();
+
+    let agent = Agent::new_with_provider_for_test(
+        &config,
+        tmp.path().to_string_lossy(),
+        Arc::new(MemoryStorage::new()),
+        MockProvider::text("Archived."),
+    )?;
+    let meta = agent.create_session("test").await?;
+    let session = agent
+        .load_session(&meta.session_id)
+        .await?
+        .ok_or_else(|| std::io::Error::other("missing session"))?;
+    let outcome = agent
+        .submit_to_session(QueryRequest::text("/clip all"), session)
+        .await?;
+    let mut run = match outcome {
+        SubmitOutcome::Run(run) => run,
+        SubmitOutcome::Command(message) => {
+            return Err(std::io::Error::other(format!("unexpected command: {message}")).into());
+        }
+    };
+    while run.next().await.is_some() {}
+
+    let transcript = agent.load_transcript(&meta.session_id).await?;
+    let prompt = transcript
+        .iter()
+        .find_map(|item| match item {
+            TranscriptItem::User { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .ok_or_else(|| std::io::Error::other("missing rewritten user prompt"))?;
+    assert!(prompt.contains("already loaded"));
+    assert!(prompt.contains("# Memory"));
+    assert!(prompt.contains("Archive — `/clip all`"));
+    assert!(!prompt.starts_with("Activate the `memory` skill"));
+    Ok(())
 }
 
 #[test]

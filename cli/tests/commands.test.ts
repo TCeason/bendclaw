@@ -181,15 +181,17 @@ describe('skillListFromDirs', () => {
 })
 
 describe('resolveSkillsDirs', () => {
+  const builtinDir = join(homedir(), '.evotai', 'builtin-skills')
   const evotaiDir = join(homedir(), '.evotai', 'skills')
   const claudeDir = join(homedir(), '.claude', 'skills')
 
-  test('defaults to global + claude dirs when EVOT_SKILLS_DIRS is unset', () => {
-    expect(resolveSkillsDirs({})).toEqual([evotaiDir, claudeDir])
+  test('defaults to builtin + global + claude dirs when EVOT_SKILLS_DIRS is unset', () => {
+    expect(resolveSkillsDirs({})).toEqual([builtinDir, evotaiDir, claudeDir])
   })
 
   test('inserts EVOT_SKILLS_DIRS entries between global and claude, in order', () => {
     expect(resolveSkillsDirs({ EVOT_SKILLS_DIRS: '/abs/one:/abs/two' })).toEqual([
+      builtinDir,
       evotaiDir,
       '/abs/one',
       '/abs/two',
@@ -199,6 +201,7 @@ describe('resolveSkillsDirs', () => {
 
   test('expands a leading ~ in EVOT_SKILLS_DIRS entries', () => {
     expect(resolveSkillsDirs({ EVOT_SKILLS_DIRS: '~/work/skills' })).toEqual([
+      builtinDir,
       evotaiDir,
       join(homedir(), 'work', 'skills'),
       claudeDir,
@@ -207,6 +210,7 @@ describe('resolveSkillsDirs', () => {
 
   test('trims whitespace and skips empty segments', () => {
     expect(resolveSkillsDirs({ EVOT_SKILLS_DIRS: ' /a : : /b ' })).toEqual([
+      builtinDir,
       evotaiDir,
       '/a',
       '/b',
@@ -216,7 +220,11 @@ describe('resolveSkillsDirs', () => {
 
   test('de-duplicates while preserving order', () => {
     // Repeating the global dir must not produce a duplicate entry.
-    expect(resolveSkillsDirs({ EVOT_SKILLS_DIRS: evotaiDir })).toEqual([evotaiDir, claudeDir])
+    expect(resolveSkillsDirs({ EVOT_SKILLS_DIRS: evotaiDir })).toEqual([
+      builtinDir,
+      evotaiDir,
+      claudeDir,
+    ])
   })
 })
 

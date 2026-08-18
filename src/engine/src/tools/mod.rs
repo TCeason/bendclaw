@@ -4,7 +4,6 @@ pub mod file;
 pub mod guard;
 pub mod naming;
 pub mod sandbox;
-pub mod skill;
 pub mod validation;
 pub mod web_fetch;
 
@@ -18,8 +17,4 @@ pub use file::WriteFileTool;
 pub use file::FILE_UNCHANGED_STUB;
 pub use guard::PathGuard;
 pub use naming::resolve_tool_refs;
-pub use skill::truncate_str;
-pub use skill::SkillSet;
-pub use skill::SkillSpec;
-pub use skill::SkillTool;
 pub use web_fetch::WebFetchTool;

@@ -390,8 +390,8 @@ export class Agent {
   }
 
   /**
-   * The fully-resolved, ordered skills directories the agent scans (global
-   * ~/.evotai/skills + config/env-file EVOT_SKILLS_DIRS + ~/.claude/skills).
+   * The fully-resolved, ordered skills directories the agent scans (managed
+   * builtins + global + EVOT_SKILLS_DIRS from config/env-file + claude).
    * Read this instead of re-deriving from process.env so `/skill list` and the
    * banner match what the agent actually loads (see issue #38).
    */

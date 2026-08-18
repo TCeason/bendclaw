@@ -28,12 +28,15 @@ pub enum Command {
     UsageError(String),
 }
 
-/// Build the prompt `/clip all` expands into.
-pub fn clip_session_prompt() -> String {
-    "Activate the `memory` skill and archive the durable knowledge from \
-     this conversation into the memory vault, following the skill's \
-     archive workflow."
-        .to_string()
+/// Build the prompt `/clip all` expands into. The command injects the memory
+/// workflow instead of asking the model to discover it from the skill index.
+pub fn clip_session_prompt(memory_instructions: &str) -> String {
+    format!(
+        "The `memory` skill is already loaded for this command. Archive the durable knowledge \
+         from this conversation into the memory vault now. Do not claim that the memory skill \
+         is unavailable. Follow the skill instructions below.\n\n\
+         ---\n{memory_instructions}"
+    )
 }
 
 pub fn parse_command(text: &str) -> Option<Command> {

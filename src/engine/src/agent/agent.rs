@@ -209,26 +209,6 @@ impl Agent {
         self
     }
 
-    /// Register the skill tool so the LLM can activate skills by name.
-    ///
-    /// **Does not** modify `self.system_prompt`. Skill availability is conveyed
-    /// through the SkillTool's own description, not the system prompt. This keeps
-    /// the engine honest: the system prompt it sends is exactly what the caller
-    /// built, which is what `/_dump`-style tooling relies on.
-    ///
-    /// **Must be called after `with_tools()`** — `with_tools()` replaces the
-    /// tool list, so calling it afterwards would remove the SkillTool.
-    pub fn with_skills(mut self, skills: crate::tools::skill::SkillSet) -> Self {
-        if skills.is_empty() {
-            return self;
-        }
-        self.tools
-            .push(Box::new(crate::tools::skill::SkillTool::new(
-                std::sync::Arc::new(skills),
-            )));
-        self
-    }
-
     /// Set or clear execution limits. `None` runs the loop with no turn, token,
     /// or duration ceiling — it stops only on error, abort, or when there is no
     /// more work (interactive parity with pi).

@@ -5,8 +5,6 @@
 //! human-readable JSON that can be diffed across builder changes or fed into a
 //! standalone replay harness for prompt A/B testing.
 
-use std::collections::BTreeMap;
-
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -26,10 +24,6 @@ pub struct PromptDump {
     pub system_prompt: SystemPromptDump,
     /// Tool definitions evot would attach to the request.
     pub tools: Vec<ToolDump>,
-    /// Skill instructions kept out of the initial prompt (loaded on demand
-    /// via the `skill` tool). Keyed by skill name. Stored verbatim so a
-    /// replay harness can reconstruct the same tool_result content.
-    pub skill_instructions: BTreeMap<String, SkillInstructionDump>,
     /// Token totals for quick comparison.
     pub totals: TokenTotals,
 }
@@ -58,16 +52,8 @@ pub struct ToolDump {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillInstructionDump {
-    pub description: String,
-    pub instructions: String,
-    pub tokens: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenTotals {
     pub system_prompt_tokens: usize,
     pub tool_definition_tokens: usize,
-    pub skill_instructions_tokens: usize,
     pub grand_total: usize,
 }

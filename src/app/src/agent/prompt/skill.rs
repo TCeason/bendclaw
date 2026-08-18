@@ -3,7 +3,6 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
-use evot_engine::SkillSpec;
 use serde::Deserialize;
 
 // ---------------------------------------------------------------------------
@@ -38,23 +37,16 @@ const BUILTINS: &[BuiltinDef] = &[
     },
 ];
 
-/// Parse builtin skill definitions into `SkillSpec` values.
-/// Returns specs with an empty `base_dir` (no filesystem path).
-fn builtin_specs() -> Result<Vec<SkillSpec>, SkillLoadError> {
-    BUILTINS
-        .iter()
-        .map(|def| {
-            let path = PathBuf::from(format!("<builtin:{}>", def.name));
-            let description = parse_frontmatter(def.content, &path)?;
-            let instructions = strip_frontmatter(def.content).to_string();
-            Ok(SkillSpec {
-                name: def.name.to_string(),
-                description,
-                instructions,
-                base_dir: PathBuf::new(),
-            })
-        })
-        .collect()
+// ---------------------------------------------------------------------------
+// SkillSpec
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct SkillSpec {
+    pub name: String,
+    pub description: String,
+    pub file_path: PathBuf,
+    pub base_dir: PathBuf,
 }
 
 // ---------------------------------------------------------------------------
@@ -72,6 +64,8 @@ pub enum SkillLoadError {
     MissingField { path: PathBuf, field: &'static str },
     #[error("SKILL.md in {path} has invalid frontmatter: {detail}")]
     InvalidFrontmatter { path: PathBuf, detail: String },
+    #[error("cannot resolve builtin skills directory: {0}")]
+    BuiltinDir(String),
     #[error("unknown skill '{name}'. Available: {available}")]
     UnknownSkill { name: String, available: String },
 }
@@ -81,24 +75,31 @@ pub enum SkillLoadError {
 // ---------------------------------------------------------------------------
 
 pub fn load_skills(dirs: &[impl AsRef<Path>]) -> Result<Vec<SkillSpec>, SkillLoadError> {
-    let mut by_name: HashMap<String, SkillSpec> = builtin_specs()?
-        .into_iter()
-        .map(|s| (s.name.clone(), s))
-        .collect();
-
+    let builtin_dir = ensure_builtin_skills_dir()?;
+    let mut all_dirs = vec![builtin_dir];
     for dir in dirs {
-        let dir = dir.as_ref();
+        let dir = dir.as_ref().to_path_buf();
+        if !all_dirs.contains(&dir) {
+            all_dirs.push(dir);
+        }
+    }
+
+    let mut by_name: HashMap<String, SkillSpec> = HashMap::new();
+    for dir in &all_dirs {
         if !dir.exists() {
             continue;
         }
-        match load_skills_from_dir(dir) {
-            Ok(specs) => {
+        match load_skills_from_dir_lenient(dir) {
+            Ok((specs, errors)) => {
                 for spec in specs {
                     by_name.insert(spec.name.clone(), spec);
                 }
+                for error in errors {
+                    tracing::warn!("failed to load skill from {}: {error}", dir.display());
+                }
             }
-            Err(e) => {
-                tracing::warn!("failed to load skills from {}: {e}", dir.display());
+            Err(error) => {
+                tracing::warn!("failed to scan skills directory {}: {error}", dir.display());
             }
         }
     }
@@ -138,6 +139,24 @@ pub fn load_skills_by_name(
     Ok(selected)
 }
 
+/// Load one named skill using the same builtin/filesystem precedence as the
+/// runtime. This is used by gateway commands that pre-activate a workflow.
+pub fn load_skill(dirs: &[impl AsRef<Path>], name: &str) -> Result<SkillSpec, SkillLoadError> {
+    let mut selected = load_skills_by_name(dirs, &[name.to_string()])?;
+    selected.pop().ok_or_else(|| SkillLoadError::UnknownSkill {
+        name: name.to_string(),
+        available: String::new(),
+    })
+}
+
+pub fn load_skill_instructions(skill: &SkillSpec) -> Result<String, SkillLoadError> {
+    let content = fs::read_to_string(&skill.file_path).map_err(|source| SkillLoadError::Io {
+        path: skill.file_path.clone(),
+        source,
+    })?;
+    Ok(strip_frontmatter(&content).to_string())
+}
+
 /// Load skills from filesystem directories only (no builtins).
 pub fn load_fs_skills(dirs: &[impl AsRef<Path>]) -> Result<Vec<SkillSpec>, SkillLoadError> {
     let mut by_name: HashMap<String, SkillSpec> = HashMap::new();
@@ -158,8 +177,95 @@ pub fn load_fs_skills(dirs: &[impl AsRef<Path>]) -> Result<Vec<SkillSpec>, Skill
     Ok(specs)
 }
 
+/// XML skill index for the system prompt. Empty when there are no skills.
+pub fn format_skills_for_prompt(skills: &[SkillSpec]) -> String {
+    if skills.is_empty() {
+        return String::new();
+    }
+
+    let mut lines = vec![
+        "The following skills provide specialized instructions for specific tasks.".to_string(),
+        "Use the read tool to load a skill's file when the task matches its description.".to_string(),
+        "When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.".to_string(),
+        String::new(),
+        "<available_skills>".to_string(),
+    ];
+    for skill in skills {
+        lines.push("  <skill>".into());
+        lines.push(format!("    <name>{}</name>", escape_xml(&skill.name)));
+        lines.push(format!(
+            "    <description>{}</description>",
+            escape_xml(&skill.description)
+        ));
+        lines.push(format!(
+            "    <location>{}</location>",
+            escape_xml(&skill.file_path.display().to_string())
+        ));
+        lines.push("  </skill>".into());
+    }
+    lines.push("</available_skills>".into());
+    lines.join("\n")
+}
+
+pub fn ensure_builtin_skills_dir() -> Result<PathBuf, SkillLoadError> {
+    let root = builtin_skills_dir()?;
+    fs::create_dir_all(&root).map_err(|source| SkillLoadError::Io {
+        path: root.clone(),
+        source,
+    })?;
+
+    for def in BUILTINS {
+        let skill_dir = root.join(def.name);
+        fs::create_dir_all(&skill_dir).map_err(|source| SkillLoadError::Io {
+            path: skill_dir.clone(),
+            source,
+        })?;
+        let file_path = skill_dir.join("SKILL.md");
+        write_if_changed(&file_path, def.content)?;
+        parse_frontmatter(def.content, &file_path)?;
+    }
+    Ok(root)
+}
+
+fn builtin_skills_dir() -> Result<PathBuf, SkillLoadError> {
+    crate::conf::paths::state_root_dir()
+        .map(|root| root.join("builtin-skills"))
+        .map_err(|error| SkillLoadError::BuiltinDir(error.to_string()))
+}
+
+fn write_if_changed(path: &Path, content: &str) -> Result<(), SkillLoadError> {
+    if fs::read_to_string(path).is_ok_and(|current| current == content) {
+        return Ok(());
+    }
+
+    let temp_path = path.with_extension(format!(
+        "tmp-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    fs::write(&temp_path, content).map_err(|source| SkillLoadError::Io {
+        path: temp_path.clone(),
+        source,
+    })?;
+    fs::rename(&temp_path, path).map_err(|source| SkillLoadError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
 fn load_skills_from_dir(dir: &Path) -> Result<Vec<SkillSpec>, SkillLoadError> {
+    let (specs, errors) = load_skills_from_dir_lenient(dir)?;
+    match errors.into_iter().next() {
+        Some(error) => Err(error),
+        None => Ok(specs),
+    }
+}
+
+fn load_skills_from_dir_lenient(
+    dir: &Path,
+) -> Result<(Vec<SkillSpec>, Vec<SkillLoadError>), SkillLoadError> {
     let mut specs = Vec::new();
+    let mut errors = Vec::new();
 
     let entries = fs::read_dir(dir).map_err(|e| SkillLoadError::Io {
         path: dir.to_path_buf(),
@@ -167,10 +273,16 @@ fn load_skills_from_dir(dir: &Path) -> Result<Vec<SkillSpec>, SkillLoadError> {
     })?;
 
     for entry in entries {
-        let entry = entry.map_err(|e| SkillLoadError::Io {
-            path: dir.to_path_buf(),
-            source: e,
-        })?;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(source) => {
+                errors.push(SkillLoadError::Io {
+                    path: dir.to_path_buf(),
+                    source,
+                });
+                continue;
+            }
+        };
         let path = entry.path();
         if !path.is_dir() {
             continue;
@@ -181,12 +293,24 @@ fn load_skills_from_dir(dir: &Path) -> Result<Vec<SkillSpec>, SkillLoadError> {
             continue;
         }
 
-        let content = fs::read_to_string(&skill_md).map_err(|e| SkillLoadError::Io {
-            path: skill_md.clone(),
-            source: e,
-        })?;
+        let content = match fs::read_to_string(&skill_md) {
+            Ok(content) => content,
+            Err(source) => {
+                errors.push(SkillLoadError::Io {
+                    path: skill_md,
+                    source,
+                });
+                continue;
+            }
+        };
 
-        let description = parse_frontmatter(&content, &skill_md)?;
+        let description = match parse_frontmatter(&content, &skill_md) {
+            Ok(description) => description,
+            Err(error) => {
+                errors.push(error);
+                continue;
+            }
+        };
 
         let name = path
             .file_name()
@@ -195,18 +319,18 @@ fn load_skills_from_dir(dir: &Path) -> Result<Vec<SkillSpec>, SkillLoadError> {
             .to_string();
 
         let base_dir = fs::canonicalize(&path).unwrap_or(path);
-        let instructions = strip_frontmatter(&content).to_string();
+        let file_path = fs::canonicalize(&skill_md).unwrap_or(skill_md);
 
         specs.push(SkillSpec {
             name,
             description,
-            instructions,
+            file_path,
             base_dir,
         });
     }
 
     specs.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(specs)
+    Ok((specs, errors))
 }
 
 #[derive(Deserialize)]
@@ -260,4 +384,13 @@ fn strip_frontmatter(content: &str) -> &str {
     split_frontmatter(content)
         .map(|(_, body)| body)
         .unwrap_or(content)
+}
+
+fn escape_xml(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }

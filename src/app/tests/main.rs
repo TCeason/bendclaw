@@ -48,6 +48,8 @@ mod session_test;
 mod settings_test;
 #[path = "skill_loader_test.rs"]
 mod skill_loader_test;
+#[path = "skill_prompt_test.rs"]
+mod skill_prompt_test;
 #[path = "storage_memory_test.rs"]
 mod storage_memory_test;
 #[path = "storage_test.rs"]

@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { parseArgs } from '../src/cli.js'
+import { parseArgs, applyCliOpts } from '../src/cli.js'
 
 describe('parseArgs', () => {
   test('-f / --file collects files', async () => {
@@ -34,6 +34,31 @@ describe('parseArgs', () => {
   test('--skill selects skills by name', async () => {
     const opts = await parseArgs(['-p', 'hello', '--skill', 'review', '--skill', 'custom'])
     expect(opts.skillNames).toEqual(['review', 'custom'])
+  })
+
+  test('one-shot skill filtering does not affect interactive TUI', async () => {
+    const selected: string[][] = []
+    const addedDirs: string[][] = []
+    const agent = {
+      setLimits() {},
+      appendSystemPrompt() {},
+      addSkillsDirs(dirs: string[]) { addedDirs.push(dirs) },
+      setSkillNames(names: string[]) { selected.push(names) },
+    }
+
+    const replOpts = await parseArgs(['--skill', 'review', '--skills', '/repl/skills'])
+    applyCliOpts(agent as any, replOpts)
+    expect(selected).toEqual([])
+    expect(addedDirs).toEqual([['/repl/skills']])
+
+    const promptOpts = await parseArgs(['-p', 'hello', '--skill', 'review', '--skills', '/prompt/skills'])
+    applyCliOpts(agent as any, promptOpts)
+    expect(selected).toEqual([['review']])
+    expect(addedDirs).toEqual([['/repl/skills'], ['/prompt/skills']])
+
+    const noSkillPrompt = await parseArgs(['-p', 'hello'])
+    applyCliOpts(agent as any, noSkillPrompt)
+    expect(selected).toEqual([['review'], []])
   })
 
   test('-p -f -r together', async () => {

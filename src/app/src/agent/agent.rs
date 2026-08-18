@@ -15,9 +15,11 @@ use super::tools::HostTools;
 use super::tools::ToolMode;
 use super::variables::Variables;
 use crate::agent::prompt::dynamic_sections;
+use crate::agent::prompt::format_skills_for_prompt;
 use crate::agent::prompt::DynamicContext;
 use crate::agent::prompt::PromptMode;
 use crate::agent::prompt::Section;
+use crate::agent::prompt::SkillSpec;
 use crate::conf::Config;
 use crate::conf::LlmConfig;
 use crate::conf::Protocol;
@@ -31,7 +33,6 @@ use crate::types::ListTranscriptEntries;
 use crate::types::PromptDump;
 use crate::types::SectionDump;
 use crate::types::SessionMeta;
-use crate::types::SkillInstructionDump;
 use crate::types::SystemPromptDump;
 use crate::types::TokenTotals;
 use crate::types::ToolDump;
@@ -71,7 +72,6 @@ pub struct QueryRequest {
     /// Host-owned tools (ask_user, …) to attach to this run. `None` when the
     /// caller has no host bridge (e.g. gateway/headless callers).
     pub host_tools: Option<HostTools>,
-    pub skill_names: Option<Vec<String>>,
 }
 
 impl QueryRequest {
@@ -84,7 +84,6 @@ impl QueryRequest {
             mode: ToolMode::Headless,
             source: String::new(),
             host_tools: None,
-            skill_names: None,
         }
     }
 
@@ -95,7 +94,6 @@ impl QueryRequest {
             mode: ToolMode::Headless,
             source: String::new(),
             host_tools: None,
-            skill_names: None,
         }
     }
 
@@ -124,26 +122,31 @@ impl QueryRequest {
         self.source = source.into();
         self
     }
-
-    pub fn skill_names(mut self, names: Vec<String>) -> Self {
-        self.skill_names = Some(names);
-        self
-    }
 }
 
-/// Expand `/clip all` into a normal memory-skill prompt. Non-command input
-/// passes through unchanged.
-fn expand_prompt_command(mut request: QueryRequest) -> QueryRequest {
+/// Expand `/clip all` into a prompt with the memory workflow loaded.
+/// Non-command input passes through unchanged.
+fn expand_prompt_command(
+    mut request: QueryRequest,
+    skills_dirs: &[PathBuf],
+) -> Result<QueryRequest> {
     use crate::gateway::command::clip_session_prompt;
     use crate::gateway::command::parse_command;
     use crate::gateway::command::Command;
 
-    let text = match parse_command(&request.input_text()) {
-        Some(Command::ClipSession) => clip_session_prompt(),
-        _ => return request,
-    };
+    if !matches!(
+        parse_command(&request.input_text()),
+        Some(Command::ClipSession)
+    ) {
+        return Ok(request);
+    }
+    let memory = crate::agent::prompt::skill::load_skill(skills_dirs, "memory")
+        .map_err(|error| EvotError::Agent(format!("cannot load memory skill: {error}")))?;
+    let instructions = crate::agent::prompt::skill::load_skill_instructions(&memory)
+        .map_err(|error| EvotError::Agent(format!("cannot read memory skill: {error}")))?;
+    let text = clip_session_prompt(&instructions);
     request.input = vec![evot_engine::Content::Text { text }];
-    request
+    Ok(request)
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +319,18 @@ impl Agent {
         self.with_claude_skills_dirs()
     }
 
+    pub fn add_skills_dirs(self: &Arc<Self>, dirs: Vec<PathBuf>) -> Arc<Self> {
+        {
+            let mut current = self.skills_dirs.write();
+            for dir in dirs {
+                if !current.contains(&dir) {
+                    current.push(dir);
+                }
+            }
+        }
+        self.with_claude_skills_dirs()
+    }
+
     pub fn set_skill_names(&self, names: Vec<String>) -> Result<()> {
         crate::agent::prompt::skill::load_skills_by_name(&self.skills_dirs(), &names)
             .map_err(|error| EvotError::Agent(error.to_string()))?;
@@ -356,10 +371,10 @@ impl Agent {
     }
 
     /// The fully-resolved, ordered list of skills directories the agent scans:
-    /// global `~/.evotai/skills`, then config dirs (TOML / env-file /
-    /// process-env EVOT_SKILLS_DIRS), then `~/.claude/skills`. This is the
-    /// single source of truth the CLI display layer should read so `/skill
-    /// list` and the banner never drift from what the agent actually loads.
+    /// managed builtins, global `~/.evotai/skills`, config dirs, then
+    /// `~/.claude/skills`. This is the single source of truth the CLI display
+    /// layer should read so `/skill list` and the banner never drift from what
+    /// the agent actually loads.
     pub fn skills_dirs(&self) -> Vec<PathBuf> {
         self.skills_dirs.read().clone()
     }
@@ -649,8 +664,9 @@ impl Agent {
         if let Some(outcome) = self.maybe_handle_command(&request, &session).await? {
             return Ok(outcome);
         }
-        // `/clip all` rewrites the input and continues as a normal run.
-        let request = expand_prompt_command(request);
+        // `/clip all` loads the memory workflow and continues as a normal run.
+        let skills_dirs = self.skills_dirs.read().clone();
+        let request = expand_prompt_command(request, &skills_dirs)?;
 
         let run = self.start_run(request, session).await?;
         Ok(SubmitOutcome::Run(run))
@@ -862,7 +878,6 @@ impl Agent {
             mode: request.mode,
             session_id: session_id.clone(),
             host_tools: request.host_tools.clone(),
-            skill_names: request.skill_names.clone(),
         });
 
         let run = runtime::execute_run(runtime::ExecuteRunArgs {
@@ -1106,7 +1121,7 @@ impl Agent {
     }
 
     /// Build a structured snapshot of what evot would send to the LLM right
-    /// now (system prompt + tool definitions + skill instructions). Persists
+    /// now (system prompt + tool definitions). Persists
     /// to JSON and returns a human-readable status string.
     async fn handle_dump_command(
         self: &Arc<Self>,
@@ -1115,18 +1130,9 @@ impl Agent {
         target: Option<&str>,
     ) -> Result<String> {
         let session_id = session.session_id().await;
-        // build_turn runs the full per-turn assembly (tools, skills_dirs,
-        // memory tool). Reuse it so the dump matches reality. The dump path has
-        // no host bridge, so host tools are omitted — it reflects built-ins.
+        // build_turn runs the full per-turn assembly (tools, skills).
         let turn = self
-            .build_turn(
-                mode,
-                Arc::clone(session),
-                &session_id,
-                Vec::new(),
-                None,
-                None,
-            )
+            .build_turn(mode, Arc::clone(session), &session_id, Vec::new(), None)
             .await?;
 
         let dump = build_prompt_dump(self, mode, &turn);
@@ -1147,14 +1153,12 @@ impl Agent {
         })?;
 
         Ok(format!(
-            "Prompt dump saved to {}\n  system_prompt: {} tokens ({} sections)\n  tools: {} entries, {} tokens\n  skills: {} entries, {} tokens\n  total: {} tokens",
+            "Prompt dump saved to {}\n  system_prompt: {} tokens ({} sections)\n  tools: {} entries, {} tokens\n  total: {} tokens",
             path.display(),
             dump.totals.system_prompt_tokens,
             dump.system_prompt.sections.len(),
             dump.tools.len(),
             dump.totals.tool_definition_tokens,
-            dump.skill_instructions.len(),
-            dump.totals.skill_instructions_tokens,
             dump.totals.grand_total,
         ))
     }
@@ -1230,7 +1234,6 @@ impl Agent {
         session_id: &str,
         input: Vec<evot_engine::Content>,
         host_tools: Option<HostTools>,
-        skill_names: Option<Vec<String>>,
     ) -> Result<runtime::TurnInput> {
         let llm = self.llm.read().clone();
         if llm.provider.is_empty() {
@@ -1249,7 +1252,6 @@ impl Agent {
                 llm.provider.to_uppercase().replace('-', "_"),
             )));
         }
-        let (system_prompt, sections) = self.build_system_prompt(mode);
         let envs = self
             .variables()
             .map(|v| v.all_env_pairs())
@@ -1258,12 +1260,17 @@ impl Agent {
         // directories plus the memory vault used by the builtin memory skill.
         let cwd_path = std::path::Path::new(&self.cwd);
         let skill_dirs = self.skills_dirs.read().clone();
+        let selected_skill_names = self.skill_names.read().clone();
+        let skills = load_turn_skills(&skill_dirs, selected_skill_names.as_deref())?;
         let mut system_dirs = skill_dirs.clone();
         if let Ok(memory_dir) = crate::conf::paths::memory_dir() {
             if let Err(e) = std::fs::create_dir_all(&memory_dir) {
                 tracing::warn!("cannot create memory dir {}: {e}", memory_dir.display());
             }
             system_dirs.push(memory_dir);
+        }
+        for skill in &skills {
+            system_dirs.push(skill.base_dir.clone());
         }
         let sandbox_rt = self.sandbox.build_runtime(cwd_path, &system_dirs)?;
 
@@ -1275,11 +1282,19 @@ impl Agent {
             host_tools,
         );
 
-        // Skill availability is surfaced via the Skill tool's own description,
-        // not injected into the system prompt. This keeps the prompt the engine
-        // sends exactly what the caller built (aligned with the pi harness).
-
-        // No longer need turn tracking — engine handles it.
+        let (mut system_prompt, mut sections) = self.build_system_prompt(mode);
+        if let Some(section) = skills_prompt_section(&skills) {
+            let insert_at = sections
+                .iter()
+                .position(|section| matches!(section.name, "environment" | "dynamic_boundary"))
+                .unwrap_or(sections.len());
+            sections.insert(insert_at, section);
+            system_prompt = sections
+                .iter()
+                .map(|section| section.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+        }
 
         let (prior_messages, compaction_state, transcript_seq) = session.context_snapshot().await;
         let prior_messages = evot_engine::sanitize_tool_pairs(prior_messages);
@@ -1298,8 +1313,6 @@ impl Agent {
                 } else {
                     Some(self.limits.read().clone())
                 },
-                skills_dirs: skill_dirs,
-                skill_names: skill_names.or_else(|| self.skill_names.read().clone()),
                 tools,
                 thinking_level: llm.thinking_level,
                 cwd: cwd_path.to_path_buf(),
@@ -1330,7 +1343,6 @@ struct AgentTurnFactory {
     mode: ToolMode,
     session_id: String,
     host_tools: Option<HostTools>,
-    skill_names: Option<Vec<String>>,
 }
 
 #[async_trait::async_trait]
@@ -1343,7 +1355,6 @@ impl TurnFactory for AgentTurnFactory {
                 &self.session_id,
                 input,
                 self.host_tools.clone(),
-                self.skill_names.clone(),
             )
             .await
     }
@@ -1499,6 +1510,26 @@ fn resume_transcript_items(entries: Vec<TranscriptEntry>) -> Vec<TranscriptItem>
     items
 }
 
+fn load_turn_skills(dirs: &[PathBuf], names: Option<&[String]>) -> Result<Vec<SkillSpec>> {
+    match names {
+        Some(names) => crate::agent::prompt::skill::load_skills_by_name(dirs, names),
+        None => crate::agent::prompt::skill::load_skills(dirs),
+    }
+    .map_err(|error| EvotError::Agent(format!("failed to load skills: {error}")))
+}
+
+fn skills_prompt_section(skills: &[SkillSpec]) -> Option<Section> {
+    let text = format_skills_for_prompt(skills);
+    if text.is_empty() {
+        None
+    } else {
+        Some(Section {
+            name: "skills",
+            text,
+        })
+    }
+}
+
 fn prompt_mode(mode: ToolMode) -> PromptMode {
     match mode {
         ToolMode::Interactive => PromptMode::Interactive,
@@ -1557,34 +1588,6 @@ fn build_prompt_dump(_agent: &Agent, mode: ToolMode, turn: &runtime::TurnInput) 
     tool_dumps.sort_by(|a, b| a.name.cmp(&b.name));
     let tool_tokens: usize = tool_dumps.iter().map(|t| t.tokens).sum();
 
-    // Skill instructions — loaded the same way the runtime would.
-    let mut skill_instructions = std::collections::BTreeMap::new();
-    if !opts.skills_dirs.is_empty() {
-        let skills = match &opts.skill_names {
-            Some(names) => {
-                crate::agent::prompt::skill::load_skills_by_name(&opts.skills_dirs, names)
-            }
-            None => crate::agent::prompt::skill::load_skills(&opts.skills_dirs),
-        };
-        match skills {
-            Ok(specs) => {
-                for spec in specs {
-                    let combined =
-                        format!("{}\n{}\n{}", spec.name, spec.description, spec.instructions);
-                    skill_instructions.insert(spec.name.clone(), SkillInstructionDump {
-                        description: spec.description,
-                        instructions: spec.instructions,
-                        tokens: rough_tokens(&combined),
-                    });
-                }
-            }
-            Err(err) => {
-                tracing::warn!("dump: failed to load skills: {err}");
-            }
-        }
-    }
-    let skill_tokens: usize = skill_instructions.values().map(|s| s.tokens).sum();
-
     PromptDump {
         evot_version: env!("CARGO_PKG_VERSION").to_string(),
         cwd: opts.cwd.display().to_string(),
@@ -1593,12 +1596,10 @@ fn build_prompt_dump(_agent: &Agent, mode: ToolMode, turn: &runtime::TurnInput) 
         thinking_level: opts.thinking_level.as_str().into(),
         system_prompt,
         tools: tool_dumps,
-        skill_instructions,
         totals: TokenTotals {
             system_prompt_tokens: system_tokens,
             tool_definition_tokens: tool_tokens,
-            skill_instructions_tokens: skill_tokens,
-            grand_total: system_tokens + tool_tokens + skill_tokens,
+            grand_total: system_tokens + tool_tokens,
         },
     }
 }

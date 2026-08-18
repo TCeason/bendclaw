@@ -121,12 +121,6 @@ impl NapiAgent {
             None
         };
 
-        let skill_names = if tool_mode.as_deref() == Some("headless-no-skills") {
-            Some(Vec::new())
-        } else {
-            None
-        };
-
         let request = if let Some(json) = content_json {
             let input = parse_content_blocks(&json).map_err(Error::from_reason)?;
 
@@ -145,12 +139,6 @@ impl NapiAgent {
                 .mode(mode)
                 .host_tools(host_tools)
                 .source("repl")
-        };
-
-        let request = if let Some(names) = skill_names {
-            request.skill_names(names)
-        } else {
-            request
         };
 
         let outcome = self
@@ -481,7 +469,7 @@ impl NapiAgent {
     #[napi]
     pub fn add_skills_dirs(&self, dirs: Vec<String>) {
         let paths: Vec<PathBuf> = dirs.into_iter().map(PathBuf::from).collect();
-        self.agent.with_skills_dirs(paths);
+        self.agent.add_skills_dirs(paths);
     }
 
     #[napi]
@@ -491,8 +479,8 @@ impl NapiAgent {
             .map_err(|error| Error::from_reason(error.to_string()))
     }
 
-    /// The fully-resolved, ordered skills directories the agent scans (global
-    /// ~/.evotai/skills + config/env-file EVOT_SKILLS_DIRS + ~/.claude/skills).
+    /// The fully-resolved, ordered skills directories the agent scans (managed
+    /// builtins + global + config/env-file EVOT_SKILLS_DIRS + claude).
     /// The CLI reads this so `/skill list` and the banner match what the agent
     /// actually loads, instead of re-deriving from process.env alone.
     #[napi]
