@@ -88,10 +88,12 @@ pub enum AgentEvent {
     Error {
         error: AgentErrorInfo,
     },
-    /// A provider quota window is exhausted. The same request will be retried
-    /// after `delay_ms`; this event is transient UI state and is not persisted.
+    /// A provider quota/reset window is exhausted. The same idempotent request
+    /// will be retried after `delay_ms`; this event is transient UI state and
+    /// is not persisted. `error` carries the provider-safe reason for display.
     QuotaWait {
         delay_ms: u64,
+        error: String,
     },
     /// The bounded retry budget is exhausted but the provider keeps failing
     /// with retryable errors — a sustained upstream/gateway outage. The same

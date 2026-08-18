@@ -1,3 +1,4 @@
+import { formatLongWaitError } from '../../render/verbose.js'
 import { buildError, buildVerboseEvent, buildEventCard, isVisibleEvent, type OutputLine } from '../../render/output.js'
 import { formatDuration } from '../../render/format.js'
 import { recordStreamDelta, resetStreamStats, setLongWait, setSpinnerPhase, type SpinnerState } from '../spinner.js'
@@ -11,6 +12,9 @@ export interface StreamMachineState {
   appState: AppState
   spinnerState: SpinnerState
   activeLlmCall: boolean
+  /** Whether this logical LLM call already committed a quota-wait card.
+   *  Re-probes update the countdown without appending another warning. */
+  quotaWaitShown: boolean
   /** Last error message surfaced via an LLM error card, so a following
    *  `error` event carrying the same text doesn't render it twice. */
   lastLlmErrorMessage: string | null
@@ -67,6 +71,7 @@ export function createStreamMachineState(appState: AppState, spinnerState: Spinn
     appState,
     spinnerState,
     activeLlmCall: false,
+    quotaWaitShown: false,
     lastLlmErrorMessage: null,
   }
 }
@@ -123,6 +128,9 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
     state = {
       ...flushed.state,
       activeLlmCall,
+      quotaWaitShown: event.kind === 'llm_call_started'
+        ? false
+        : flushed.state.quotaWaitShown,
       // Compaction execution is driven by the real-time phase event. The
       // started event is an observability snapshot and may be delivered beside
       // completion, so it must not overwrite the method-specific phase label.
@@ -170,16 +178,29 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
       lines: [] as OutputLine[],
       expandedLines: undefined,
     }
+    const waitDelayMs = (p.delay_ms as number) ?? (p.retry_delay_ms as number) ?? 60_000
+    const quotaError = typeof p.error === 'string' ? p.error.trim() : ''
+    const quotaWaitAlreadyShown = event.kind === 'quota_waiting' && prev.quotaWaitShown
     state = {
       ...flushed.state,
       activeLlmCall: false,
+      quotaWaitShown: event.kind === 'quota_waiting'
+        ? true
+        : flushed.state.quotaWaitShown,
       spinnerState: setLongWait(
         flushed.state.spinnerState,
         event.kind === 'outage_waiting' ? 'outage_waiting' : 'quota_waiting',
-        (p.delay_ms as number) ?? (p.retry_delay_ms as number) ?? 60_000,
+        waitDelayMs,
       ),
     }
     commitLines.push(...flushed.lines)
+    if (event.kind === 'quota_waiting' && !quotaWaitAlreadyShown) {
+      commitLines.push(...buildEventCard(formatLongWaitError(
+        state.appState.model,
+        quotaError,
+        waitDelayMs,
+      )))
+    }
     rerenderStatus = true
   }
 
@@ -189,6 +210,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
       if (textDelta) {
         state = {
           ...state,
+          activeLlmCall: true,
           spinnerState: setSpinnerPhase(recordStreamDelta(state.spinnerState, textDelta), 'responding'),
         }
         rerenderStatus = true
@@ -198,6 +220,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
       if (thinkingDelta) {
         state = {
           ...state,
+          activeLlmCall: true,
           spinnerState: setSpinnerPhase(recordStreamDelta(state.spinnerState, thinkingDelta, Date.now()), 'thinking'),
         }
         rerenderStatus = true
@@ -212,6 +235,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
     // waiting phase and stall detection stays anchored to the last delta.
     state = {
       ...state,
+      activeLlmCall: true,
       spinnerState: setSpinnerPhase(
         recordStreamDelta(state.spinnerState, (p.delta as string) ?? ''),
         'responding',

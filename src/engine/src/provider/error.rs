@@ -21,13 +21,20 @@ pub enum ProviderError {
     Network(String),
     #[error("Auth error: {0}")]
     Auth(String),
-    #[error("{}", display_rate_limited(*.retry_after_ms))]
-    RateLimited { retry_after_ms: Option<u64> },
+    #[error("{}", display_rate_limited(.message))]
+    RateLimited {
+        message: String,
+        retry_after_ms: Option<u64>,
+    },
     /// A provider quota window is exhausted. Unlike short-lived rate limiting,
     /// this is retried by the agent's cancellable long-wait path and does not
-    /// consume the ordinary bounded retry budget.
-    #[error("Quota limited: {0}")]
-    QuotaLimited(String),
+    /// consume the ordinary bounded retry budget. Carries the server reset
+    /// delay when the HTTP response supplied `Retry-After`.
+    #[error("Quota limited: {message}")]
+    QuotaLimited {
+        message: String,
+        retry_after_ms: Option<u64>,
+    },
     #[error("Context overflow: {message}")]
     ContextOverflow { message: String },
     #[error("Cancelled")]
@@ -36,10 +43,12 @@ pub enum ProviderError {
     Other(String),
 }
 
-fn display_rate_limited(retry_after_ms: Option<u64>) -> String {
-    match retry_after_ms {
-        Some(ms) => format!("Rate limited, retry after {ms}ms"),
-        None => "Rate limited".to_string(),
+fn display_rate_limited(message: &str) -> String {
+    let message = message.trim();
+    if message.is_empty() {
+        "Rate limited".to_string()
+    } else {
+        message.to_string()
     }
 }
 
@@ -52,29 +61,43 @@ impl ProviderError {
     /// text refines the decision only for stable semantics (context overflow,
     /// quota exhaustion, overload).
     pub fn classify(status: u16, message: &str, retry_after_ms: Option<u64>) -> Self {
-        if is_context_overflow(status, message) {
-            Self::ContextOverflow {
-                message: message.to_string(),
+        Self::classify_with_display(status, message, message, retry_after_ms)
+    }
+
+    fn classify_with_display(
+        status: u16,
+        evidence: &str,
+        display: &str,
+        retry_after_ms: Option<u64>,
+    ) -> Self {
+        let display = display.to_string();
+        if is_context_overflow(status, evidence) {
+            Self::ContextOverflow { message: display }
+        } else if is_fatal_quota_exhaustion(evidence) {
+            Self::Other(display)
+        } else if is_waitable_quota_limit(evidence) {
+            Self::QuotaLimited {
+                message: display,
+                retry_after_ms,
             }
-        } else if is_fatal_quota_exhaustion(message) {
-            Self::Other(message.to_string())
-        } else if is_waitable_quota_limit(message) {
-            Self::QuotaLimited(message.to_string())
         } else if status == 429 {
-            Self::RateLimited { retry_after_ms }
-        } else if status == 529 || is_overloaded_message(message) {
-            Self::Overloaded(message.to_string())
+            Self::RateLimited {
+                message: display,
+                retry_after_ms,
+            }
+        } else if status == 529 || is_overloaded_message(evidence) {
+            Self::Overloaded(display)
         } else if status == 401 || status == 403 {
-            Self::Auth(message.to_string())
+            Self::Auth(display)
         } else if status == 408 || status == 425 || (500..600).contains(&status) {
             Self::Transient {
-                message: message.to_string(),
+                message: display,
                 retry_after_ms,
             }
         } else if (400..500).contains(&status) {
-            Self::Other(message.to_string())
+            Self::Other(display)
         } else {
-            Self::Api(message.to_string())
+            Self::Api(display)
         }
     }
 
@@ -95,7 +118,23 @@ impl ProviderError {
         retry_after_ms: Option<u64>,
         should_retry: Option<bool>,
     ) -> Self {
-        let classified = Self::classify(status, message, retry_after_ms);
+        Self::classify_with_hints_and_display(
+            status,
+            message,
+            message,
+            retry_after_ms,
+            should_retry,
+        )
+    }
+
+    pub(crate) fn classify_with_hints_and_display(
+        status: u16,
+        evidence: &str,
+        display: &str,
+        retry_after_ms: Option<u64>,
+        should_retry: Option<bool>,
+    ) -> Self {
+        let classified = Self::classify_with_display(status, evidence, display, retry_after_ms);
         if should_retry == Some(true) {
             if let Self::Other(message) = classified {
                 return Self::Transient {
@@ -112,13 +151,18 @@ impl ProviderError {
     }
 
     pub fn is_quota_limited(&self) -> bool {
-        matches!(self, Self::QuotaLimited(_))
+        matches!(self, Self::QuotaLimited { .. })
     }
 
     pub fn retry_after(&self) -> Option<Duration> {
         match self {
             Self::RateLimited {
                 retry_after_ms: Some(ms),
+                ..
+            }
+            | Self::QuotaLimited {
+                retry_after_ms: Some(ms),
+                ..
             }
             | Self::Transient {
                 retry_after_ms: Some(ms),
@@ -165,7 +209,10 @@ pub(crate) fn classify_stream_error(
         return ProviderError::Other(message.to_string());
     }
     if is_waitable_quota_limit(message) {
-        return ProviderError::QuotaLimited(message.to_string());
+        return ProviderError::QuotaLimited {
+            message: message.to_string(),
+            retry_after_ms: None,
+        };
     }
     match value.and_then(provider_error_type) {
         Some(error_type) if is_auth_error_type(error_type) => {
@@ -175,6 +222,7 @@ pub(crate) fn classify_stream_error(
             ProviderError::Api(message.to_string())
         }
         Some("rate_limit_error") => ProviderError::RateLimited {
+            message: message.to_string(),
             retry_after_ms: None,
         },
         _ => ProviderError::Transient {
@@ -190,7 +238,14 @@ pub(crate) fn provider_error_type(value: &serde_json::Value) -> Option<&str> {
     value
         .pointer("/error/type")
         .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            value
+                .pointer("/error/code")
+                .and_then(serde_json::Value::as_str)
+        })
+        .or_else(|| value.get("code").and_then(serde_json::Value::as_str))
         .or_else(|| value.get("type").and_then(serde_json::Value::as_str))
+        .filter(|kind| *kind != "error")
 }
 
 fn is_auth_error_type(error_type: &str) -> bool {

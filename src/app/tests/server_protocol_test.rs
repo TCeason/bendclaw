@@ -303,16 +303,31 @@ fn run_event_round_trip_quota_waiting() -> Result<(), Box<dyn std::error::Error>
         "run-quota".into(),
         "session-quota".into(),
         3,
-        RunEventPayload::QuotaWaiting { delay_ms: 60_000 },
+        RunEventPayload::QuotaWaiting {
+            delay_ms: 1_800_000,
+            error: "HTTP 429: rate_limit_error: five-hour usage limit reached".into(),
+        },
     );
     let json = serde_json::to_string(&event)?;
     let parsed: serde_json::Value = serde_json::from_str(&json)?;
     assert_eq!(parsed["kind"], "quota_waiting");
-    assert_eq!(parsed["payload"]["delay_ms"], 60_000);
+    assert_eq!(parsed["payload"]["delay_ms"], 1_800_000);
+    assert_eq!(
+        parsed["payload"]["error"],
+        "HTTP 429: rate_limit_error: five-hour usage limit reached"
+    );
     let decoded: RunEvent = serde_json::from_str(&json)?;
     assert!(matches!(decoded.payload, RunEventPayload::QuotaWaiting {
-        delay_ms: 60_000
-    }));
+        delay_ms: 1_800_000,
+        ref error
+    } if error == "HTTP 429: rate_limit_error: five-hour usage limit reached"));
+
+    let legacy_json = r#"{"event_id":"evt-legacy","run_id":"run-quota","session_id":"session-quota","turn":3,"kind":"quota_waiting","payload":{"delay_ms":60000},"created_at":"2026-01-01T00:00:00Z"}"#;
+    let legacy: RunEvent = serde_json::from_str(legacy_json)?;
+    assert!(matches!(legacy.payload, RunEventPayload::QuotaWaiting {
+        delay_ms: 60_000,
+        ref error
+    } if error.is_empty()));
     Ok(())
 }
 

@@ -11,6 +11,10 @@ use tracing::debug;
 
 use super::error::ProviderError;
 
+const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+const MAX_ERROR_DETAIL_CHARS: usize = 4096;
+const MAX_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
 /// A parsed SSE event with event type and data.
 #[derive(Debug, Clone)]
 pub struct SseEvent {
@@ -89,23 +93,80 @@ pub async fn check_error_status(
     let status = response.status().as_u16();
     let retry_after_ms = parse_retry_after_header(&response);
     let should_retry = parse_should_retry_header(&response);
-    let body = response.text().await.unwrap_or_default();
-    Err(ProviderError::classify_with_hints(
+    let body = read_limited_error_body(response).await;
+    let parsed = serde_json::from_str::<serde_json::Value>(&body).ok();
+    let display_detail = parsed
+        .as_ref()
+        .and_then(extract_json_error_message)
+        .map(|detail| truncate_chars(&detail, MAX_ERROR_DETAIL_CHARS))
+        .unwrap_or_else(|| truncate_chars(&body, MAX_ERROR_DETAIL_CHARS));
+    let classification_detail = parsed
+        .as_ref()
+        .map(json_error_evidence)
+        .unwrap_or_else(|| body.clone());
+    Err(ProviderError::classify_with_hints_and_display(
         status,
-        &format!("HTTP {status}: {body}"),
+        &format!("HTTP {status}: {classification_detail}"),
+        &format!("HTTP {status}: {display_detail}"),
         retry_after_ms,
         should_retry,
     ))
 }
 
-/// Parse the `Retry-After` header value (seconds) into milliseconds.
+async fn read_limited_error_body(response: reqwest::Response) -> String {
+    let mut stream = response.bytes_stream();
+    let mut bytes = Vec::with_capacity(MAX_ERROR_BODY_BYTES.min(8192));
+    let mut truncated = false;
+
+    while let Some(chunk) = stream.next().await {
+        let Ok(chunk) = chunk else {
+            break;
+        };
+        let remaining = MAX_ERROR_BODY_BYTES.saturating_sub(bytes.len());
+        if chunk.len() > remaining {
+            bytes.extend_from_slice(&chunk[..remaining]);
+            truncated = true;
+            break;
+        }
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() == MAX_ERROR_BODY_BYTES {
+            truncated = true;
+            break;
+        }
+    }
+
+    let mut body = String::from_utf8_lossy(&bytes).into_owned();
+    if truncated {
+        body.push('…');
+    }
+    body
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{}…", truncated)
+    } else {
+        truncated
+    }
+}
+
+/// Parse `Retry-After` as either delta-seconds or an RFC HTTP-date. Invalid,
+/// zero, and already-expired values are ignored so normal backoff applies.
+/// Excessive values are capped before they reach retry or UI timers.
 pub fn parse_retry_after_header(response: &reqwest::Response) -> Option<u64> {
-    response
-        .headers()
-        .get("retry-after")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok())
-        .map(|secs| secs * 1000)
+    let value = response.headers().get("retry-after")?.to_str().ok()?.trim();
+    let delay = if let Ok(seconds) = value.parse::<u64>() {
+        std::time::Duration::from_secs(seconds)
+    } else {
+        let retry_at = httpdate::parse_http_date(value).ok()?;
+        retry_at.duration_since(std::time::SystemTime::now()).ok()?
+    };
+    if delay.is_zero() {
+        return None;
+    }
+    u64::try_from(delay.min(MAX_RETRY_AFTER).as_millis()).ok()
 }
 
 /// Parse the `x-should-retry` hint header (sent by Anthropic and passed
@@ -162,22 +223,43 @@ pub async fn read_json_body(
 pub fn extract_json_error_message(value: &serde_json::Value) -> Option<String> {
     let error_obj = value.get("error");
 
-    let error_type = error_obj
-        .and_then(|e| e.get("type"))
-        .and_then(|v| v.as_str())
-        .or_else(|| value.get("type").and_then(|v| v.as_str()));
+    let error_kind = error_obj
+        .and_then(|error| error.get("type").or_else(|| error.get("code")))
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            value
+                .get("code")
+                .or_else(|| value.get("type"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|kind| *kind != "error")
+        });
 
     let error_message = error_obj
-        .and_then(|e| e.get("message"))
-        .and_then(|v| v.as_str())
-        .or_else(|| value.get("message").and_then(|v| v.as_str()));
+        .and_then(|e| {
+            e.get("message")
+                .or_else(|| e.get("detail"))
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            value
+                .get("message")
+                .or_else(|| value.get("detail"))
+                .and_then(|v| v.as_str())
+        });
 
-    match (error_type, error_message) {
+    match (error_kind, error_message) {
         (Some(t), Some(m)) => Some(format!("{t}: {m}")),
         (None, Some(m)) => Some(m.to_string()),
         (Some(t), None) => Some(t.to_string()),
         (None, None) => None,
     }
+}
+
+/// Preserve the complete bounded JSON envelope as classification evidence.
+/// Display formatting is separate so machine-readable fields cannot disappear
+/// behind a generic provider message.
+fn json_error_evidence(value: &serde_json::Value) -> String {
+    value.to_string()
 }
 
 /// Classify a JSON error body from an accepted (2xx) stream request into a

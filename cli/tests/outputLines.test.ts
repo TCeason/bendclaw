@@ -15,7 +15,7 @@ import {
   findSafeSplitPoint,
   resetIdCounter,
 } from '../src/render/output.js'
-import { formatLlmCallStarted, formatLlmCallRetry, formatLlmCallCompleted, formatCompactionStarted, formatCompactionCompleted } from '../src/render/verbose.js'
+import { formatLlmCallStarted, formatLlmCallRetry, formatLongWaitError, formatLlmCallCompleted, formatCompactionStarted, formatCompactionCompleted } from '../src/render/verbose.js'
 
 beforeEach(() => {
   resetIdCounter()
@@ -587,6 +587,29 @@ describe('buildVerboseEvent', () => {
     })
     expect(text).toContain('[LLM] ↻ · retrying in 2 seconds · attempt 2/3')
     expect(text).toContain('    error     tls handshake eof')
+  })
+
+  test('formats long quota reset without synthetic retry attempts', () => {
+    const text = formatLongWaitError(
+      'claude-fable-5',
+      'HTTP 429: rate_limit_error: Rate limit exceeded. Please retry later.',
+      1_800_000,
+    )
+    expect(text).toContain('[LLM] ⚠ · claude-fable-5 · quota unavailable · retry in 30m')
+    expect(text).toContain('    error     HTTP 429: rate_limit_error: Rate limit exceeded. Please retry later.')
+    expect(text).not.toContain('attempt')
+  })
+
+  test('strips terminal controls from long-wait provider text', () => {
+    const text = formatLongWaitError(
+      '\x1b[31mclaude-fable-5',
+      '\x1b]8;;https://evil.example\x07HTTP 429: rate_limit_error\x1b]8;;\x07',
+      60_000,
+    )
+    expect(text).toContain('[LLM] ⚠ · claude-fable-5 · quota unavailable · retry in 1m')
+    expect(text).toContain('    error     HTTP 429: rate_limit_error')
+    expect(text).not.toContain('\x1b')
+    expect(text).not.toContain(']8;;')
   })
 
   test('formats llm completed with status symbol and timing details', () => {

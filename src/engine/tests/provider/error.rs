@@ -85,7 +85,11 @@ fn classify_rate_limit() {
 fn classify_rate_limit_with_retry_after() {
     let err = ProviderError::classify(429, "rate limit exceeded", Some(5000));
     match err {
-        ProviderError::RateLimited { retry_after_ms } => {
+        ProviderError::RateLimited {
+            message,
+            retry_after_ms,
+        } => {
+            assert_eq!(message, "rate limit exceeded");
             assert_eq!(retry_after_ms, Some(5000));
         }
         _ => panic!("Expected RateLimited"),
@@ -98,13 +102,17 @@ fn classify_quota_exhausted_429_uses_waitable_and_fatal_paths() {
     // unbounded quota retry path.
     let kimi = "rate_limit_error: You've reached your usage limit for this period. \
         Your quota will be refreshed in the next period. Upgrade to get more.";
-    let err = ProviderError::classify(429, kimi, None);
-    assert!(matches!(err, ProviderError::QuotaLimited(_)));
+    let err = ProviderError::classify(429, kimi, Some(1_800_000));
+    assert!(matches!(err, ProviderError::QuotaLimited { .. }));
     assert!(err.is_quota_limited());
+    assert_eq!(
+        err.retry_after(),
+        Some(std::time::Duration::from_millis(1_800_000))
+    );
     assert!(!evotengine::retry::should_retry(&err));
 
     let err = ProviderError::classify(429, "quota exceeded", None);
-    assert!(matches!(err, ProviderError::QuotaLimited(_)));
+    assert!(matches!(err, ProviderError::QuotaLimited { .. }));
 
     // Billing failures have no automatic reset and remain fatal.
     for msg in ["insufficient_quota", "out of budget"] {
@@ -265,8 +273,15 @@ fn stream_quota_error_is_classified_by_recovery_semantics() {
     let waitable = classify_sse_error_event(
         r#"{"type":"error","error":{"type":"quota_error","message":"Quota exceeded."}}"#,
     );
-    assert!(matches!(waitable, ProviderError::QuotaLimited(_)));
+    assert!(matches!(waitable, ProviderError::QuotaLimited { .. }));
     assert!(waitable.is_quota_limited());
+
+    let code_only = classify_sse_error_event(
+        r#"{"error":{"code":"insufficient_quota","message":"You exceeded your current quota"}}"#,
+    );
+    assert!(matches!(code_only, ProviderError::Other(_)));
+    assert!(!code_only.is_quota_limited());
+    assert!(!evotengine::retry::should_retry(&code_only));
 }
 
 #[test]

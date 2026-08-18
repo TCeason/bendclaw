@@ -790,6 +790,7 @@ dependencies = [
  "headless_chrome",
  "htmd",
  "html2text",
+ "httpdate",
  "ignore",
  "image",
  "jsonrepair",

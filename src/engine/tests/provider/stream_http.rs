@@ -35,6 +35,21 @@ fn extract_openai_error_message() {
 }
 
 #[test]
+fn extract_openai_error_code_only() {
+    let value = serde_json::json!({
+        "error": {
+            "code": "insufficient_quota",
+            "message": "You exceeded your current quota"
+        }
+    });
+    let msg = extract_json_error_message(&value);
+    assert_eq!(
+        msg,
+        Some("insufficient_quota: You exceeded your current quota".into())
+    );
+}
+
+#[test]
 fn extract_generic_message_field() {
     let value = serde_json::json!({
         "message": "internal error"
@@ -198,13 +213,112 @@ async fn check_error_status_honors_should_retry_and_retry_after() {
 }
 
 #[tokio::test]
-async fn check_error_status_retry_after_reaches_5xx() {
+async fn check_error_status_preserves_nested_rate_limit_detail() {
+    let detail = "Rate limit exceeded. Please retry later.";
+    let err = error_from_mock_response(
+        wiremock::ResponseTemplate::new(429)
+            .insert_header("retry-after", "1800")
+            .set_body_json(serde_json::json!({
+                "type": "error",
+                "error": {"type": "rate_limit_error", "message": detail}
+            })),
+    )
+    .await;
+    match err {
+        ProviderError::RateLimited {
+            message,
+            retry_after_ms,
+        } => {
+            assert_eq!(
+                message,
+                "HTTP 429: rate_limit_error: Rate limit exceeded. Please retry later."
+            );
+            assert_eq!(retry_after_ms, Some(1_800_000));
+        }
+        other => panic!("expected RateLimited, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn check_error_status_classifies_code_only_quota_and_overflow() {
+    let fatal = error_from_mock_response(wiremock::ResponseTemplate::new(429).set_body_json(
+        serde_json::json!({
+            "error": {"code": "insufficient_quota", "message": "You exceeded your current quota"}
+        }),
+    ))
+    .await;
+    assert!(matches!(fatal, ProviderError::Other(_)));
+    assert!(!fatal.is_quota_limited());
+    assert!(!evotengine::retry::should_retry(&fatal));
+    assert!(fatal.to_string().contains("insufficient_quota"));
+
+    let overflow = error_from_mock_response(wiremock::ResponseTemplate::new(400).set_body_json(
+        serde_json::json!({
+            "error": {"code": "context_length_exceeded", "message": "too many tokens in request"}
+        }),
+    ))
+    .await;
+    assert!(overflow.is_context_overflow());
+    assert!(!evotengine::retry::should_retry(&overflow));
+}
+
+#[tokio::test]
+async fn check_error_status_parses_http_date_and_ignores_zero_retry_after() {
+    let dated = error_from_mock_response(
+        wiremock::ResponseTemplate::new(429)
+            .insert_header("retry-after", "Wed, 21 Oct 2099 07:28:00 GMT")
+            .set_body_string("rate limit exceeded"),
+    )
+    .await;
+    match dated {
+        ProviderError::RateLimited { retry_after_ms, .. } => {
+            assert_eq!(retry_after_ms, Some(86_400_000));
+        }
+        other => panic!("expected RateLimited, got {other:?}"),
+    }
+
+    let zero = error_from_mock_response(
+        wiremock::ResponseTemplate::new(429)
+            .insert_header("retry-after", "0")
+            .set_body_string("rate limit exceeded"),
+    )
+    .await;
+    assert_eq!(zero.retry_after(), None);
+}
+
+#[tokio::test]
+async fn check_error_status_caps_huge_retry_after_and_oversized_bodies() {
+    let huge = error_from_mock_response(
+        wiremock::ResponseTemplate::new(429)
+            .insert_header("retry-after", "999999999999")
+            .set_body_string("rate limit exceeded"),
+    )
+    .await;
+    assert_eq!(
+        huge.retry_after(),
+        Some(std::time::Duration::from_secs(24 * 60 * 60))
+    );
+
+    let oversized = error_from_mock_response(wiremock::ResponseTemplate::new(429).set_body_string(
+        format!("{{\"error\":{{\"message\":\"{}\"}}}}", "x".repeat(80_000)),
+    ))
+    .await;
+    assert!(oversized.to_string().contains('…'));
+    assert!(oversized.to_string().len() < 80_000);
+}
+
+#[tokio::test]
+async fn check_error_status_long_retry_after_reaches_5xx_without_becoming_quota() {
     let err = error_from_mock_response(
         wiremock::ResponseTemplate::new(503)
-            .insert_header("retry-after", "12")
+            .insert_header("retry-after", "1800")
             .set_body_string("maintenance"),
     )
     .await;
     assert!(matches!(err, ProviderError::Transient { .. }));
-    assert_eq!(err.retry_after(), Some(std::time::Duration::from_secs(12)));
+    assert!(!err.is_quota_limited());
+    assert_eq!(
+        err.retry_after(),
+        Some(std::time::Duration::from_secs(1800))
+    );
 }

@@ -601,7 +601,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
               liveOutputTokens,
               usagePending,
             ),
-        { interruptible: foregroundCommand === null },
+        {
+          interruptible: foregroundCommand === null,
+          model: appState.model,
+        },
       )
       spinnerBlock = {
         lines: wrapTextWithAnsi(spinnerText, renderer.termCols).map(text => ({ spans: [{ text }] })),

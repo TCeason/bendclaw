@@ -193,6 +193,32 @@ export function formatLlmCallRetry(data: Record<string, unknown>): string {
   return lines.join('\n')
 }
 
+export function formatLongWaitError(model: string, error: string, delayMs: number): string {
+  const requestedModel = sanitizeProviderText(model, 80) || 'unknown'
+  const reason = sanitizeProviderText(error, 400) || 'Rate limit exceeded. Please retry later.'
+  const seconds = Math.max(0, Math.ceil(delayMs / 1000))
+  return `[LLM] ⚠ · ${requestedModel} · quota unavailable · retry in ${formatWaitDuration(seconds)}\n    error     ${reason}`
+}
+
+function sanitizeProviderText(value: string, maxChars: number): string {
+  const cleaned = value
+    .replace(/\u001b(?:\[[0-9;?]*[ -/]*[@-~]|].*?(?:\u0007|\u001b\\)|.)/g, '')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (cleaned.length <= maxChars) return cleaned
+  return `${cleaned.slice(0, Math.max(0, maxChars - 1))}…`
+}
+
+function formatWaitDuration(totalSeconds: number): string {
+  if (totalSeconds < 60) return `${totalSeconds}s`
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  if (hours > 0) return `${hours}h${minutes > 0 ? ` ${minutes}m` : ''}`
+  return `${minutes}m${seconds > 0 ? ` ${seconds}s` : ''}`
+}
+
 // ---------------------------------------------------------------------------
 // LLM call completed
 // ---------------------------------------------------------------------------

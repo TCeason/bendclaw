@@ -113,10 +113,12 @@ pub enum RunEventPayload {
         delay_ms: u64,
         error: String,
     },
-    /// Transient quota wait state. This is public for live UIs but deliberately
-    /// omitted from persisted transcript observability.
+    /// Transient quota/reset wait state. This is public for live UIs but
+    /// deliberately omitted from persisted transcript observability.
     QuotaWaiting {
         delay_ms: u64,
+        #[serde(default)]
+        error: String,
     },
     /// Transient upstream-outage wait state: the bounded retry budget is
     /// exhausted but the provider error remains retryable, so the run keeps

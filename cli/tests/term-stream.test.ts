@@ -35,19 +35,74 @@ describe('term stream machine', () => {
     expect(complete.state.spinnerState.phase).toBe('preparing')
   })
 
-  test('quota waiting replaces the normal spinner without committing retry cards', () => {
-    const initial = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
-    const waiting = reduceRunEvent(initial, {
+  test('long quota wait shows one model-specific error card and deduplicates re-probes', () => {
+    const initial = createStreamMachineState(createInitialState('claude-fable-5', '/tmp'), createSpinnerState())
+    const event = {
       kind: 'quota_waiting',
-      payload: { delay_ms: 60_000 },
-    }, { termRows: 24 })
+      payload: {
+        delay_ms: 1_800_000,
+        error: 'HTTP 429: rate_limit_error: Rate limit exceeded. Please retry later.',
+      },
+    }
+    const waiting = reduceRunEvent(initial, event, { termRows: 24 })
 
     expect(waiting.state.spinnerState.phase).toBe('quota_waiting')
     expect(waiting.state.spinnerState.waitRetryAt).toBeGreaterThan(Date.now())
-    expect(waiting.commitLines).toEqual([])
+    const text = waiting.commitLines.map(line => line.text).join('\n')
+    expect(text).toContain('✦ llm  claude-fable-5')
+    expect(text).toContain('quota unavailable · retry in 30m')
+    expect(text).toContain('HTTP 429: rate_limit_error: Rate limit exceeded. Please retry later.')
+    expect(text).not.toContain('attempt 1/10')
     expect(waiting.writeLines).toEqual([])
     expect(waiting.state.appState.verboseEvents).toEqual([])
     expect(waiting.rerenderStatus).toBe(true)
+
+    const repeated = reduceRunEvent(waiting.state, event, { termRows: 24 })
+    expect(repeated.commitLines).toEqual([])
+    expect(repeated.state.spinnerState.waitRetryAt).toBeGreaterThan(Date.now())
+
+    const changed = reduceRunEvent(waiting.state, {
+      kind: 'quota_waiting',
+      payload: {
+        delay_ms: 1_800_000,
+        error: 'HTTP 429: rate_limit_error: Rate limit exceeded. request_id=abc',
+      },
+    }, { termRows: 24 })
+    expect(changed.commitLines).toEqual([])
+  })
+
+  test('quota wait sanitizes provider ANSI before committing a card', () => {
+    const initial = createStreamMachineState(createInitialState('claude-fable-5', '/tmp'), createSpinnerState())
+    const waiting = reduceRunEvent(initial, {
+      kind: 'quota_waiting',
+      payload: {
+        delay_ms: 60_000,
+        error: '\x1b[31mHTTP 429\x1b]8;;https://evil.example\x07click\x1b]8;;\x07',
+      },
+    }, { termRows: 24 })
+    const text = waiting.commitLines.map(line => line.text).join('\n')
+    expect(text).toContain('HTTP 429')
+    expect(text).not.toContain('\x1b')
+    expect(text).not.toContain(']8;;')
+  })
+
+  test('post-wait assistant deltas mark the logical call active again', () => {
+    const initial = createStreamMachineState(createInitialState('claude-fable-5', '/tmp'), createSpinnerState())
+    const waiting = reduceRunEvent(initial, {
+      kind: 'quota_waiting',
+      payload: {
+        delay_ms: 1_800_000,
+        error: 'HTTP 429: rate_limit_error: Rate limit exceeded. Please retry later.',
+      },
+    }, { termRows: 24 })
+    expect(waiting.state.activeLlmCall).toBe(false)
+
+    const streaming = reduceRunEvent(waiting.state, {
+      kind: 'assistant_delta',
+      payload: { content_index: 0, content_type: 'text', delta: 'hello' },
+    }, { termRows: 24 })
+    expect(streaming.state.activeLlmCall).toBe(true)
+    expect(streaming.state.spinnerState.phase).toBe('responding')
   })
 
   test('outage waiting replaces the normal spinner without committing retry cards', () => {

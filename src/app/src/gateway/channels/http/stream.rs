@@ -168,11 +168,12 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
                 }
             }));
         }
-        RunEventPayload::QuotaWaiting { delay_ms } => {
+        RunEventPayload::QuotaWaiting { delay_ms, error } => {
             events.push(json!({
                 "type": "quota_waiting",
                 "data": {
                     "retry_delay_ms": delay_ms,
+                    "error": error,
                 }
             }));
         }

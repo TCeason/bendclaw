@@ -4,6 +4,16 @@ use tokio::sync::mpsc;
 
 const DEFAULT_QUOTA_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Provider reset hints are untrusted input. Avoid a zero-delay probe loop and
+/// cap waits so a malformed header cannot park an interactive run for days.
+const QUOTA_WAIT_MIN: std::time::Duration = std::time::Duration::from_secs(5);
+const QUOTA_WAIT_MAX: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// A server-declared rate-limit wait at or above this duration is a cooldown
+/// window, not ordinary burst throttling. Honor it once instead of consuming
+/// the bounded retry budget with identical requests.
+const RATE_LIMIT_COOLDOWN_MIN: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Probe cadence once the bounded retry budget is exhausted but the error is
 /// still retryable (sustained upstream/gateway outage). Like quota waits, the
 /// probes are cancellable and run indefinitely — an outage is a wait state,
@@ -35,10 +45,31 @@ impl AssistantStreamResult {
     }
 }
 
-fn quota_retry_delay() -> std::time::Duration {
-    // The gateway may balance several accounts, so evot intentionally ignores
-    // any one account's reset hint and probes the gateway at a calm cadence.
-    DEFAULT_QUOTA_RETRY_DELAY
+fn bounded_quota_wait(delay: std::time::Duration) -> std::time::Duration {
+    delay.clamp(QUOTA_WAIT_MIN, QUOTA_WAIT_MAX)
+}
+
+fn quota_wait_delay(
+    error: &ProviderError,
+    allow_rate_limit_cooldown: bool,
+) -> Option<std::time::Duration> {
+    match error {
+        ProviderError::QuotaLimited { retry_after_ms, .. } => Some(bounded_quota_wait(
+            retry_after_ms
+                .map(std::time::Duration::from_millis)
+                .unwrap_or(DEFAULT_QUOTA_RETRY_DELAY),
+        )),
+        ProviderError::RateLimited {
+            retry_after_ms: Some(retry_after_ms),
+            ..
+        } if allow_rate_limit_cooldown => {
+            let retry_after = std::time::Duration::from_millis(*retry_after_ms);
+            // A long Retry-After on HTTP 429 is a quota/reset window, not
+            // ordinary burst throttling. Transient 5xx hints never enter here.
+            (retry_after >= RATE_LIMIT_COOLDOWN_MIN).then(|| bounded_quota_wait(retry_after))
+        }
+        _ => None,
+    }
 }
 
 pub(super) struct AssistantStreamInput {
@@ -373,16 +404,23 @@ pub(super) async fn stream_assistant_response(
             err => err,
         };
 
-        match &result {
-            Err(e) if e.is_quota_limited() && !cancel.is_cancelled() => {
-                // Quota exhaustion is a wait state, not a failed assistant
-                // response. Retry the exact request indefinitely until it
-                // succeeds or the user cancels. This does not consume the
-                // ordinary transient retry budget.
+        let quota_delay = result
+            .as_ref()
+            .err()
+            .and_then(|error| quota_wait_delay(error, retry.max_retries() > 0));
+        if let (Err(error), Some(delay)) = (&result, quota_delay) {
+            if !cancel.is_cancelled() {
+                // Quota exhaustion and long server-declared reset windows are
+                // one idempotent wait state, not ten doomed retries. Retry the
+                // exact request once the window expires or the user cancels.
+                // Wait for the failed attempt's forwarder to stop before the
+                // wait event is visible, otherwise late deltas can cross the
+                // retry boundary.
                 forward_handle.abort();
-                let delay = quota_retry_delay();
+                let _ = forward_handle.await;
                 tx.send(AgentEvent::QuotaWait {
                     delay_ms: delay.as_millis() as u64,
+                    error: error.to_string(),
                 })
                 .ok();
                 long_wait_started = true;
@@ -393,6 +431,9 @@ pub(super) async fn stream_assistant_response(
                 }
                 continue;
             }
+        }
+
+        match &result {
             Err(e)
                 if crate::retry::should_retry(e)
                     && attempt < retry.max_retries()
@@ -401,6 +442,7 @@ pub(super) async fn stream_assistant_response(
             {
                 // Abort forwarder to prevent forwarding events from failed attempt
                 forward_handle.abort();
+                let _ = forward_handle.await;
                 let mut error_metrics =
                     shared_metrics.lock().map(|m| m.clone()).unwrap_or_default();
                 if error_metrics.duration_ms == 0 {
@@ -454,6 +496,7 @@ pub(super) async fn stream_assistant_response(
                 // holds for any upstream. `RetryPolicy::disabled()` keeps its
                 // fail-fast contract and never enters this state.
                 forward_handle.abort();
+                let _ = forward_handle.await;
                 let delay = e
                     .retry_after()
                     .map(|hint| hint.clamp(OUTAGE_RETRY_MIN, OUTAGE_RETRY_MAX))

@@ -69,6 +69,7 @@ export function toolActionLabel(toolName: string): string {
     case 'bash': return 'Running command'
     case 'web_fetch': case 'webfetch': return 'Fetching'
     case 'plan': return 'Planning'
+    case 'skill': return 'Loading skill'
     case 'compact': return 'Compacting'
     case 'compact_remote': return 'Compacting remote'
     case 'compact_local': return 'Compacting local'
@@ -184,6 +185,8 @@ export interface SpinnerStats {
 export interface SpinnerFormatOptions {
   /** Show the keyboard interrupt hint. Defaults to true for agent/tool runs. */
   interruptible?: boolean
+  /** Requested model, used to identify long quota waits. */
+  model?: string
 }
 
 export function formatSpinnerLine(
@@ -207,7 +210,11 @@ export function formatSpinnerLine(
       break
     case 'quota_waiting': {
       const seconds = Math.max(0, Math.ceil(((state.waitRetryAt ?? now) - now) / 1000))
-      label = `Model quota unavailable · retrying in ${seconds}s`
+      const model = options.model?.replace(/\u001b(?:\[[0-9;?]*[ -/]*[@-~]|].*?(?:\u0007|\u001b\\)|.)/g, '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim()
+      const subject = model ? `${model} quota unavailable` : 'Model quota unavailable'
+      label = seconds > 0
+        ? `${subject} · retrying in ${formatWaitCountdown(seconds)}`
+        : `${subject} · retrying…`
       break
     }
     case 'outage_waiting': {
@@ -249,6 +256,15 @@ function glimmerText(text: string, pos: number): string {
     }
   }
   return result
+}
+
+function formatWaitCountdown(totalSeconds: number): string {
+  if (totalSeconds < 60) return `${totalSeconds}s`
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  if (hours > 0) return `${hours}h${minutes > 0 ? `${minutes}m` : ''}`
+  return `${minutes}m${seconds > 0 ? `${seconds}s` : ''}`
 }
 
 function humanDuration(ms: number): string {

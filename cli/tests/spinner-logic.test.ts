@@ -161,19 +161,22 @@ describe('formatSpinnerLine', () => {
     expect(stripAnsi(formatSpinnerLine(at('responding'), now))).toContain('Responding…')
   })
 
-  test('formats quota waiting as a calm countdown instead of a slow request', () => {
+  test('formats quota waiting as a calm model-specific countdown instead of a slow request', () => {
     const now = Date.now()
-    const state = setLongWait(createSpinnerState(), 'quota_waiting', 60_000, now)
+    const state = setLongWait(createSpinnerState(), 'quota_waiting', 1_800_000, now)
     expect(state.phase).toBe('quota_waiting')
     expect(isSlow(state, now + 30_000)).toBe(false)
     const line = stripAnsi(formatSpinnerLine(state, now + 18_100, {
       inputTokens: 100,
       cacheReadTokens: 90,
-    }))
-    expect(line).toContain('Model quota unavailable · retrying in 42s')
+    }, { model: 'claude-fable-5' }))
+    expect(line).toContain('claude-fable-5 quota unavailable · retrying in 29m42s')
     expect(line).not.toContain('cache')
     expect(line).toContain('esc to interrupt')
     expect(line).not.toContain('slow')
+    const expired = stripAnsi(formatSpinnerLine(state, now + 1_800_000, undefined, { model: 'claude-fable-5' }))
+    expect(expired).toContain('claude-fable-5 quota unavailable · retrying…')
+    expect(expired).not.toContain('retrying in 0s')
   })
 
   test('formats outage waiting as a calm countdown instead of a slow request', () => {
