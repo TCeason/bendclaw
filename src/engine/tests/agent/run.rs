@@ -671,27 +671,15 @@ impl StreamProvider for FailThenSucceedProvider {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if attempt < self.max_failures {
             return Err(match &self.error {
-                ProviderError::RateLimited {
-                    message,
-                    retry_after_ms,
-                } => ProviderError::RateLimited {
+                ProviderError::RateLimited { message } => ProviderError::RateLimited {
                     message: message.clone(),
-                    retry_after_ms: *retry_after_ms,
                 },
-                ProviderError::QuotaLimited {
-                    message,
-                    retry_after_ms,
-                } => ProviderError::QuotaLimited {
+                ProviderError::QuotaLimited { message } => ProviderError::QuotaLimited {
                     message: message.clone(),
-                    retry_after_ms: *retry_after_ms,
                 },
                 ProviderError::Network(msg) => ProviderError::Network(msg.clone()),
-                ProviderError::Transient {
-                    message,
-                    retry_after_ms,
-                } => ProviderError::Transient {
+                ProviderError::Transient { message } => ProviderError::Transient {
                     message: message.clone(),
-                    retry_after_ms: *retry_after_ms,
                 },
                 ProviderError::Auth(msg) => ProviderError::Auth(msg.clone()),
                 other => ProviderError::Other(other.to_string()),
@@ -701,15 +689,14 @@ impl StreamProvider for FailThenSucceedProvider {
     }
 }
 
-#[tokio::test]
-async fn test_retry_on_rate_limit_succeeds() {
+#[tokio::test(start_paused = true)]
+async fn test_retry_on_rate_limit_uses_local_backoff_and_succeeds() {
     let provider: std::sync::Arc<FailThenSucceedProvider> =
         std::sync::Arc::new(FailThenSucceedProvider {
             fail_count: std::sync::atomic::AtomicUsize::new(0),
             max_failures: 2,
             error: ProviderError::RateLimited {
                 message: "Rate limited".into(),
-                retry_after_ms: Some(10), // 10ms for fast tests
             },
             inner: MockProvider::text("Success after retries"),
         });
@@ -772,11 +759,11 @@ async fn test_retry_on_rate_limit_succeeds() {
     assert_eq!(retry_events.len(), 2);
     assert_eq!(retry_events[0].0, 1);
     assert_eq!(retry_events[0].1, 3);
-    assert_eq!(retry_events[0].2, 10);
+    assert!((1_600..=2_400).contains(&retry_events[0].2));
     assert_eq!(retry_events[0].3, "Rate limited");
     assert_eq!(retry_events[1].0, 2);
     assert_eq!(retry_events[1].1, 3);
-    assert_eq!(retry_events[1].2, 10);
+    assert!((3_200..=4_800).contains(&retry_events[1].2));
     assert_eq!(retry_events[1].3, "Rate limited");
     assert!(events
         .iter()
@@ -799,7 +786,6 @@ async fn test_quota_limit_waits_without_using_bounded_retry_budget() {
             max_failures: 2,
             error: ProviderError::QuotaLimited {
                 message: "Quota exceeded".into(),
-                retry_after_ms: None,
             },
             inner: MockProvider::text("Success after quota reset"),
         });
@@ -884,7 +870,7 @@ async fn test_quota_limit_waits_without_using_bounded_retry_budget() {
             _ => None,
         })
         .collect();
-    assert_eq!(quota_waits, vec![(60_000, "Quota limited: Quota exceeded")]);
+    assert_eq!(quota_waits, vec![(5_000, "Quota limited: Quota exceeded")]);
     assert!(!events
         .iter()
         .any(|event| matches!(event, AgentEvent::LlmCallRetry { .. })));
@@ -897,173 +883,16 @@ async fn test_quota_limit_waits_without_using_bounded_retry_budget() {
     );
 }
 
-#[tokio::test]
-async fn test_long_rate_limit_waits_once_at_reset_without_bounded_retries() {
-    let provider: std::sync::Arc<FailThenSucceedProvider> =
-        std::sync::Arc::new(FailThenSucceedProvider {
-            fail_count: std::sync::atomic::AtomicUsize::new(0),
-            max_failures: 1,
-            error: ProviderError::RateLimited {
-                message: "HTTP 429: rate_limit_error: Rate limit exceeded. Please retry later."
-                    .into(),
-                retry_after_ms: Some(1_800_000),
-            },
-            inner: MockProvider::text("never reached before cancellation"),
-        });
-
-    let config = AgentLoopConfig {
-        provider: provider.clone(),
-        model: "mock".into(),
-        api_key: "test".into(),
-        thinking_level: ThinkingLevel::Off,
-        max_tokens: None,
-        model_config: None,
-        convert_to_llm: None,
-        transform_context: None,
-        get_steering_messages: None,
-        get_follow_up_messages: None,
-        context_config: None,
-        compaction_context: None,
-        compaction_fallback_context: None,
-        initial_compaction_state: None,
-        execution_limits: None,
-        cache_config: CacheConfig::default(),
-        tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: evotengine::RetryPolicy::new(10),
-        before_turn: None,
-        after_turn: None,
-        spill: None,
-    };
-    let mut context = AgentContext {
-        system_prompt: "test".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-        cwd: std::path::PathBuf::new(),
-        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
-        prompt_cache_key: None,
-    };
-    let cancel = CancellationToken::new();
-    let cancel_after_wait = cancel.clone();
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let watcher = tokio::spawn(async move {
-        let mut events = Vec::new();
-        while let Some(event) = rx.recv().await {
-            let should_cancel = matches!(event, AgentEvent::QuotaWait { .. });
-            events.push(event);
-            if should_cancel {
-                cancel_after_wait.cancel();
-                break;
-            }
-        }
-        events
-    });
-
-    let _messages = agent_loop(
-        vec![AgentMessage::Llm(Message::user("hi"))],
-        &mut context,
-        &config,
-        tx,
-        cancel,
-    )
-    .await;
-    let events = watcher.await.unwrap_or_default();
-
-    assert_eq!(
-        provider
-            .fail_count
-            .load(std::sync::atomic::Ordering::SeqCst),
-        1
-    );
-    assert!(events.iter().any(|event| matches!(
-        event,
-        AgentEvent::QuotaWait { delay_ms: 1_800_000, error }
-            if error.contains("HTTP 429") && error.contains("Rate limit exceeded")
-    )));
-    assert!(!events
-        .iter()
-        .any(|event| matches!(event, AgentEvent::LlmCallRetry { .. })));
-}
-
-#[tokio::test]
-async fn test_disabled_retry_does_not_promote_long_rate_limit_to_quota_wait() {
-    let provider: std::sync::Arc<FailThenSucceedProvider> =
-        std::sync::Arc::new(FailThenSucceedProvider {
-            fail_count: std::sync::atomic::AtomicUsize::new(0),
-            max_failures: 1,
-            error: ProviderError::RateLimited {
-                message: "HTTP 429: rate_limit_error: Rate limit exceeded. Please retry later."
-                    .into(),
-                retry_after_ms: Some(1_800_000),
-            },
-            inner: MockProvider::text("never reached"),
-        });
-
-    let config = AgentLoopConfig {
-        provider: provider.clone(),
-        model: "mock".into(),
-        api_key: "test".into(),
-        thinking_level: ThinkingLevel::Off,
-        max_tokens: None,
-        model_config: None,
-        convert_to_llm: None,
-        transform_context: None,
-        get_steering_messages: None,
-        get_follow_up_messages: None,
-        context_config: None,
-        compaction_context: None,
-        compaction_fallback_context: None,
-        initial_compaction_state: None,
-        execution_limits: None,
-        cache_config: CacheConfig::default(),
-        tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: evotengine::RetryPolicy::disabled(),
-        before_turn: None,
-        after_turn: None,
-        spill: None,
-    };
-    let mut context = AgentContext {
-        system_prompt: "test".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-        cwd: std::path::PathBuf::new(),
-        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
-        prompt_cache_key: None,
-    };
-    let (tx, rx) = mpsc::unbounded_channel();
-    let _messages = agent_loop(
-        vec![AgentMessage::Llm(Message::user("hi"))],
-        &mut context,
-        &config,
-        tx,
-        CancellationToken::new(),
-    )
-    .await;
-    let events = collect_events(rx);
-    assert_eq!(
-        provider
-            .fail_count
-            .load(std::sync::atomic::Ordering::SeqCst),
-        1
-    );
-    assert!(!events
-        .iter()
-        .any(|event| matches!(event, AgentEvent::QuotaWait { .. })));
-    assert!(!events
-        .iter()
-        .any(|event| matches!(event, AgentEvent::LlmCallRetry { .. })));
-}
-
 #[tokio::test(start_paused = true)]
-async fn test_quota_wait_recovers_after_server_reset() {
+async fn test_quota_probes_use_local_backoff_and_recover() {
     let provider: std::sync::Arc<FailThenSucceedProvider> =
         std::sync::Arc::new(FailThenSucceedProvider {
             fail_count: std::sync::atomic::AtomicUsize::new(0),
-            max_failures: 1,
+            max_failures: 6,
             error: ProviderError::QuotaLimited {
                 message: "HTTP 429: rate_limit_error: usage limit reached".into(),
-                retry_after_ms: Some(1_800_000),
             },
-            inner: MockProvider::text("Success after quota reset"),
+            inner: MockProvider::text("Success after quota probe"),
         });
 
     let config = AgentLoopConfig {
@@ -1111,19 +940,19 @@ async fn test_quota_wait_recovers_after_server_reset() {
         provider
             .fail_count
             .load(std::sync::atomic::Ordering::SeqCst),
-        2
+        7
     );
     let events = collect_events(rx);
-    assert_eq!(
-        events
-            .iter()
-            .filter(|event| matches!(event, AgentEvent::QuotaWait {
-                delay_ms: 1_800_000,
-                ..
-            }))
-            .count(),
-        1
-    );
+    let quota_waits: Vec<u64> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::QuotaWait { delay_ms, .. } => Some(*delay_ms),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(quota_waits, vec![
+        5_000, 10_000, 20_000, 40_000, 60_000, 60_000
+    ]);
     assert_eq!(
         events
             .iter()
@@ -1136,249 +965,6 @@ async fn test_quota_wait_recovers_after_server_reset() {
         .any(|event| matches!(event, AgentEvent::LlmCallRetry { .. })));
 }
 
-#[tokio::test]
-async fn test_quota_wait_clamps_zero_and_huge_retry_after() {
-    let zero_provider: std::sync::Arc<FailThenSucceedProvider> =
-        std::sync::Arc::new(FailThenSucceedProvider {
-            fail_count: std::sync::atomic::AtomicUsize::new(0),
-            max_failures: 1,
-            error: ProviderError::QuotaLimited {
-                message: "Quota exceeded".into(),
-                retry_after_ms: Some(0),
-            },
-            inner: MockProvider::text("never reached before cancellation"),
-        });
-    let huge_provider: std::sync::Arc<FailThenSucceedProvider> =
-        std::sync::Arc::new(FailThenSucceedProvider {
-            fail_count: std::sync::atomic::AtomicUsize::new(0),
-            max_failures: 1,
-            error: ProviderError::QuotaLimited {
-                message: "Quota exceeded".into(),
-                retry_after_ms: Some(10 * 24 * 60 * 60 * 1000),
-            },
-            inner: MockProvider::text("never reached before cancellation"),
-        });
-
-    for (provider, expected_delay) in [(zero_provider, 5_000), (huge_provider, 86_400_000)] {
-        let config = AgentLoopConfig {
-            provider: provider.clone(),
-            model: "mock".into(),
-            api_key: "test".into(),
-            thinking_level: ThinkingLevel::Off,
-            max_tokens: None,
-            model_config: None,
-            convert_to_llm: None,
-            transform_context: None,
-            get_steering_messages: None,
-            get_follow_up_messages: None,
-            context_config: None,
-            compaction_context: None,
-            compaction_fallback_context: None,
-            initial_compaction_state: None,
-            execution_limits: None,
-            cache_config: CacheConfig::default(),
-            tool_execution: ToolExecutionStrategy::default(),
-            retry_policy: evotengine::RetryPolicy::disabled(),
-            before_turn: None,
-            after_turn: None,
-            spill: None,
-        };
-        let mut context = AgentContext {
-            system_prompt: "test".into(),
-            messages: Vec::new(),
-            tools: Vec::new(),
-            cwd: std::path::PathBuf::new(),
-            path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
-            prompt_cache_key: None,
-        };
-        let cancel = CancellationToken::new();
-        let cancel_after_wait = cancel.clone();
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let watcher = tokio::spawn(async move {
-            let mut events = Vec::new();
-            while let Some(event) = rx.recv().await {
-                let should_cancel = matches!(event, AgentEvent::QuotaWait { .. });
-                events.push(event);
-                if should_cancel {
-                    cancel_after_wait.cancel();
-                    break;
-                }
-            }
-            events
-        });
-        let _messages = agent_loop(
-            vec![AgentMessage::Llm(Message::user("hi"))],
-            &mut context,
-            &config,
-            tx,
-            cancel,
-        )
-        .await;
-        let events = watcher.await.unwrap_or_default();
-        assert!(events.iter().any(|event| matches!(
-            event,
-            AgentEvent::QuotaWait { delay_ms, .. } if *delay_ms == expected_delay
-        )));
-    }
-}
-
-#[tokio::test]
-async fn test_quota_limit_honors_server_reset_delay() {
-    let provider: std::sync::Arc<FailThenSucceedProvider> =
-        std::sync::Arc::new(FailThenSucceedProvider {
-            fail_count: std::sync::atomic::AtomicUsize::new(0),
-            max_failures: 1,
-            error: ProviderError::QuotaLimited {
-                message: "HTTP 429: rate_limit_error: usage limit reached".into(),
-                retry_after_ms: Some(1_800_000),
-            },
-            inner: MockProvider::text("never reached before cancellation"),
-        });
-
-    let config = AgentLoopConfig {
-        provider: provider.clone(),
-        model: "mock".into(),
-        api_key: "test".into(),
-        thinking_level: ThinkingLevel::Off,
-        max_tokens: None,
-        model_config: None,
-        convert_to_llm: None,
-        transform_context: None,
-        get_steering_messages: None,
-        get_follow_up_messages: None,
-        context_config: None,
-        compaction_context: None,
-        compaction_fallback_context: None,
-        initial_compaction_state: None,
-        execution_limits: None,
-        cache_config: CacheConfig::default(),
-        tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: evotengine::RetryPolicy::new(10),
-        before_turn: None,
-        after_turn: None,
-        spill: None,
-    };
-    let mut context = AgentContext {
-        system_prompt: "test".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-        cwd: std::path::PathBuf::new(),
-        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
-        prompt_cache_key: None,
-    };
-    let cancel = CancellationToken::new();
-    let cancel_after_wait = cancel.clone();
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let watcher = tokio::spawn(async move {
-        let mut events = Vec::new();
-        while let Some(event) = rx.recv().await {
-            let should_cancel = matches!(event, AgentEvent::QuotaWait { .. });
-            events.push(event);
-            if should_cancel {
-                cancel_after_wait.cancel();
-                break;
-            }
-        }
-        events
-    });
-
-    let _messages = agent_loop(
-        vec![AgentMessage::Llm(Message::user("hi"))],
-        &mut context,
-        &config,
-        tx,
-        cancel,
-    )
-    .await;
-    let events = watcher.await.unwrap_or_default();
-
-    assert!(events.iter().any(|event| matches!(
-        event,
-        AgentEvent::QuotaWait { delay_ms: 1_800_000, error }
-            if error.contains("usage limit reached")
-    )));
-    assert!(!events
-        .iter()
-        .any(|event| matches!(event, AgentEvent::LlmCallRetry { .. })));
-}
-
-#[tokio::test]
-async fn test_long_503_retry_after_is_not_classified_as_quota_wait() {
-    let provider: std::sync::Arc<FailThenSucceedProvider> =
-        std::sync::Arc::new(FailThenSucceedProvider {
-            fail_count: std::sync::atomic::AtomicUsize::new(0),
-            max_failures: 1,
-            error: ProviderError::classify(503, "HTTP 503: service unavailable", Some(1_800_000)),
-            inner: MockProvider::text("never reached before cancellation"),
-        });
-
-    let config = AgentLoopConfig {
-        provider,
-        model: "mock".into(),
-        api_key: "test".into(),
-        thinking_level: ThinkingLevel::Off,
-        max_tokens: None,
-        model_config: None,
-        convert_to_llm: None,
-        transform_context: None,
-        get_steering_messages: None,
-        get_follow_up_messages: None,
-        context_config: None,
-        compaction_context: None,
-        compaction_fallback_context: None,
-        initial_compaction_state: None,
-        execution_limits: None,
-        cache_config: CacheConfig::default(),
-        tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: evotengine::RetryPolicy::new(1),
-        before_turn: None,
-        after_turn: None,
-        spill: None,
-    };
-    let mut context = AgentContext {
-        system_prompt: "test".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-        cwd: std::path::PathBuf::new(),
-        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
-        prompt_cache_key: None,
-    };
-    let cancel = CancellationToken::new();
-    let cancel_after_retry = cancel.clone();
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let watcher = tokio::spawn(async move {
-        let mut events = Vec::new();
-        while let Some(event) = rx.recv().await {
-            let should_cancel = matches!(event, AgentEvent::LlmCallRetry { .. });
-            events.push(event);
-            if should_cancel {
-                cancel_after_retry.cancel();
-                break;
-            }
-        }
-        events
-    });
-
-    let _messages = agent_loop(
-        vec![AgentMessage::Llm(Message::user("hi"))],
-        &mut context,
-        &config,
-        tx,
-        cancel,
-    )
-    .await;
-    let events = watcher.await.unwrap_or_default();
-
-    assert!(events.iter().any(|event| matches!(
-        event,
-        AgentEvent::LlmCallRetry { delay_ms: 1_800_000, error, .. }
-            if error.contains("HTTP 503")
-    )));
-    assert!(!events
-        .iter()
-        .any(|event| matches!(event, AgentEvent::QuotaWait { .. })));
-}
-
 #[tokio::test(start_paused = true)]
 async fn test_provider_declared_transient_error_retries_then_succeeds() {
     let payload = r#"{"type":"error","error":{"type":"api_error","message":"wording is not used for retry classification"}}"#;
@@ -1388,7 +974,6 @@ async fn test_provider_declared_transient_error_retries_then_succeeds() {
             max_failures: 1,
             error: ProviderError::Transient {
                 message: payload.into(),
-                retry_after_ms: None,
             },
             inner: MockProvider::text("Success after transient error"),
         });
@@ -1710,7 +1295,6 @@ async fn test_retry_none_disables_retries() {
             max_failures: 1,
             error: ProviderError::RateLimited {
                 message: "Rate limited".into(),
-                retry_after_ms: None,
             },
             inner: MockProvider::text("never reached"),
         });
@@ -3138,7 +2722,6 @@ async fn test_sanitized_413_compacts_and_retries_once() {
                 return Err(ProviderError::classify(
                     413,
                     r#"HTTP 413: {"type":"error","error":{"type":"api_error","message":"Upstream request failed."}}"#,
-                    None,
                 ));
             }
 
@@ -3267,7 +2850,6 @@ async fn test_overflow_recovery_survives_summarizer_failure() {
                 return Err(ProviderError::classify(
                     413,
                     r#"HTTP 413: {"type":"error","error":{"type":"api_error","message":"Upstream request failed."}}"#,
-                    None,
                 ));
             }
             let call = self.main_calls.fetch_add(1, Ordering::SeqCst);
@@ -3275,7 +2857,6 @@ async fn test_overflow_recovery_survives_summarizer_failure() {
                 return Err(ProviderError::classify(
                     413,
                     r#"HTTP 413: {"type":"error","error":{"type":"api_error","message":"Upstream request failed."}}"#,
-                    None,
                 ));
             }
 
@@ -3392,7 +2973,6 @@ async fn test_unrecoverable_overflow_surfaces_visible_error() {
             Err(ProviderError::classify(
                 413,
                 r#"HTTP 413: {"type":"error","error":{"type":"api_error","message":"Upstream request failed."}}"#,
-                None,
             ))
         }
     }

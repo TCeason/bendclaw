@@ -13,7 +13,6 @@ use super::error::ProviderError;
 
 const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 const MAX_ERROR_DETAIL_CHARS: usize = 4096;
-const MAX_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 
 /// A parsed SSE event with event type and data.
 #[derive(Debug, Clone)]
@@ -81,9 +80,9 @@ pub async fn send_stream_request(
 
 /// Check the HTTP status code. Non-2xx responses are read and classified.
 ///
-/// Extracts the `Retry-After` header (if present) so the retry policy can
-/// honour server-specified delays, and the `x-should-retry` gateway hint so
-/// a gateway can mark an otherwise-unknown error as retryable.
+/// The `x-should-retry` gateway hint can mark an otherwise-unknown error as
+/// retryable. Retry timing is controlled locally and does not depend on
+/// provider-specific response headers.
 pub async fn check_error_status(
     response: reqwest::Response,
 ) -> Result<reqwest::Response, ProviderError> {
@@ -91,7 +90,6 @@ pub async fn check_error_status(
         return Ok(response);
     }
     let status = response.status().as_u16();
-    let retry_after_ms = parse_retry_after_header(&response);
     let should_retry = parse_should_retry_header(&response);
     let body = read_limited_error_body(response).await;
     let parsed = serde_json::from_str::<serde_json::Value>(&body).ok();
@@ -108,7 +106,6 @@ pub async fn check_error_status(
         status,
         &format!("HTTP {status}: {classification_detail}"),
         &format!("HTTP {status}: {display_detail}"),
-        retry_after_ms,
         should_retry,
     ))
 }
@@ -150,23 +147,6 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     } else {
         truncated
     }
-}
-
-/// Parse `Retry-After` as either delta-seconds or an RFC HTTP-date. Invalid,
-/// zero, and already-expired values are ignored so normal backoff applies.
-/// Excessive values are capped before they reach retry or UI timers.
-pub fn parse_retry_after_header(response: &reqwest::Response) -> Option<u64> {
-    let value = response.headers().get("retry-after")?.to_str().ok()?.trim();
-    let delay = if let Ok(seconds) = value.parse::<u64>() {
-        std::time::Duration::from_secs(seconds)
-    } else {
-        let retry_at = httpdate::parse_http_date(value).ok()?;
-        retry_at.duration_since(std::time::SystemTime::now()).ok()?
-    };
-    if delay.is_zero() {
-        return None;
-    }
-    u64::try_from(delay.min(MAX_RETRY_AFTER).as_millis()).ok()
 }
 
 /// Parse the `x-should-retry` hint header (sent by Anthropic and passed

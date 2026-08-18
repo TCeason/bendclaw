@@ -81,7 +81,6 @@ impl StreamProvider for BedrockProvider {
             return Err(ProviderError::classify(
                 status.as_u16(),
                 &format!("Bedrock error {}: {}", status, body),
-                None,
             ));
         }
 

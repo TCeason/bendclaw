@@ -8,13 +8,9 @@ pub enum ProviderError {
     Api(String),
     /// A provider-declared transient failure. The original payload is retained
     /// for diagnostics, while retry policy can rely on this semantic variant
-    /// instead of matching provider-specific message text. Carries the
-    /// server-specified `Retry-After` hint when the HTTP response included one.
+    /// instead of matching provider-specific message text.
     #[error("API error: {message}")]
-    Transient {
-        message: String,
-        retry_after_ms: Option<u64>,
-    },
+    Transient { message: String },
     #[error("Overloaded: {0}")]
     Overloaded(String),
     #[error("Network error: {0}")]
@@ -22,19 +18,12 @@ pub enum ProviderError {
     #[error("Auth error: {0}")]
     Auth(String),
     #[error("{}", display_rate_limited(.message))]
-    RateLimited {
-        message: String,
-        retry_after_ms: Option<u64>,
-    },
+    RateLimited { message: String },
     /// A provider quota window is exhausted. Unlike short-lived rate limiting,
-    /// this is retried by the agent's cancellable long-wait path and does not
-    /// consume the ordinary bounded retry budget. Carries the server reset
-    /// delay when the HTTP response supplied `Retry-After`.
+    /// this is retried by the agent's cancellable probe path and does not
+    /// consume the ordinary bounded retry budget.
     #[error("Quota limited: {message}")]
-    QuotaLimited {
-        message: String,
-        retry_after_ms: Option<u64>,
-    },
+    QuotaLimited { message: String },
     #[error("Context overflow: {message}")]
     ContextOverflow { message: String },
     #[error("Cancelled")]
@@ -60,40 +49,26 @@ impl ProviderError {
     /// remaining 4xx are client errors that cannot succeed on retry. Message
     /// text refines the decision only for stable semantics (context overflow,
     /// quota exhaustion, overload).
-    pub fn classify(status: u16, message: &str, retry_after_ms: Option<u64>) -> Self {
-        Self::classify_with_display(status, message, message, retry_after_ms)
+    pub fn classify(status: u16, message: &str) -> Self {
+        Self::classify_with_display(status, message, message)
     }
 
-    fn classify_with_display(
-        status: u16,
-        evidence: &str,
-        display: &str,
-        retry_after_ms: Option<u64>,
-    ) -> Self {
+    fn classify_with_display(status: u16, evidence: &str, display: &str) -> Self {
         let display = display.to_string();
         if is_context_overflow(status, evidence) {
             Self::ContextOverflow { message: display }
         } else if is_fatal_quota_exhaustion(evidence) {
             Self::Other(display)
         } else if is_waitable_quota_limit(evidence) {
-            Self::QuotaLimited {
-                message: display,
-                retry_after_ms,
-            }
+            Self::QuotaLimited { message: display }
         } else if status == 429 {
-            Self::RateLimited {
-                message: display,
-                retry_after_ms,
-            }
+            Self::RateLimited { message: display }
         } else if status == 529 || is_overloaded_message(evidence) {
             Self::Overloaded(display)
         } else if status == 401 || status == 403 {
             Self::Auth(display)
         } else if status == 408 || status == 425 || (500..600).contains(&status) {
-            Self::Transient {
-                message: display,
-                retry_after_ms,
-            }
+            Self::Transient { message: display }
         } else if (400..500).contains(&status) {
             Self::Other(display)
         } else {
@@ -108,39 +83,24 @@ impl ProviderError {
     /// ([`Other`](Self::Other)) to the retryable [`Transient`](Self::Transient),
     /// so any gateway can mark a response retryable without an evot release.
     /// Semantics with their own recovery paths are never overridden: context
-    /// overflow (compaction), quota (long wait), auth (fail fast). An explicit
+    /// overflow (compaction), quota (probing), auth (fail fast). An explicit
     /// `false` is ignored — server-side failures must keep retrying even when a
     /// misconfigured proxy claims otherwise; fatal classification already comes
     /// from status and structured error types.
-    pub fn classify_with_hints(
-        status: u16,
-        message: &str,
-        retry_after_ms: Option<u64>,
-        should_retry: Option<bool>,
-    ) -> Self {
-        Self::classify_with_hints_and_display(
-            status,
-            message,
-            message,
-            retry_after_ms,
-            should_retry,
-        )
+    pub fn classify_with_hints(status: u16, message: &str, should_retry: Option<bool>) -> Self {
+        Self::classify_with_hints_and_display(status, message, message, should_retry)
     }
 
     pub(crate) fn classify_with_hints_and_display(
         status: u16,
         evidence: &str,
         display: &str,
-        retry_after_ms: Option<u64>,
         should_retry: Option<bool>,
     ) -> Self {
-        let classified = Self::classify_with_display(status, evidence, display, retry_after_ms);
+        let classified = Self::classify_with_display(status, evidence, display);
         if should_retry == Some(true) {
             if let Self::Other(message) = classified {
-                return Self::Transient {
-                    message,
-                    retry_after_ms,
-                };
+                return Self::Transient { message };
             }
         }
         classified
@@ -152,24 +112,6 @@ impl ProviderError {
 
     pub fn is_quota_limited(&self) -> bool {
         matches!(self, Self::QuotaLimited { .. })
-    }
-
-    pub fn retry_after(&self) -> Option<Duration> {
-        match self {
-            Self::RateLimited {
-                retry_after_ms: Some(ms),
-                ..
-            }
-            | Self::QuotaLimited {
-                retry_after_ms: Some(ms),
-                ..
-            }
-            | Self::Transient {
-                retry_after_ms: Some(ms),
-                ..
-            } => Some(Duration::from_millis(*ms)),
-            _ => None,
-        }
     }
 }
 
@@ -211,7 +153,6 @@ pub(crate) fn classify_stream_error(
     if is_waitable_quota_limit(message) {
         return ProviderError::QuotaLimited {
             message: message.to_string(),
-            retry_after_ms: None,
         };
     }
     match value.and_then(provider_error_type) {
@@ -223,11 +164,9 @@ pub(crate) fn classify_stream_error(
         }
         Some("rate_limit_error") => ProviderError::RateLimited {
             message: message.to_string(),
-            retry_after_ms: None,
         },
         _ => ProviderError::Transient {
             message: message.to_string(),
-            retry_after_ms: None,
         },
     }
 }

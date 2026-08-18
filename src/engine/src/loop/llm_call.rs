@@ -2,29 +2,16 @@
 
 use tokio::sync::mpsc;
 
-const DEFAULT_QUOTA_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
-
-/// Provider reset hints are untrusted input. Avoid a zero-delay probe loop and
-/// cap waits so a malformed header cannot park an interactive run for days.
-const QUOTA_WAIT_MIN: std::time::Duration = std::time::Duration::from_secs(5);
-const QUOTA_WAIT_MAX: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
-
-/// A server-declared rate-limit wait at or above this duration is a cooldown
-/// window, not ordinary burst throttling. Honor it once instead of consuming
-/// the bounded retry budget with identical requests.
-const RATE_LIMIT_COOLDOWN_MIN: std::time::Duration = std::time::Duration::from_secs(60);
+/// Quota recovery is controlled locally so every provider follows the same
+/// predictable, cancellable probe cadence.
+const QUOTA_PROBE_INITIAL: std::time::Duration = std::time::Duration::from_secs(5);
+const QUOTA_PROBE_MAX: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Probe cadence once the bounded retry budget is exhausted but the error is
 /// still retryable (sustained upstream/gateway outage). Like quota waits, the
 /// probes are cancellable and run indefinitely — an outage is a wait state,
 /// not a reason to discard the run.
 const OUTAGE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
-
-/// Bounds for a server-supplied `Retry-After` hint during outage probing: a
-/// short hint must not turn the calm cadence into a hammer loop, and an absurd
-/// hint must not stall the (cancellable) wait for hours.
-const OUTAGE_RETRY_MIN: std::time::Duration = std::time::Duration::from_secs(5);
-const OUTAGE_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(600);
 
 use super::config::default_convert_to_llm;
 use super::config::AgentLoopConfig;
@@ -42,33 +29,6 @@ pub(super) struct AssistantStreamResult {
 impl AssistantStreamResult {
     fn complete(message: Message) -> Self {
         Self { message }
-    }
-}
-
-fn bounded_quota_wait(delay: std::time::Duration) -> std::time::Duration {
-    delay.clamp(QUOTA_WAIT_MIN, QUOTA_WAIT_MAX)
-}
-
-fn quota_wait_delay(
-    error: &ProviderError,
-    allow_rate_limit_cooldown: bool,
-) -> Option<std::time::Duration> {
-    match error {
-        ProviderError::QuotaLimited { retry_after_ms, .. } => Some(bounded_quota_wait(
-            retry_after_ms
-                .map(std::time::Duration::from_millis)
-                .unwrap_or(DEFAULT_QUOTA_RETRY_DELAY),
-        )),
-        ProviderError::RateLimited {
-            retry_after_ms: Some(retry_after_ms),
-            ..
-        } if allow_rate_limit_cooldown => {
-            let retry_after = std::time::Duration::from_millis(*retry_after_ms);
-            // A long Retry-After on HTTP 429 is a quota/reset window, not
-            // ordinary burst throttling. Transient 5xx hints never enter here.
-            (retry_after >= RATE_LIMIT_COOLDOWN_MIN).then(|| bounded_quota_wait(retry_after))
-        }
-        _ => None,
     }
 }
 
@@ -147,6 +107,7 @@ pub(super) async fn stream_assistant_response(
     // Re-probes remain part of the same logical call: no further
     // LlmCallStart events are emitted until the call resolves.
     let mut long_wait_started = false;
+    let mut quota_probe_delay = QUOTA_PROBE_INITIAL;
     let shared_metrics = std::sync::Arc::new(std::sync::Mutex::new(LlmCallMetrics::default()));
     let result = loop {
         let thinking_level = crate::provider::effective_thinking_level(
@@ -404,26 +365,24 @@ pub(super) async fn stream_assistant_response(
             err => err,
         };
 
-        let quota_delay = result
-            .as_ref()
-            .err()
-            .and_then(|error| quota_wait_delay(error, retry.max_retries() > 0));
-        if let (Err(error), Some(delay)) = (&result, quota_delay) {
-            if !cancel.is_cancelled() {
-                // Quota exhaustion and long server-declared reset windows are
-                // one idempotent wait state, not ten doomed retries. Retry the
-                // exact request once the window expires or the user cancels.
+        if let Err(error) = &result {
+            if error.is_quota_limited() && !cancel.is_cancelled() {
+                // Quota exhaustion is one idempotent wait state, not a series
+                // of bounded retries. Recovery follows a provider-independent
+                // local cadence: probe quickly, then settle at one minute.
                 // Wait for the failed attempt's forwarder to stop before the
                 // wait event is visible, otherwise late deltas can cross the
                 // retry boundary.
                 forward_handle.abort();
                 let _ = forward_handle.await;
+                let delay = quota_probe_delay;
                 tx.send(AgentEvent::QuotaWait {
                     delay_ms: delay.as_millis() as u64,
                     error: error.to_string(),
                 })
                 .ok();
                 long_wait_started = true;
+                quota_probe_delay = quota_probe_delay.saturating_mul(2).min(QUOTA_PROBE_MAX);
                 let _idle_pause = idle_clock.as_ref().map(crate::context::IdleClock::pause);
                 tokio::select! {
                     _ = cancel.cancelled() => break Err(ProviderError::Cancelled),
@@ -463,9 +422,7 @@ pub(super) async fn stream_assistant_response(
                 })
                 .ok();
                 attempt += 1;
-                let delay = e
-                    .retry_after()
-                    .unwrap_or_else(|| retry.delay_for_attempt(attempt));
+                let delay = retry.delay_for_attempt(attempt);
                 tx.send(AgentEvent::LlmCallRetry {
                     turn,
                     attempt,
@@ -497,10 +454,7 @@ pub(super) async fn stream_assistant_response(
                 // fail-fast contract and never enters this state.
                 forward_handle.abort();
                 let _ = forward_handle.await;
-                let delay = e
-                    .retry_after()
-                    .map(|hint| hint.clamp(OUTAGE_RETRY_MIN, OUTAGE_RETRY_MAX))
-                    .unwrap_or(OUTAGE_RETRY_DELAY);
+                let delay = OUTAGE_RETRY_DELAY;
                 tx.send(AgentEvent::OutageWait {
                     delay_ms: delay.as_millis() as u64,
                     error: e.to_string(),

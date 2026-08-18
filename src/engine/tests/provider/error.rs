@@ -2,21 +2,13 @@ use evotengine::provider::error::*;
 
 #[test]
 fn classify_anthropic_overflow() {
-    let err = ProviderError::classify(
-        400,
-        "prompt is too long: 213462 tokens > 200000 maximum",
-        None,
-    );
+    let err = ProviderError::classify(400, "prompt is too long: 213462 tokens > 200000 maximum");
     assert!(err.is_context_overflow());
 }
 
 #[test]
 fn classify_openai_overflow() {
-    let err = ProviderError::classify(
-        400,
-        "Your input exceeds the context window of this model",
-        None,
-    );
+    let err = ProviderError::classify(400, "Your input exceeds the context window of this model");
     assert!(err.is_context_overflow());
 }
 
@@ -25,14 +17,13 @@ fn classify_google_overflow() {
     let err = ProviderError::classify(
         400,
         "The input token count (1196265) exceeds the maximum number of tokens allowed",
-        None,
     );
     assert!(err.is_context_overflow());
 }
 
 #[test]
 fn classify_bedrock_overflow() {
-    let err = ProviderError::classify(400, "input is too long for requested model", None);
+    let err = ProviderError::classify(400, "input is too long for requested model");
     assert!(err.is_context_overflow());
 }
 
@@ -41,7 +32,6 @@ fn classify_xai_overflow() {
     let err = ProviderError::classify(
         400,
         "This model's maximum prompt length is 131072 but request contains 537812 tokens",
-        None,
     );
     assert!(err.is_context_overflow());
 }
@@ -51,14 +41,13 @@ fn classify_groq_overflow() {
     let err = ProviderError::classify(
         400,
         "Please reduce the length of the messages or completion",
-        None,
     );
     assert!(err.is_context_overflow());
 }
 
 #[test]
 fn classify_request_size_overflow() {
-    let empty = ProviderError::classify(413, "", None);
+    let empty = ProviderError::classify(413, "");
     assert!(empty.is_context_overflow());
 
     // Regression: llmproxy deliberately replaces provider details with this
@@ -66,34 +55,18 @@ fn classify_request_size_overflow() {
     let sanitized = ProviderError::classify(
         413,
         r#"HTTP 413: {"type":"error","error":{"type":"api_error","message":"Upstream request failed."}}"#,
-        None,
     );
     assert!(sanitized.is_context_overflow());
     assert!(is_context_overflow_message(&sanitized.to_string()));
 
-    let empty_400 = ProviderError::classify(400, "  ", None);
+    let empty_400 = ProviderError::classify(400, "  ");
     assert!(empty_400.is_context_overflow());
 }
 
 #[test]
 fn classify_rate_limit() {
-    let err = ProviderError::classify(429, "rate limit exceeded", None);
+    let err = ProviderError::classify(429, "rate limit exceeded");
     assert!(matches!(err, ProviderError::RateLimited { .. }));
-}
-
-#[test]
-fn classify_rate_limit_with_retry_after() {
-    let err = ProviderError::classify(429, "rate limit exceeded", Some(5000));
-    match err {
-        ProviderError::RateLimited {
-            message,
-            retry_after_ms,
-        } => {
-            assert_eq!(message, "rate limit exceeded");
-            assert_eq!(retry_after_ms, Some(5000));
-        }
-        _ => panic!("Expected RateLimited"),
-    }
 }
 
 #[test]
@@ -102,21 +75,17 @@ fn classify_quota_exhausted_429_uses_waitable_and_fatal_paths() {
     // unbounded quota retry path.
     let kimi = "rate_limit_error: You've reached your usage limit for this period. \
         Your quota will be refreshed in the next period. Upgrade to get more.";
-    let err = ProviderError::classify(429, kimi, Some(1_800_000));
+    let err = ProviderError::classify(429, kimi);
     assert!(matches!(err, ProviderError::QuotaLimited { .. }));
     assert!(err.is_quota_limited());
-    assert_eq!(
-        err.retry_after(),
-        Some(std::time::Duration::from_millis(1_800_000))
-    );
     assert!(!evotengine::retry::should_retry(&err));
 
-    let err = ProviderError::classify(429, "quota exceeded", None);
+    let err = ProviderError::classify(429, "quota exceeded");
     assert!(matches!(err, ProviderError::QuotaLimited { .. }));
 
     // Billing failures have no automatic reset and remain fatal.
     for msg in ["insufficient_quota", "out of budget"] {
-        let err = ProviderError::classify(429, msg, None);
+        let err = ProviderError::classify(429, msg);
         assert!(matches!(err, ProviderError::Other(_)), "{msg}");
         assert!(!evotengine::retry::should_retry(&err), "{msg}");
     }
@@ -138,17 +107,17 @@ fn retry_policy_default_matches_claude_style_backoff_budget() {
 
 #[test]
 fn classify_auth_error() {
-    let err = ProviderError::classify(401, "invalid api key", None);
+    let err = ProviderError::classify(401, "invalid api key");
     assert!(matches!(err, ProviderError::Auth(_)));
     assert!(!evotengine::retry::should_retry(&err));
-    let err = ProviderError::classify(403, "forbidden", None);
+    let err = ProviderError::classify(403, "forbidden");
     assert!(matches!(err, ProviderError::Auth(_)));
     assert!(!evotengine::retry::should_retry(&err));
 }
 
 #[test]
 fn classify_400_not_retryable() {
-    let err = ProviderError::classify(400, "invalid request format", None);
+    let err = ProviderError::classify(400, "invalid request format");
     assert!(matches!(err, ProviderError::Other(_)));
     assert!(!evotengine::retry::should_retry(&err));
 
@@ -158,7 +127,7 @@ fn classify_400_not_retryable() {
 
 #[test]
 fn classify_529_overloaded() {
-    let err = ProviderError::classify(529, "overloaded", None);
+    let err = ProviderError::classify(529, "overloaded");
     assert!(matches!(err, ProviderError::Overloaded(_)));
     assert!(evotengine::retry::should_retry(&err));
 }
@@ -173,7 +142,7 @@ fn classify_sse_overloaded_error() {
 #[test]
 fn classify_overloaded_message_without_status() {
     // Plain-text "overloaded" wording (no 529 status) routes to Overloaded.
-    let err = ProviderError::classify(500, "Our servers are currently overloaded", None);
+    let err = ProviderError::classify(500, "Our servers are currently overloaded");
     assert!(matches!(err, ProviderError::Overloaded(_)));
     assert!(evotengine::retry::should_retry(&err));
 }
@@ -298,7 +267,7 @@ fn classify_http_5xx_and_408_are_transient() {
     // Status is authoritative: server-side failures retry regardless of the
     // body wording, so provider message changes cannot break retry.
     for status in [500, 501, 502, 503, 504, 520, 599, 408] {
-        let err = ProviderError::classify(status, "whatever the body says", None);
+        let err = ProviderError::classify(status, "whatever the body says");
         assert!(
             matches!(err, ProviderError::Transient { .. }),
             "HTTP {status}"
@@ -311,54 +280,34 @@ fn classify_http_5xx_and_408_are_transient() {
 fn classify_http_425_too_early_is_transient() {
     // 425 Too Early is an explicit "retry later" protocol signal; gateways
     // surface it during connection reuse races. It must not fail the run.
-    let err = ProviderError::classify(425, "too early", None);
+    let err = ProviderError::classify(425, "too early");
     assert!(matches!(err, ProviderError::Transient { .. }));
     assert!(evotengine::retry::should_retry(&err));
-}
-
-#[test]
-fn classify_transient_carries_retry_after_hint() {
-    // A Retry-After header on a 5xx must reach the retry policy, not just 429.
-    let err = ProviderError::classify(503, "service unavailable", Some(3000));
-    assert!(matches!(err, ProviderError::Transient { .. }));
-    assert_eq!(
-        err.retry_after(),
-        Some(std::time::Duration::from_millis(3000))
-    );
-    assert!(evotengine::retry::should_retry(&err));
-
-    // Without the header there is no hint.
-    let err = ProviderError::classify(503, "service unavailable", None);
-    assert_eq!(err.retry_after(), None);
 }
 
 #[test]
 fn should_retry_hint_upgrades_only_unknown_classification() {
     // x-should-retry: true lets any gateway mark an unknown 4xx retryable
     // without an evot release.
-    let err = ProviderError::classify_with_hints(402, "Payment Required", Some(7000), Some(true));
+    let err = ProviderError::classify_with_hints(402, "Payment Required", Some(true));
     assert!(matches!(err, ProviderError::Transient { .. }));
-    assert_eq!(
-        err.retry_after(),
-        Some(std::time::Duration::from_millis(7000))
-    );
     assert!(evotengine::retry::should_retry(&err));
 
     // Semantics with their own recovery paths are never overridden.
-    let overflow = ProviderError::classify_with_hints(413, "", None, Some(true));
+    let overflow = ProviderError::classify_with_hints(413, "", Some(true));
     assert!(overflow.is_context_overflow());
-    let auth = ProviderError::classify_with_hints(401, "invalid key", None, Some(true));
+    let auth = ProviderError::classify_with_hints(401, "invalid key", Some(true));
     assert!(matches!(auth, ProviderError::Auth(_)));
-    let quota = ProviderError::classify_with_hints(429, "quota exceeded", None, Some(true));
+    let quota = ProviderError::classify_with_hints(429, "quota exceeded", Some(true));
     assert!(quota.is_quota_limited());
 
     // An explicit false never downgrades a server-side failure — resilience
     // must not hinge on a proxy getting this header right.
-    let five = ProviderError::classify_with_hints(500, "boom", None, Some(false));
+    let five = ProviderError::classify_with_hints(500, "boom", Some(false));
     assert!(evotengine::retry::should_retry(&five));
 
     // Absent hint keeps the plain classification.
-    let plain = ProviderError::classify_with_hints(402, "Payment Required", None, None);
+    let plain = ProviderError::classify_with_hints(402, "Payment Required", None);
     assert!(matches!(plain, ProviderError::Other(_)));
     assert!(!evotengine::retry::should_retry(&plain));
 }
@@ -366,7 +315,7 @@ fn should_retry_hint_upgrades_only_unknown_classification() {
 #[test]
 fn classify_unknown_4xx_is_not_retryable() {
     for status in [402, 410, 418, 451] {
-        let err = ProviderError::classify(status, "client-side failure", None);
+        let err = ProviderError::classify(status, "client-side failure");
         assert!(matches!(err, ProviderError::Other(_)), "HTTP {status}");
         assert!(!evotengine::retry::should_retry(&err), "HTTP {status}");
     }
@@ -438,21 +387,21 @@ fn non_overflow_messages() {
 
 #[test]
 fn classify_404_not_retryable() {
-    let err = ProviderError::classify(404, "model not found", None);
+    let err = ProviderError::classify(404, "model not found");
     assert!(matches!(err, ProviderError::Other(_)));
     assert!(!evotengine::retry::should_retry(&err));
 }
 
 #[test]
 fn classify_405_not_retryable() {
-    let err = ProviderError::classify(405, "method not allowed", None);
+    let err = ProviderError::classify(405, "method not allowed");
     assert!(matches!(err, ProviderError::Other(_)));
     assert!(!evotengine::retry::should_retry(&err));
 }
 
 #[test]
 fn classify_422_not_retryable() {
-    let err = ProviderError::classify(422, "unprocessable entity", None);
+    let err = ProviderError::classify(422, "unprocessable entity");
     assert!(matches!(err, ProviderError::Other(_)));
     assert!(!evotengine::retry::should_retry(&err));
 }
