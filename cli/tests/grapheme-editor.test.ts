@@ -140,7 +140,8 @@ describe('grapheme-safe prompt layout', () => {
     chalk.level = 3
     const emoji = '👩🏽‍💻'
     const rendered = blocksToLines(buildPromptBlocks(promptInput(`${emoji}x`, 0))).join('\n')
-    // The caret leads the grapheme it points at; the grapheme stays intact.
-    expect(rendered).toContain(`▌\x1b[39m\x1b[22m${emoji}`)
+    // The cursor block covers the whole grapheme rather than splitting it into
+    // its component code points.
+    expect(rendered).toContain(`\x1b[38;2;26;29;36m${emoji}\x1b[39m`)
   })
 })

@@ -12,6 +12,7 @@ import stringWidth from 'string-width'
 import { COMMANDS, HIDDEN_COMMANDS } from '../../commands/index.js'
 import { getTheme } from '../../render/theme.js'
 import type { CompletionMenu } from '../input/editor.js'
+import { nextGraphemeBoundary } from '../input/grapheme.js'
 import { CURSOR_MARKER } from '../renderer.js'
 import { createFrame } from './frame.js'
 import { buildPromptFooterBlocks, type PromptFooterVM } from './prompt-footer.js'
@@ -44,8 +45,12 @@ const COMPLETION_ROWS_TALL = 12
 const COMPLETION_TALL_ROWS_THRESHOLD = 35
 const PLACEHOLDER_HINT = ' Type a message...'
 
-/** Left-half block: reads as a caret without covering the character under it. */
-const CARET = '▌'
+/**
+ * Three-eighths block (U+258D): the end-of-line caret. Thin enough to read as
+ * a caret rather than a filled cell, and wide enough to survive fonts that
+ * render the one-eighth bar as a hairline or drop it entirely.
+ */
+const CARET = '▍'
 
 /** Share of the terminal the editor may grow to before it starts scrolling. */
 const MAX_INPUT_ROWS_RATIO = 0.3
@@ -129,9 +134,10 @@ export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOpt
 /** `contentWidth` is the room inside the frame, not the terminal width. */
 function buildInputLines(input: PromptVMInput, contentWidth: number): { lines: StyledLine[]; cursorIndex: number } {
   const lines: StyledLine[] = []
-  // The caret is drawn inline and costs one column, so wrapping has to stop a
-  // cell short of the content width or the caret pushes the last glyph out.
-  const width = Math.max(1, contentWidth - 1)
+  // No prompt prefix any more, so text gets the full content width. When the
+  // cursor lands past a full row, the end-of-line caret wraps onto a fresh row
+  // rather than stealing a column from every line.
+  const width = Math.max(1, contentWidth)
   let cursorIndex = 0
 
   for (let lineIndex = 0; lineIndex < input.lines.length; lineIndex++) {
@@ -174,15 +180,27 @@ function buildInputLines(input: PromptVMInput, contentWidth: number): { lines: S
       const cursorCol = Math.max(0, input.cursorCol - chunk.start)
       const rawGhost = !input.completion && chunk.end === text.length ? input.ghostHint : ''
       // Style the whole chunk before splitting, otherwise a command straddling
-      // the caret is scored as two fragments and loses its brand hue.
-      const [before, under] = splitSpansAt(styleInputText(textChunk), cursorCol)
-      // The caret sits before the character it points at, so the text under it
-      // stays legible and no cell has to be swapped out for inverse video.
-      const spans: StyledSpan[] = [...before, plain(CURSOR_MARKER), caret(), ...under]
+      // the cursor is scored as two fragments and loses its brand hue.
+      const styled = styleInputText(textChunk)
+      const graphemeEnd = nextGraphemeBoundary(textChunk, cursorCol)
+      const onChar = cursorCol < textChunk.length
+      const [before, rest] = splitSpansAt(styled, cursorCol)
+      const spans: StyledSpan[] = [...before, plain(CURSOR_MARKER)]
+      if (onChar) {
+        // The cursor sits on a character: flip that cell to a solid block so
+        // the glyph stays visible and the line width is unchanged — no extra
+        // column, no word split.
+        const [onSpans, after] = splitSpansAt(rest, graphemeEnd - cursorCol)
+        spans.push(...onSpans.map(cursorBlock), ...after)
+      } else {
+        // At the end of the line there is nothing to sit on, so draw a thin
+        // bar in the caret column instead.
+        spans.push(caret())
+      }
       // The hint is advisory, so it yields to the terminal edge rather than
       // overflowing it: `getGhostHint` can return the full command list, which
-      // is far wider than a narrow terminal. The caret costs one column.
-      const ghostBudget = contentWidth - 1 - stringWidth(textChunk)
+      // is far wider than a narrow terminal. The bar costs one column when shown.
+      const ghostBudget = contentWidth - stringWidth(textChunk) - (onChar ? 0 : 1)
       const ghost = rawGhost ? truncateToWidth(rawGhost, Math.max(0, ghostBudget)) : ''
       if (ghost) spans.push(dim(ghost))
       lines.push(line(...spans))
@@ -249,12 +267,22 @@ function styleInputText(text: string): StyledSpan[] {
 }
 
 /**
- * The caret. A left-half block in the cursor hue, drawn inline rather than as
- * an inverse-video cell: it marks the insertion point without hiding the
- * character that sits there, and it needs no `❯` prefix to say "type here".
+ * The end-of-line caret: a thin vertical bar in the cursor hue. Used only
+ * where there is no character to sit on, so it reads as "type here" without an
+ * `❯` prefix. Mid-line, `cursorBlock` highlights the character instead.
  */
 function caret(): StyledSpan {
   return { text: CARET, hex: getTheme().cursorHex, bold: true }
+}
+
+/**
+ * Recolour a span as the cell the cursor sits on: a solid block of the cursor
+ * hue with contrasting text. Unlike inserting a bar, this keeps the glyph
+ * visible and does not shift the rest of the line by a column.
+ */
+function cursorBlock(span: StyledSpan): StyledSpan {
+  const { cursorHex, cursorFgHex } = getTheme()
+  return { ...span, hex: cursorFgHex, fg: undefined, bg: cursorHex, dim: false, bold: true }
 }
 
 /**

@@ -236,7 +236,7 @@ describe('renderPrompt', () => {
   test('contains the caret', () => {
     const lines = blocksToLines(buildPromptBlocks(defaultPromptVM()))
     const joined = lines.join('\n')
-    expect(joined).toContain('▌')
+    expect(joined).toContain('▍')
   })
 
   test('contains border', () => {

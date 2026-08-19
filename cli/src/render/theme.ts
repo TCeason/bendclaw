@@ -33,6 +33,8 @@ export interface Theme {
   selectionMutedHex: string
   /** The prompt caret. Deliberately off-palette so it reads as "you are here". */
   cursorHex: string
+  /** Text sat on by the cursor block; contrasts against `cursorHex`. */
+  cursorFgHex: string
 
   // Inline
   text: Style
@@ -101,8 +103,11 @@ function darkTheme(): Theme {
     selectionMutedHex: '#9aa0b4',
 
     // Lime, against a periwinkle frame: the caret has to win attention over
-    // everything around it, so it sits outside the brand palette.
+    // everything around it, so it sits outside the brand palette. When the
+    // cursor sits on a character, that cell flips to a lime block with near
+    // black text — bright enough to read, close to a real terminal caret.
     cursorHex: '#9ae65c',
+    cursorFgHex: '#1a1d24',
 
     text: plain,
     bold: style(s => chalk.bold(s)),
@@ -174,7 +179,9 @@ function lightTheme(): Theme {
     selectionMutedHex: '#5b6070',
 
     // Darker, more saturated green: the dark theme's lime disappears on white.
+    // The block flips to white text against it.
     cursorHex: '#3f9142',
+    cursorFgHex: '#ffffff',
 
     text: plain,
     bold: style(s => chalk.bold(s)),
