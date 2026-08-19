@@ -27,6 +27,11 @@ export interface Theme {
   accentBold: Style
   accentHex: string
 
+  /** Fill behind a selected row (completion menu). */
+  selectionBgHex: string
+  /** Secondary text on `selectionBgHex`, where the normal dim gray is too dark. */
+  selectionMutedHex: string
+
   // Inline
   text: Style
   bold: Style
@@ -87,6 +92,11 @@ function darkTheme(): Theme {
     accent: style(s => chalk.hex(accentHex)(s)),
     accentBold: style(s => chalk.hex(accentHex).bold(s)),
     accentHex,
+
+    // Desaturated periwinkle: reads as "same family as the frame" while staying
+    // dark enough that brand-hued text on top keeps its contrast.
+    selectionBgHex: '#2c2f4a',
+    selectionMutedHex: '#9aa0b4',
 
     text: plain,
     bold: style(s => chalk.bold(s)),
@@ -151,6 +161,11 @@ function lightTheme(): Theme {
     accent: style(s => chalk.hex(accentHex)(s)),
     accentBold: style(s => chalk.hex(accentHex).bold(s)),
     accentHex,
+
+    // Light counterpart of the dark selection fill: a pale periwinkle wash that
+    // keeps the brand-hued label readable on a white background.
+    selectionBgHex: '#dfe3fd',
+    selectionMutedHex: '#5b6070',
 
     text: plain,
     bold: style(s => chalk.bold(s)),

@@ -6,6 +6,8 @@ export interface StyledSpan {
   fg?: 'red' | 'green' | 'yellow' | 'cyan' | 'magenta' | 'gray' | 'white'
   /** Custom foreground hex (e.g. '#8fbf8f'). Takes precedence over `fg`. */
   hex?: string
+  /** Custom background hex. Rendered as truecolor SGR 48;2. */
+  bg?: string
   dim?: boolean
   bold?: boolean
   inverse?: boolean
@@ -17,6 +19,8 @@ export interface StyledSpan {
 
 export interface StyledLine {
   spans: StyledSpan[]
+  /** Fill applied to padding added when a line is laid out to a fixed width. */
+  bg?: string
 }
 
 export interface ViewBlock {
@@ -47,6 +51,9 @@ export function styledLineToAnsi(line: StyledLine): string {
     if (span.dim) result = chalk.hex('#777777')(result)
     if (span.italic) result = chalk.italic(result)
     if (span.inverse) result = `\x1b[7m${s}\x1b[27m`
+    // Background wraps last so it survives the inner foreground resets emitted
+    // by the styles above, and covers the span's full cell range.
+    if (span.bg) result = chalk.bgHex(span.bg)(result)
     if (span.link) result = wrapHyperlink(span.link, result)
     return result
   }).join('')

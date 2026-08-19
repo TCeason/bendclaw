@@ -1,35 +1,34 @@
+/**
+ * The prompt editor: what you type, what is being suggested, and the frame
+ * around both.
+ *
+ * This module composes; the pieces live next door. `frame.ts` owns the border
+ * and the fixed-width invariant, `prompt-footer.ts` owns the status line, and
+ * `width.ts` owns column arithmetic. What stays here is the editor content
+ * itself: input rows with the cursor and ghost hint, and the completion menu.
+ */
+
 import stringWidth from 'string-width'
 import { COMMANDS, HIDDEN_COMMANDS } from '../../commands/index.js'
-import type { CompletionMenu } from '../input/editor.js'
-import { nextGraphemeBoundary, wrapEditorText } from '../input/grapheme.js'
-import { CURSOR_MARKER } from '../renderer.js'
-import { line, block, plain, dim, colored, inverse, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
-import { formatCacheHitPercent, type PromptUsageBuckets } from '../../render/cache.js'
 import { getTheme } from '../../render/theme.js'
+import type { CompletionMenu } from '../input/editor.js'
+import { nextGraphemeBoundary } from '../input/grapheme.js'
+import { CURSOR_MARKER } from '../renderer.js'
+import { createFrame } from './frame.js'
+import { buildPromptFooterBlocks, type PromptFooterVM } from './prompt-footer.js'
+import { line, block, plain, dim, inverse, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
+import { finiteSize, truncateToWidth, wrapTextByWidth } from './width.js'
 
-export interface PromptVMInput {
+export interface PromptVMInput extends PromptFooterVM {
   lines: string[]
   cursorLine: number
   cursorCol: number
   active: boolean
   completion: CompletionMenu | null
   ghostHint: string
-  columns: number
   rows: number
   placeholder: boolean
-  model: string
-  provider: string
-  thinkingLevel: string
-  planning: boolean
-  logMode: boolean
-  dashboardUrl: string | null
   exitHint: boolean
-  cwd: string
-  gitBranch: string | null
-  contextTokens: number
-  contextWindow: number
-  /** Prompt buckets of the last billed request; null hides the cache segment. */
-  cacheUsage?: PromptUsageBuckets | null
 }
 
 export interface PromptLayoutOptions {
@@ -39,39 +38,96 @@ export interface PromptLayoutOptions {
 const KNOWN_COMMANDS = new Set(
   [...COMMANDS, ...HIDDEN_COMMANDS].flatMap(command => [command.name, ...(command.aliases ?? [])]),
 )
-const COMPLETION_ROWS = 5
+
+/** Completion viewport height: taller terminals get more candidates. */
+const COMPLETION_ROWS_COMPACT = 5
+const COMPLETION_ROWS_TALL = 12
+const COMPLETION_TALL_ROWS_THRESHOLD = 35
+const PLACEHOLDER_HINT = ' Type a message...'
+
+/** Share of the terminal the editor may grow to before it starts scrolling. */
+const MAX_INPUT_ROWS_RATIO = 0.3
+const MAX_INPUT_ROWS_FLOOR = 5
+
+/**
+ * Blank rows kept around a short draft so the composer reads as a place to
+ * write rather than a single cramped line.
+ *
+ * Three is the smallest floor that can centre: an even interior cannot put
+ * equal blanks above and below a one-line draft, which is what makes a 2-row
+ * composer look top-heavy. Only on terminals with rows to spare — below the
+ * threshold the floor drops to 1, because a fixed composer plus borders and
+ * footer would claim over 40% of a 14-row terminal.
+ */
+const MIN_INPUT_ROWS_TALL = 3
+const MIN_INPUT_ROWS_TALL_THRESHOLD = 20
+
+function completionRows(rows: number): number {
+  return rows > COMPLETION_TALL_ROWS_THRESHOLD ? COMPLETION_ROWS_TALL : COMPLETION_ROWS_COMPACT
+}
+
+function minInputRows(rows: number): number {
+  return rows >= MIN_INPUT_ROWS_TALL_THRESHOLD ? MIN_INPUT_ROWS_TALL : 1
+}
+
+/** `↑ 3 lines` / `↓ 1 line` — hidden rows above or below the viewport. */
+function overflowLabel(arrow: '↑' | '↓', count: number): string | undefined {
+  if (count <= 0) return undefined
+  return `${arrow} ${count} ${count === 1 ? 'line' : 'lines'}`
+}
 
 export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOptions = {}): ViewBlock[] {
   const columns = finiteSize(input.columns, 80)
   const rows = finiteSize(input.rows, 24)
-  const visual = buildInputLines(input, columns)
-  const maxInputRows = Math.max(5, Math.floor(rows * 0.3))
+  const frame = createFrame(columns)
+
+  const visual = buildInputLines(input, frame.contentWidth)
+  const maxInputRows = Math.max(MAX_INPUT_ROWS_FLOOR, Math.floor(rows * MAX_INPUT_ROWS_RATIO))
   const start = Math.max(0, Math.min(visual.cursorIndex - maxInputRows + 1, visual.lines.length - maxInputRows))
   const end = Math.min(visual.lines.length, start + maxInputRows)
-  const above = start
-  const below = visual.lines.length - end
+  const inputRows = visual.lines.slice(start, end)
+
+  const completionLines = buildCompletionLines(input.completion, frame.contentWidth, rows)
+  // The candidate list already gives the composer height, so the blank-row
+  // floor only applies when no menu is open. Otherwise the two stack and push
+  // the candidates away from what you typed. Rails are what make the blanks
+  // read as composer space, so an unframed terminal gets none.
+  const filler = completionLines.length > 0 || !frame.framed
+    ? 0
+    : Math.max(0, minInputRows(rows) - inputRows.length)
+  // Split the filler around the draft so a short one sits centred. Odd
+  // remainders go below, keeping the text on or above the middle rather than
+  // sinking it a row lower than the eye expects.
+  const above = Math.floor(filler / 2)
+  const blank = () => frame.row(line(plain('')))
 
   const blocks: ViewBlock[] = [
-    block([borderLine(columns, above > 0 ? `↑ ${above} ${above === 1 ? 'line' : 'lines'}` : '')], options.attachedAbove ? 0 : 1),
-    block(visual.lines.slice(start, end)),
+    block([frame.top(overflowLabel('↑', start))], options.attachedAbove ? 0 : 1),
+    block([
+      ...Array.from({ length: above }, blank),
+      ...inputRows.map(frame.row),
+      ...Array.from({ length: filler - above }, blank),
+    ]),
   ]
 
-  const completionLines = buildCompletionLines(input.completion, columns)
-  if (completionLines.length > 0) blocks.push(block(completionLines))
-  blocks.push(block([borderLine(columns, below > 0 ? `↓ ${below} ${below === 1 ? 'line' : 'lines'}` : '')]))
+  if (completionLines.length > 0) {
+    // A blank rail row separates what you typed from what is being suggested;
+    // without it the selected candidate reads as a continuation of the input.
+    // Only inside the frame: unframed terminals are too short to spend a row.
+    if (frame.framed) blocks.push(block([frame.row(line(plain('')))]))
+    blocks.push(block(completionLines.map(frame.row)))
+  }
+  blocks.push(block([frame.bottom(overflowLabel('↓', visual.lines.length - end))]))
 
-  if (input.exitHint) blocks.push(block([line(dim('  Press Ctrl+C again to exit'))]))
+  if (input.exitHint) blocks.push(block([line(dim(truncateToWidth('  Press Ctrl+C again to exit', columns)))]))
   blocks.push(...buildPromptFooterBlocks(input))
   return blocks
 }
 
-export function buildPromptFooterBlocks(input: PromptVMInput): ViewBlock[] {
-  return [buildFooter(input, finiteSize(input.columns, 80)), block([line(plain(''))])]
-}
-
-function buildInputLines(input: PromptVMInput, columns: number): { lines: StyledLine[]; cursorIndex: number } {
+/** `contentWidth` is the room inside the frame, not the terminal width. */
+function buildInputLines(input: PromptVMInput, contentWidth: number): { lines: StyledLine[]; cursorIndex: number } {
   const lines: StyledLine[] = []
-  const width = Math.max(1, columns - 2)
+  const width = Math.max(1, contentWidth - 2)
   let cursorIndex = 0
 
   for (let lineIndex = 0; lineIndex < input.lines.length; lineIndex++) {
@@ -79,7 +135,14 @@ function buildInputLines(input: PromptVMInput, columns: number): { lines: Styled
     const active = input.active && lineIndex === input.cursorLine
     if (active && text === '' && input.lines.length === 1 && input.placeholder) {
       cursorIndex = lines.length
-      lines.push(line(colored('❯ ', 'cyan', { bold: true }), plain(CURSOR_MARKER), inverse(' '), dim(' Type a message...')))
+      // `❯ ` + the inverse cursor cell occupy 3 columns; the rest is the hint.
+      const hint = truncateToWidth(PLACEHOLDER_HINT, Math.max(0, contentWidth - 3))
+      lines.push(line(
+        promptGlyph(),
+        plain(CURSOR_MARKER),
+        inverse(' '),
+        ...(hint ? [dim(hint)] : []),
+      ))
       continue
     }
 
@@ -99,7 +162,7 @@ function buildInputLines(input: PromptVMInput, columns: number): { lines: Styled
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
       const chunk = chunks[chunkIndex]!
       const prefix = lineIndex === 0 && chunkIndex === 0
-        ? colored('❯ ', 'cyan', { bold: true })
+        ? promptGlyph()
         : plain('  ')
       const textChunk = text.slice(chunk.start, chunk.end)
       if (!active || chunkIndex !== cursorChunk) {
@@ -113,9 +176,18 @@ function buildInputLines(input: PromptVMInput, columns: number): { lines: Styled
       const before = textChunk.slice(0, cursorCol)
       const cursorChar = textChunk.slice(cursorCol, cursorEnd) || ' '
       const after = textChunk.slice(cursorEnd)
-      const ghost = !input.completion && chunk.end === text.length ? input.ghostHint : ''
+      const rawGhost = !input.completion && chunk.end === text.length ? input.ghostHint : ''
       const spans: StyledSpan[] = [prefix, ...styleInputText(before), plain(CURSOR_MARKER)]
-      if (ghost && cursorCol >= textChunk.length) {
+      const atLineEnd = rawGhost !== '' && cursorCol >= textChunk.length
+      // The hint is advisory, so it yields to the terminal edge rather than
+      // overflowing it: `getGhostHint` can return the full command list, which
+      // is far wider than a narrow terminal.
+      const ghostBudget = contentWidth
+        - 2
+        - stringWidth(before)
+        - (atLineEnd ? 0 : stringWidth(cursorChar) + stringWidth(after))
+      const ghost = rawGhost ? truncateToWidth(rawGhost, Math.max(0, ghostBudget)) : ''
+      if (ghost && atLineEnd) {
         // Cursor sits on the first ghost grapheme (pi-style: overlay, don't
         // insert a blank cell that would visually split the suggested word).
         const ghostEnd = nextGraphemeBoundary(ghost, 0)
@@ -131,13 +203,19 @@ function buildInputLines(input: PromptVMInput, columns: number): { lines: Styled
   return { lines, cursorIndex }
 }
 
-function buildCompletionLines(menu: CompletionMenu | null, columns: number): StyledLine[] {
+/** `contentWidth` is the room inside the frame, not the terminal width. */
+function buildCompletionLines(menu: CompletionMenu | null, contentWidth: number, rows: number): StyledLine[] {
   if (!menu || menu.items.length === 0) return []
-  const start = Math.max(0, Math.min(menu.selectedIndex - COMPLETION_ROWS + 1, menu.items.length - COMPLETION_ROWS))
-  const end = Math.min(menu.items.length, start + COMPLETION_ROWS)
+  const { brandHex, selectionBgHex, selectionMutedHex } = getTheme()
+  const visible = Math.min(completionRows(rows), menu.items.length)
+  // Keep the selection near the middle of the viewport so paging down does not
+  // pin it to the last row (which reads as "nothing below").
+  const ideal = menu.selectedIndex - Math.floor((visible - 1) / 2)
+  const start = Math.max(0, Math.min(ideal, menu.items.length - visible))
+  const end = start + visible
   const labelWidth = Math.min(
     Math.max(...menu.items.slice(start, end).map(item => stringWidth(item.label))),
-    Math.max(1, Math.floor(columns * 0.45)),
+    Math.max(1, Math.floor(contentWidth * 0.45)),
   )
   const lines: StyledLine[] = []
 
@@ -146,211 +224,45 @@ function buildCompletionLines(menu: CompletionMenu | null, columns: number): Sty
     const selected = index === menu.selectedIndex
     const label = truncateToWidth(item.label, labelWidth)
     const padding = ' '.repeat(Math.max(0, labelWidth - stringWidth(label)))
-    const prefix = selected ? colored('❯ ', 'cyan', { bold: true }) : plain('  ')
-    const labelSpan = selected ? colored(label, 'cyan', { bold: true }) : plain(label)
-    const descriptionWidth = Math.max(0, columns - 2 - labelWidth - 2)
+    const bg = selected ? selectionBgHex : undefined
+    const prefix = selected ? { text: '❯ ', hex: brandHex, bold: true, bg } : plain('  ')
+    const labelSpan = selected ? { text: label, hex: brandHex, bold: true, bg } : plain(label)
+    const descriptionWidth = Math.max(0, contentWidth - 2 - labelWidth - 2)
     const description = item.description && descriptionWidth > 0
       ? truncateToWidth(item.description, descriptionWidth)
       : ''
-    lines.push(line(prefix, labelSpan, plain(padding), description ? dim(`  ${description}`) : plain('')))
+    // On the selection fill the normal dim gray loses contrast, so descriptions
+    // switch to the lighter selection-muted tier.
+    const descriptionSpan = !description
+      ? plain('')
+      : selected
+        ? { text: `  ${description}`, hex: selectionMutedHex, bg }
+        : dim(`  ${description}`)
+    lines.push({
+      spans: [prefix, labelSpan, { text: padding, ...(bg ? { bg } : {}) }, descriptionSpan],
+      ...(bg ? { bg } : {}),
+    })
   }
 
-  if (menu.items.length > COMPLETION_ROWS) {
+  if (menu.items.length > visible) {
     lines.push(line(dim(`  ${menu.selectedIndex + 1}/${menu.items.length}`)))
   }
   return lines
-}
-
-function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
-  const mode = `${input.logMode ? '[log] ' : ''}${input.planning ? '[plan] ' : ''}`
-  const cwd = compactCwd(input.cwd)
-  const contextPercent = input.contextWindow > 0
-    ? input.contextTokens / input.contextWindow * 100
-    : 0
-  const layouts: FooterLayout[] = [
-    { dashboard: true, context: 'full', cache: true, provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
-    { dashboard: false, context: 'full', cache: true, provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
-    { dashboard: false, context: 'compact', cache: true, provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
-    { dashboard: false, context: 'compact', cache: false, provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
-    { dashboard: false, context: 'compact', cache: false, provider: false, branch: true, thinking: true, model: true, truncateCwd: false },
-    { dashboard: false, context: 'compact', cache: false, provider: false, branch: false, thinking: true, model: true, truncateCwd: false },
-    { dashboard: false, context: 'hidden', cache: false, provider: false, branch: false, thinking: true, model: true, truncateCwd: true },
-    { dashboard: false, context: 'hidden', cache: false, provider: false, branch: false, thinking: false, model: true, truncateCwd: true },
-    { dashboard: false, context: 'hidden', cache: false, provider: false, branch: false, thinking: false, model: false, truncateCwd: true },
-  ]
-
-  for (const layout of layouts) {
-    const candidate = buildFooterCandidate(input, mode, cwd, contextPercent, layout, columns)
-    if (footerCandidateWidth(candidate) <= columns) return block([renderFooterCandidate(candidate, columns)])
-  }
-
-  return block([line(dim(truncateTailToWidth(`${mode}${cwd}`, columns)))])
-}
-
-type FooterContextDetail = 'full' | 'compact' | 'hidden'
-
-interface FooterLayout {
-  dashboard: boolean
-  context: FooterContextDetail
-  cache: boolean
-  provider: boolean
-  branch: boolean
-  thinking: boolean
-  model: boolean
-  truncateCwd: boolean
-}
-
-interface FooterCandidate {
-  left: StyledSpan[]
-  dashboard: StyledSpan[] | null
-}
-
-function buildFooterCandidate(
-  input: PromptVMInput,
-  mode: string,
-  cwd: string,
-  contextPercent: number,
-  layout: FooterLayout,
-  columns: number,
-): FooterCandidate {
-  const dashboard = layout.dashboard && input.dashboardUrl
-    ? [
-        { text: 'dashboard ', hex: '#7fae7f' } satisfies StyledSpan,
-        { text: input.dashboardUrl, hex: '#7fae7f', link: input.dashboardUrl } satisfies StyledSpan,
-      ]
-    : null
-
-  const buildLeft = (location: string): StyledSpan[] => {
-    const groups: StyledSpan[][] = [[dim(location)]]
-    if (layout.model && input.model) {
-      const identity: StyledSpan[] = [dim(input.model)]
-      if (layout.provider && input.provider) identity.push(dim(`@${input.provider}`))
-      if (layout.thinking && input.thinkingLevel) {
-        const thinking = input.thinkingLevel === 'off' ? 'thinking off' : input.thinkingLevel
-        identity.push(dim(` • ${thinking}`))
-      }
-      groups.push(identity)
-    }
-    if (layout.context !== 'hidden' && contextPercent > 0) {
-      const warning = contextPercent > 90 ? ' ⚠' : ''
-      const detail = layout.context === 'full'
-        ? ` (${formatContextTokens(input.contextTokens)}/${formatContextTokens(input.contextWindow)})`
-        : ''
-      const text = `context: ${contextPercent.toFixed(1)}%${detail}${warning}`
-      groups.push([
-        contextPercent > 90
-          ? colored(text, 'red')
-          : contextPercent > 70
-            ? colored(text, 'yellow')
-            : dim(text),
-      ])
-    }
-    if (layout.cache && input.cacheUsage
-      && input.cacheUsage.cacheReadTokens + input.cacheUsage.cacheWriteTokens > 0) {
-      const pct = formatCacheHitPercent(
-        input.cacheUsage.inputTokens,
-        input.cacheUsage.cacheReadTokens,
-        input.cacheUsage.cacheWriteTokens,
-      )
-      groups.push([dim(`cache: ${pct}%`)])
-    }
-    return groups.flatMap((group, index) => index === 0 ? group : [dim(' │ '), ...group])
-  }
-
-  const branch = layout.branch && input.gitBranch ? ` (${input.gitBranch})` : ''
-  const fullLocation = `${mode}${cwd}${branch}`
-  let left = buildLeft(fullLocation)
-  let candidate = { left, dashboard }
-  if (!layout.truncateCwd || footerCandidateWidth(candidate) <= columns) return candidate
-
-  const fixedWidth = footerCandidateWidth(candidate) - stringWidth(fullLocation)
-  const availableLocationWidth = Math.max(1, columns - fixedWidth)
-  left = buildLeft(truncateTailToWidth(`${mode}${cwd}`, availableLocationWidth))
-  candidate = { left, dashboard }
-  return candidate
-}
-
-function footerCandidateWidth(candidate: FooterCandidate): number {
-  const left = spansWidth(candidate.left)
-  return candidate.dashboard ? left + 2 + spansWidth(candidate.dashboard) : left
-}
-
-function renderFooterCandidate(candidate: FooterCandidate, columns: number): StyledLine {
-  if (!candidate.dashboard) return line(...candidate.left)
-  const padding = columns - spansWidth(candidate.left) - spansWidth(candidate.dashboard)
-  return line(...candidate.left, plain(' '.repeat(Math.max(2, padding))), ...candidate.dashboard)
-}
-
-function spansWidth(spans: StyledSpan[]): number {
-  return stringWidth(spans.map(span => span.text).join(''))
-}
-
-function compactCwd(cwd: string): string {
-  const home = process.env.HOME || process.env.USERPROFILE || ''
-  return home && cwd.startsWith(home) ? `~${cwd.slice(home.length)}` : cwd
 }
 
 function styleInputText(text: string): StyledSpan[] {
   const match = /^(\/[a-z]+)(\s.*)?$/.exec(text)
   if (!match || !KNOWN_COMMANDS.has(match[1]!)) return [plain(text)]
   return [
-    colored(match[1]!, 'cyan', { bold: true }),
+    { text: match[1]!, hex: getTheme().brandHex, bold: true },
     ...(match[2] ? [plain(match[2])] : []),
   ]
 }
 
-function borderLine(columns: number, label: string): StyledLine {
-  const text = !label
-    ? '─'.repeat(columns)
-    : truncateToWidth(`── ${label} `, columns) +
-      '─'.repeat(Math.max(0, columns - stringWidth(`── ${label} `)))
-  return line({ text, hex: getTheme().brandHex })
-}
-
-function finiteSize(value: number, fallback: number): number {
-  return Number.isFinite(value) ? Math.max(1, Math.floor(value)) : fallback
-}
-
-function truncateToWidth(text: string, width: number): string {
-  if (width <= 0) return ''
-  if (stringWidth(text) <= width) return text
-  if (width <= 1) return '…'.slice(0, width)
-  let result = ''
-  let used = 0
-  for (const char of text) {
-    const charWidth = stringWidth(char)
-    if (used + charWidth > width - 1) break
-    result += char
-    used += charWidth
-  }
-  return `${result}…`
-}
-
-function truncateTailToWidth(text: string, width: number): string {
-  if (width <= 0) return ''
-  if (stringWidth(text) <= width) return text
-  if (width <= 1) return '…'.slice(0, width)
-  let result = ''
-  let used = 0
-  for (const char of [...text].reverse()) {
-    const charWidth = stringWidth(char)
-    if (used + charWidth > width - 1) break
-    result = char + result
-    used += charWidth
-  }
-  return `…${result}`
-}
-
-function formatContextTokens(count: number): string {
-  if (count < 1000) return `${count}`
-  if (count < 1000000) {
-    const k = count / 1000
-    return `${Number.isInteger(k) ? k : k.toFixed(1)}k`
-  }
-  const m = count / 1000000
-  return `${Number.isInteger(m) ? m : m.toFixed(1)}M`
-}
-
-export function wrapTextByWidth(text: string, width: number): { start: number; end: number }[] {
-  return wrapEditorText(text, width)
+/**
+ * The `❯` marker carries the same brand hue as the frame it sits in, so a
+ * theme swap moves both together.
+ */
+function promptGlyph(): StyledSpan {
+  return { text: '❯ ', hex: getTheme().brandHex, bold: true }
 }

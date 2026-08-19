@@ -1,0 +1,171 @@
+/**
+ * The status line below the prompt editor.
+ *
+ * Everything on this line is optional except the working directory. Terminals
+ * get narrow, so the footer picks the first layout in a fixed priority order
+ * that fits the available columns, dropping detail rather than wrapping or
+ * overflowing.
+ */
+
+import stringWidth from 'string-width'
+import { formatCacheHitPercent, type PromptUsageBuckets } from '../../render/cache.js'
+import { line, block, plain, dim, colored, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
+import { finiteSize, spansWidth, truncateTailToWidth } from './width.js'
+
+/** The subset of prompt state the footer reads. */
+export interface PromptFooterVM {
+  columns: number
+  model: string
+  provider: string
+  thinkingLevel: string
+  planning: boolean
+  logMode: boolean
+  dashboardUrl: string | null
+  cwd: string
+  gitBranch: string | null
+  contextTokens: number
+  contextWindow: number
+  /** Prompt buckets of the last billed request; null hides the cache segment. */
+  cacheUsage?: PromptUsageBuckets | null
+}
+
+export function buildPromptFooterBlocks(input: PromptFooterVM): ViewBlock[] {
+  return [buildFooter(input, finiteSize(input.columns, 80)), block([line(plain(''))])]
+}
+
+function buildFooter(input: PromptFooterVM, columns: number): ViewBlock {
+  const mode = `${input.logMode ? '[log] ' : ''}${input.planning ? '[plan] ' : ''}`
+  const cwd = compactCwd(input.cwd)
+  const contextPercent = input.contextWindow > 0
+    ? input.contextTokens / input.contextWindow * 100
+    : 0
+
+  for (const layout of FOOTER_LAYOUTS) {
+    const candidate = buildFooterCandidate(input, mode, cwd, contextPercent, layout, columns)
+    if (footerCandidateWidth(candidate) <= columns) return block([renderFooterCandidate(candidate, columns)])
+  }
+
+  return block([line(dim(truncateTailToWidth(`${mode}${cwd}`, columns)))])
+}
+
+type FooterContextDetail = 'full' | 'compact' | 'hidden'
+
+interface FooterLayout {
+  dashboard: boolean
+  context: FooterContextDetail
+  cache: boolean
+  provider: boolean
+  branch: boolean
+  thinking: boolean
+  model: boolean
+  truncateCwd: boolean
+}
+
+/** Widest first: the first entry that fits wins, so detail sheds in this order. */
+const FOOTER_LAYOUTS: FooterLayout[] = [
+  { dashboard: true, context: 'full', cache: true, provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
+  { dashboard: false, context: 'full', cache: true, provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
+  { dashboard: false, context: 'compact', cache: true, provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
+  { dashboard: false, context: 'compact', cache: false, provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
+  { dashboard: false, context: 'compact', cache: false, provider: false, branch: true, thinking: true, model: true, truncateCwd: false },
+  { dashboard: false, context: 'compact', cache: false, provider: false, branch: false, thinking: true, model: true, truncateCwd: false },
+  { dashboard: false, context: 'hidden', cache: false, provider: false, branch: false, thinking: true, model: true, truncateCwd: true },
+  { dashboard: false, context: 'hidden', cache: false, provider: false, branch: false, thinking: false, model: true, truncateCwd: true },
+  { dashboard: false, context: 'hidden', cache: false, provider: false, branch: false, thinking: false, model: false, truncateCwd: true },
+]
+
+interface FooterCandidate {
+  left: StyledSpan[]
+  dashboard: StyledSpan[] | null
+}
+
+function buildFooterCandidate(
+  input: PromptFooterVM,
+  mode: string,
+  cwd: string,
+  contextPercent: number,
+  layout: FooterLayout,
+  columns: number,
+): FooterCandidate {
+  const dashboard = layout.dashboard && input.dashboardUrl
+    ? [
+        { text: 'dashboard ', hex: '#7fae7f' } satisfies StyledSpan,
+        { text: input.dashboardUrl, hex: '#7fae7f', link: input.dashboardUrl } satisfies StyledSpan,
+      ]
+    : null
+
+  const buildLeft = (location: string): StyledSpan[] => {
+    const groups: StyledSpan[][] = [[dim(location)]]
+    if (layout.model && input.model) {
+      const identity: StyledSpan[] = [dim(input.model)]
+      if (layout.provider && input.provider) identity.push(dim(`@${input.provider}`))
+      if (layout.thinking && input.thinkingLevel) {
+        const thinking = input.thinkingLevel === 'off' ? 'thinking off' : input.thinkingLevel
+        identity.push(dim(` • ${thinking}`))
+      }
+      groups.push(identity)
+    }
+    if (layout.context !== 'hidden' && contextPercent > 0) {
+      const warning = contextPercent > 90 ? ' ⚠' : ''
+      const detail = layout.context === 'full'
+        ? ` (${formatContextTokens(input.contextTokens)}/${formatContextTokens(input.contextWindow)})`
+        : ''
+      const text = `context: ${contextPercent.toFixed(1)}%${detail}${warning}`
+      groups.push([
+        contextPercent > 90
+          ? colored(text, 'red')
+          : contextPercent > 70
+            ? colored(text, 'yellow')
+            : dim(text),
+      ])
+    }
+    if (layout.cache && input.cacheUsage
+      && input.cacheUsage.cacheReadTokens + input.cacheUsage.cacheWriteTokens > 0) {
+      const pct = formatCacheHitPercent(
+        input.cacheUsage.inputTokens,
+        input.cacheUsage.cacheReadTokens,
+        input.cacheUsage.cacheWriteTokens,
+      )
+      groups.push([dim(`cache: ${pct}%`)])
+    }
+    return groups.flatMap((group, index) => index === 0 ? group : [dim(' │ '), ...group])
+  }
+
+  const branch = layout.branch && input.gitBranch ? ` (${input.gitBranch})` : ''
+  const fullLocation = `${mode}${cwd}${branch}`
+  let left = buildLeft(fullLocation)
+  let candidate = { left, dashboard }
+  if (!layout.truncateCwd || footerCandidateWidth(candidate) <= columns) return candidate
+
+  const fixedWidth = footerCandidateWidth(candidate) - stringWidth(fullLocation)
+  const availableLocationWidth = Math.max(1, columns - fixedWidth)
+  left = buildLeft(truncateTailToWidth(`${mode}${cwd}`, availableLocationWidth))
+  candidate = { left, dashboard }
+  return candidate
+}
+
+function footerCandidateWidth(candidate: FooterCandidate): number {
+  const left = spansWidth(candidate.left)
+  return candidate.dashboard ? left + 2 + spansWidth(candidate.dashboard) : left
+}
+
+function renderFooterCandidate(candidate: FooterCandidate, columns: number): StyledLine {
+  if (!candidate.dashboard) return line(...candidate.left)
+  const padding = columns - spansWidth(candidate.left) - spansWidth(candidate.dashboard)
+  return line(...candidate.left, plain(' '.repeat(Math.max(2, padding))), ...candidate.dashboard)
+}
+
+function compactCwd(cwd: string): string {
+  const home = process.env.HOME || process.env.USERPROFILE || ''
+  return home && cwd.startsWith(home) ? `~${cwd.slice(home.length)}` : cwd
+}
+
+function formatContextTokens(count: number): string {
+  if (count < 1000) return `${count}`
+  if (count < 1000000) {
+    const k = count / 1000
+    return `${Number.isInteger(k) ? k : k.toFixed(1)}k`
+  }
+  const m = count / 1000000
+  return `${Number.isInteger(m) ? m : m.toFixed(1)}M`
+}

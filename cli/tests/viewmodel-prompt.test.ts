@@ -3,9 +3,11 @@ import chalk from 'chalk'
 import stringWidth from 'string-width'
 import stripAnsi from 'strip-ansi'
 import { resetThemeCache } from '../src/render/theme.js'
+import { visibleWidth } from '../src/render/wrap.js'
 import { CURSOR_MARKER } from '../src/term/renderer.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
-import { buildPromptBlocks, buildPromptFooterBlocks, type PromptVMInput } from '../src/term/viewmodel/prompt.js'
+import { buildPromptBlocks, type PromptVMInput } from '../src/term/viewmodel/prompt.js'
+import { buildPromptFooterBlocks } from '../src/term/viewmodel/prompt-footer.js'
 
 beforeAll(() => { chalk.level = 3 })
 
@@ -43,6 +45,36 @@ function renderPlain(input: PromptVMInput): string {
   return stripAnsi(render(input)).replaceAll(CURSOR_MARKER, '')
 }
 
+function renderLines(input: PromptVMInput): string[] {
+  return blocksToLines(buildPromptBlocks(input))
+}
+
+/** Rows that belong to the input frame (borders and railed content). */
+function frameLines(input: PromptVMInput): string[] {
+  return renderLines(input).filter(row => /^[│╭╰─]/.test(stripAnsi(row)))
+}
+
+function menuOf(count: number, selectedIndex: number) {
+  return {
+    items: Array.from({ length: count }, (_, index) => ({
+      label: `/cmd${index}`,
+      value: `/cmd${index} `,
+      description: `does thing ${index}`,
+    })),
+    selectedIndex,
+    replaceStart: 0,
+    replaceEnd: 3,
+  }
+}
+
+/** Candidate labels currently inside the completion viewport, in order. */
+function visibleCandidates(input: PromptVMInput): string[] {
+  return renderLines(input).flatMap(row => {
+    const match = /(\/cmd\d+)/.exec(stripAnsi(row))
+    return match ? [match[1]!] : []
+  })
+}
+
 function completion(labels: string[], selectedIndex = 0) {
   return {
     items: labels.map(label => ({ label, value: `${label} `, description: `Description for ${label}` })),
@@ -56,7 +88,8 @@ describe('prompt editor', () => {
   test('renders border, prompt, cursor and placeholder', () => {
     const ansi = render(defaultInput())
     const plain = stripAnsi(ansi).replaceAll(CURSOR_MARKER, '')
-    expect(plain).toContain('─'.repeat(80))
+    expect(plain).toContain(`╭${'─'.repeat(78)}╮`)
+    expect(plain).toContain(`╰${'─'.repeat(78)}╯`)
     expect(plain).toContain('❯')
     expect(plain).toContain('Type a message...')
     expect(ansi).toContain('\x1b[7m')
@@ -69,8 +102,11 @@ describe('prompt editor', () => {
         process.env.EVOT_THEME = scheme
         resetThemeCache()
         const lines = render(defaultInput()).split('\n')
-        const expectedBorder = chalk.hex(hex)('─'.repeat(80))
-        expect(lines.filter(line => line === expectedBorder)).toHaveLength(2)
+        for (const border of [`╭${'─'.repeat(78)}╮`, `╰${'─'.repeat(78)}╯`]) {
+          expect(lines.filter(line => line === chalk.hex(hex)(border))).toHaveLength(1)
+        }
+        // The side rails carry the same brand hue as the corners.
+        expect(lines.some(line => line.startsWith(chalk.hex(hex)('│')))).toBe(true)
       }
     } finally {
       if (previousTheme === undefined) delete process.env.EVOT_THEME
@@ -82,12 +118,13 @@ describe('prompt editor', () => {
   test('renders input and known command styling', () => {
     const input = defaultInput({ lines: ['/plan remove unwraps'], cursorCol: 5, placeholder: false })
     expect(renderPlain(input)).toContain('/plan remove unwraps')
-    expect(render(input)).toContain('\x1b[36m')
+    // Known commands share the frame's brand hue rather than a fixed ANSI cyan.
+    expect(render(input)).toContain(chalk.bold(chalk.hex('#b5bcf9')('/plan')))
   })
 
   test('does not style unknown slash text as a command', () => {
     const ansi = render(defaultInput({ lines: ['/unknown text'], cursorCol: 8, placeholder: false }))
-    expect(ansi).not.toContain('\x1b[36m/unknown')
+    expect(ansi).not.toContain(chalk.bold(chalk.hex('#b5bcf9')('/unknown')))
   })
 
   test('wraps ASCII and CJK input within terminal width', () => {
@@ -174,7 +211,327 @@ describe('prompt editor', () => {
 
   test('uses fallback dimensions for non-finite terminal sizes', () => {
     const plain = renderPlain(defaultInput({ columns: Infinity, rows: Infinity }))
-    expect(plain.split('\n')).toContain('─'.repeat(80))
+    expect(plain.split('\n')).toContain(`╭${'─'.repeat(78)}╮`)
+  })
+})
+
+describe('prompt frame', () => {
+  const states: [string, Partial<PromptVMInput>][] = [
+    ['empty placeholder', {}],
+    ['single line', { lines: ['fix the retry backoff'], cursorCol: 21, placeholder: false }],
+    ['ghost hint', { lines: ['/model '], cursorCol: 7, placeholder: false, ghostHint: '[<name>]' }],
+    ['completion menu', { lines: ['/cm'], cursorCol: 3, placeholder: false, completion: menuOf(6, 0) }],
+    ['exit hint', { exitHint: true }],
+    ['multiline overflow', {
+      placeholder: false,
+      rows: 20,
+      lines: Array.from({ length: 20 }, (_, index) => `line ${index + 1}`),
+      cursorLine: 11,
+      cursorCol: 7,
+    }],
+    ['CJK wrap', { placeholder: false, lines: ['帮我把输入框换成圆角盒子并让选中行铺满整行'], cursorCol: 21 }],
+  ]
+
+  test.each(states)('pads every framed row to the exact terminal width: %s', (_label, overrides) => {
+    for (const columns of [30, 48, 80, 120]) {
+      for (const row of frameLines(defaultInput({ columns, ...overrides }))) {
+        expect(visibleWidth(row)).toBe(columns)
+      }
+    }
+  })
+
+  test.each(states)('never overflows the terminal width: %s', (_label, overrides) => {
+    for (const columns of [12, 20, 29, 30, 48, 80]) {
+      for (const row of renderLines(defaultInput({ columns, ...overrides }))) {
+        expect(visibleWidth(row)).toBeLessThanOrEqual(columns)
+      }
+    }
+  })
+
+  test('draws rounded corners and side rails', () => {
+    const plain = frameLines(defaultInput({ columns: 40 })).map(stripAnsi)
+    expect(plain[0]).toBe(`╭${'─'.repeat(38)}╮`)
+    expect(plain[plain.length - 1]).toBe(`╰${'─'.repeat(38)}╯`)
+    expect(plain[1]!.startsWith('│ ')).toBe(true)
+    expect(plain[1]!.endsWith(' │')).toBe(true)
+  })
+
+  test('widens the gutter as the terminal grows', () => {
+    // Breathing room costs columns, not rows, so it scales with width and
+    // shrinks back before content has to give anything up. Measured on the
+    // prompt row: centring puts blank rows above it.
+    const gutterAt = (columns: number) => {
+      const row = frameLines(defaultInput({ columns })).map(stripAnsi).find(line => line.includes('❯'))
+      return /^│( *)/.exec(row!)![1]!.length
+    }
+    expect(gutterAt(40)).toBe(1)
+    expect(gutterAt(59)).toBe(1)
+    expect(gutterAt(60)).toBe(2)
+    expect(gutterAt(99)).toBe(2)
+    expect(gutterAt(100)).toBe(3)
+    expect(gutterAt(200)).toBe(3)
+  })
+
+  test('mirrors the gutter on both rails', () => {
+    // Trailing blanks are content padding plus gutter, so the two are
+    // indistinguishable until the content fills its width. Overflowing input
+    // gets truncated to exactly `contentWidth`, leaving only the gutter.
+    for (const columns of [40, 60, 100]) {
+      const row = frameLines(defaultInput({
+        columns,
+        placeholder: false,
+        lines: ['x'.repeat(columns * 2)],
+        cursorCol: 0,
+      })).map(stripAnsi).find(line => line.includes('❯'))!
+      const left = /^│( *)/.exec(row)![1]!.length
+      const right = /( *)│$/.exec(row)![1]!.length
+      expect(right).toBe(left)
+      expect(left).toBeGreaterThan(0)
+    }
+  })
+
+  test('gives the full width back to content once degraded', () => {
+    // No rails below the threshold, so no gutter either.
+    const row = renderPlain(defaultInput({ columns: 29 })).split('\n').find(line => line.includes('❯'))
+    expect(row!.startsWith('❯')).toBe(true)
+  })
+
+  test('keeps a blank-row floor under a short draft', () => {
+    // Rows between the rails, borders excluded.
+    const railRows = (o: Partial<PromptVMInput>) =>
+      frameLines(defaultInput(o)).filter(row => stripAnsi(row).startsWith('│')).length
+
+    expect(railRows({})).toBe(3)
+    expect(railRows({ lines: ['one line'], cursorCol: 8, placeholder: false })).toBe(3)
+    expect(railRows({ lines: ['a', 'b'], cursorLine: 1, cursorCol: 1, placeholder: false })).toBe(3)
+    // Once the draft reaches the floor the composer grows with the content.
+    expect(railRows({ lines: ['a', 'b', 'c'], cursorLine: 2, cursorCol: 1, placeholder: false })).toBe(3)
+    expect(railRows({ lines: ['a', 'b', 'c', 'd'], cursorLine: 3, cursorCol: 1, placeholder: false })).toBe(4)
+  })
+
+  test('centres a one-line draft between the rails', () => {
+    // Blank rows above and below the draft, borders excluded.
+    const padding = (o: Partial<PromptVMInput>) => {
+      const rail = frameLines(defaultInput(o)).map(stripAnsi).filter(row => row.startsWith('│'))
+      const isBlank = (row: string) => /^│\s*│$/.test(row)
+      const first = rail.findIndex(row => !isBlank(row))
+      const last = rail.findLastIndex(row => !isBlank(row))
+      return { above: first, below: rail.length - 1 - last }
+    }
+    // Equal blanks on both sides. This is what forces an odd interior: a
+    // 2-row composer would have to put its one spare row on a single side.
+    expect(padding({})).toEqual({ above: 1, below: 1 })
+    expect(padding({ lines: ['one line'], cursorCol: 8, placeholder: false })).toEqual({ above: 1, below: 1 })
+    // Two lines leave one spare row, which goes below.
+    expect(padding({ lines: ['a', 'b'], cursorLine: 1, cursorCol: 1, placeholder: false })).toEqual({ above: 0, below: 1 })
+    expect(padding({ lines: ['a', 'b', 'c'], cursorLine: 2, cursorCol: 1, placeholder: false })).toEqual({ above: 0, below: 0 })
+  })
+
+  test('drops the floor on terminals too short to spare the rows', () => {
+    const railRows = (rows: number) =>
+      frameLines(defaultInput({ rows })).filter(row => stripAnsi(row).startsWith('│')).length
+    expect(railRows(19)).toBe(1)
+    expect(railRows(20)).toBe(3)
+  })
+
+  test('lets the completion menu absorb the height instead of stacking', () => {
+    // Without this the floor's blanks and the menu both apply, pushing the
+    // candidates several rows away from what was typed.
+    const rows = renderLines(defaultInput({
+      lines: ['/cm'],
+      cursorCol: 3,
+      placeholder: false,
+      completion: menuOf(3, 0),
+    })).map(stripAnsi)
+    const input = rows.findIndex(row => row.includes('/cm'))
+    const firstCandidate = rows.findIndex(row => row.includes('/cmd0'))
+    // Exactly one separator row between the input and the first candidate.
+    expect(firstCandidate - input).toBe(2)
+  })
+
+  test('adds no bare blank rows when the frame degrades', () => {
+    // The blanks only read as composer space between rails; without them they
+    // are indistinguishable from stray whitespace.
+    const rows = renderPlain(defaultInput({ columns: 29 })).split('\n')
+    const promptIndex = rows.findIndex(row => row.includes('❯'))
+    expect(rows[promptIndex + 1]).toBe('─'.repeat(29))
+  })
+
+  test('keeps overflow markers on the frame in their existing wording', () => {
+    const plain = renderPlain(defaultInput({
+      placeholder: false,
+      rows: 20,
+      lines: Array.from({ length: 20 }, (_, index) => `line ${index + 1}`),
+      cursorLine: 11,
+      cursorCol: 7,
+    }))
+    expect(plain).toContain('╭─ ↑ 6 lines ─')
+    expect(plain).toContain('╰─ ↓ 8 lines ─')
+  })
+
+  test('truncates a frame label that cannot fit beside the corners', () => {
+    for (const row of frameLines(defaultInput({
+      columns: 30,
+      rows: 12,
+      placeholder: false,
+      lines: Array.from({ length: 40 }, (_, index) => `line ${index + 1}`),
+      cursorLine: 39,
+      cursorCol: 7,
+    }))) {
+      expect(visibleWidth(row)).toBe(30)
+    }
+  })
+
+  test('degrades to plain rules below the minimum framed width', () => {
+    const plain = renderPlain(defaultInput({ columns: 29 })).split('\n')
+    expect(plain).toContain('─'.repeat(29))
+    // No corners or rails on the input rows. The footer keeps its own `│`
+    // separator, so only the frame region is inspected here.
+    for (const row of plain.filter(line => /^[│╭╰─]/.test(line))) {
+      expect(row).toBe('─'.repeat(29))
+    }
+  })
+
+  test('spends no width on rails once degraded', () => {
+    // The full 29 columns stay available to content, unlike the framed path
+    // which reserves four for the rails and their padding.
+    const wide = renderPlain(defaultInput({ columns: 29, placeholder: false, lines: ['a'.repeat(40)], cursorCol: 40 }))
+    expect(wide).toContain('a'.repeat(27))
+  })
+
+  test('places the cursor marker inside the rails', () => {
+    const row = renderLines(defaultInput({ columns: 40 })).find(line => line.includes(CURSOR_MARKER))
+    expect(row).toBeDefined()
+    // Everything before the marker is measurable, so the renderer can derive
+    // the hardware cursor column from the rail and gutter it sits behind.
+    const prefix = row!.slice(0, row!.indexOf(CURSOR_MARKER))
+    expect(visibleWidth(prefix)).toBe(4)
+  })
+})
+
+describe('prompt completion menu', () => {
+  test('fills the selected row to the right rail', () => {
+    const rows = renderLines(defaultInput({
+      columns: 60,
+      lines: ['/cm'],
+      cursorCol: 3,
+      placeholder: false,
+      completion: menuOf(6, 1),
+    }))
+    const selected = rows.find(row => stripAnsi(row).includes('/cmd1'))
+    expect(selected).toBeDefined()
+    // Only the closing rail may follow the final background reset.
+    const tail = stripAnsi(selected!.slice(selected!.lastIndexOf('\x1b[49m')))
+    expect(tail).toBe('│')
+
+    const unselected = rows.find(row => stripAnsi(row).includes('/cmd2'))
+    expect(unselected).not.toContain('\x1b[49m')
+  })
+
+  test('uses theme-aware selection colors', () => {
+    const previousTheme = process.env.EVOT_THEME
+    try {
+      for (const [scheme, bgHex] of [['dark', '#2c2f4a'], ['light', '#dfe3fd']] as const) {
+        process.env.EVOT_THEME = scheme
+        resetThemeCache()
+        const rows = renderLines(defaultInput({
+          lines: ['/cm'],
+          cursorCol: 3,
+          placeholder: false,
+          completion: menuOf(3, 0),
+        }))
+        const selected = rows.find(row => stripAnsi(row).includes('/cmd0'))
+        expect(selected).toContain(chalk.bgHex(bgHex)('').split('\x1b[49m')[0])
+      }
+    } finally {
+      if (previousTheme === undefined) delete process.env.EVOT_THEME
+      else process.env.EVOT_THEME = previousTheme
+      resetThemeCache()
+    }
+  })
+
+  test('keeps the selection near the middle of the viewport', () => {
+    const input = (selectedIndex: number) => defaultInput({
+      rows: 20,
+      lines: ['/cm'],
+      cursorCol: 3,
+      placeholder: false,
+      completion: menuOf(20, selectedIndex),
+    })
+    expect(visibleCandidates(input(10))).toEqual(['/cmd8', '/cmd9', '/cmd10', '/cmd11', '/cmd12'])
+    // Near either end the viewport stops sliding rather than showing blanks.
+    expect(visibleCandidates(input(0))).toEqual(['/cmd0', '/cmd1', '/cmd2', '/cmd3', '/cmd4'])
+    expect(visibleCandidates(input(19))).toEqual(['/cmd15', '/cmd16', '/cmd17', '/cmd18', '/cmd19'])
+  })
+
+  test('shows more candidates on taller terminals', () => {
+    const at = (rows: number) => visibleCandidates(defaultInput({
+      rows,
+      lines: ['/cm'],
+      cursorCol: 3,
+      placeholder: false,
+      completion: menuOf(20, 0),
+    })).length
+    expect(at(24)).toBe(5)
+    expect(at(40)).toBe(12)
+  })
+
+  test('shows the position counter only when candidates are hidden', () => {
+    const hasCounter = (count: number, rows: number) => renderPlain(defaultInput({
+      rows,
+      lines: ['/cm'],
+      cursorCol: 3,
+      placeholder: false,
+      completion: menuOf(count, 0),
+    })).includes(`1/${count}`)
+    expect(hasCounter(5, 24)).toBe(false)
+    expect(hasCounter(6, 24)).toBe(true)
+    expect(hasCounter(12, 40)).toBe(false)
+    expect(hasCounter(13, 40)).toBe(true)
+  })
+
+  test('separates the input from candidates only while framed', () => {
+    const blankRows = (columns: number) => renderLines(defaultInput({
+      columns,
+      lines: ['/cm'],
+      cursorCol: 3,
+      placeholder: false,
+      completion: menuOf(3, 0),
+    })).filter(row => stripAnsi(row).trim() === '│  │'.trim() || /^│\s+│$/.test(stripAnsi(row))).length
+    expect(blankRows(60)).toBe(1)
+    expect(blankRows(29)).toBe(0)
+  })
+})
+
+describe('prompt overflow guards', () => {
+  test('truncates a ghost hint that is wider than the terminal', () => {
+    const hint = '  [help  resume  new  model  plan  harden  skill  copy  clip  share  compact  clear]'
+    for (const columns of [12, 40, 80]) {
+      const input = defaultInput({ columns, lines: ['/'], cursorCol: 1, placeholder: false, ghostHint: hint })
+      for (const row of renderLines(input)) expect(visibleWidth(row)).toBeLessThanOrEqual(columns)
+    }
+    // The hint still renders when there is room for part of it.
+    expect(renderPlain(defaultInput({ columns: 40, lines: ['/'], cursorCol: 1, placeholder: false, ghostHint: hint })))
+      .toContain('[help')
+  })
+
+  test('truncates the placeholder on a narrow terminal', () => {
+    for (const columns of [3, 4, 20]) {
+      const input = defaultInput({ columns })
+      for (const row of renderLines(input)) expect(visibleWidth(row)).toBeLessThanOrEqual(columns)
+    }
+  })
+
+  test('truncates the exit hint on a narrow terminal', () => {
+    for (const row of renderLines(defaultInput({ columns: 10, exitHint: true }))) {
+      expect(visibleWidth(row)).toBeLessThanOrEqual(10)
+    }
+  })
+
+  test('measures the zero-width cursor marker as zero columns', () => {
+    // `stringWidth` counts the APC marker as five columns, which would make
+    // every padded row four cells short.
+    expect(visibleWidth(`❯ hi${CURSOR_MARKER}x`)).toBe(5)
   })
 })
 

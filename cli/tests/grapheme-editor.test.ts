@@ -12,7 +12,8 @@ import {
   moveRight,
   moveUp,
 } from '../src/term/input/editor.js'
-import { buildPromptBlocks, wrapTextByWidth, type PromptVMInput } from '../src/term/viewmodel/prompt.js'
+import { buildPromptBlocks, type PromptVMInput } from '../src/term/viewmodel/prompt.js'
+import { wrapTextByWidth } from '../src/term/viewmodel/width.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
 
 function promptInput(text: string, cursorCol: number, columns = 20): PromptVMInput {
