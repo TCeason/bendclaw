@@ -12,11 +12,10 @@ import stringWidth from 'string-width'
 import { COMMANDS, HIDDEN_COMMANDS } from '../../commands/index.js'
 import { getTheme } from '../../render/theme.js'
 import type { CompletionMenu } from '../input/editor.js'
-import { nextGraphemeBoundary } from '../input/grapheme.js'
 import { CURSOR_MARKER } from '../renderer.js'
 import { createFrame } from './frame.js'
 import { buildPromptFooterBlocks, type PromptFooterVM } from './prompt-footer.js'
-import { line, block, plain, dim, inverse, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
+import { line, block, plain, dim, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
 import { finiteSize, truncateToWidth, wrapTextByWidth } from './width.js'
 
 export interface PromptVMInput extends PromptFooterVM {
@@ -44,6 +43,9 @@ const COMPLETION_ROWS_COMPACT = 5
 const COMPLETION_ROWS_TALL = 12
 const COMPLETION_TALL_ROWS_THRESHOLD = 35
 const PLACEHOLDER_HINT = ' Type a message...'
+
+/** Left-half block: reads as a caret without covering the character under it. */
+const CARET = '▌'
 
 /** Share of the terminal the editor may grow to before it starts scrolling. */
 const MAX_INPUT_ROWS_RATIO = 0.3
@@ -127,7 +129,9 @@ export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOpt
 /** `contentWidth` is the room inside the frame, not the terminal width. */
 function buildInputLines(input: PromptVMInput, contentWidth: number): { lines: StyledLine[]; cursorIndex: number } {
   const lines: StyledLine[] = []
-  const width = Math.max(1, contentWidth - 2)
+  // The caret is drawn inline and costs one column, so wrapping has to stop a
+  // cell short of the content width or the caret pushes the last glyph out.
+  const width = Math.max(1, contentWidth - 1)
   let cursorIndex = 0
 
   for (let lineIndex = 0; lineIndex < input.lines.length; lineIndex++) {
@@ -135,12 +139,11 @@ function buildInputLines(input: PromptVMInput, contentWidth: number): { lines: S
     const active = input.active && lineIndex === input.cursorLine
     if (active && text === '' && input.lines.length === 1 && input.placeholder) {
       cursorIndex = lines.length
-      // `❯ ` + the inverse cursor cell occupy 3 columns; the rest is the hint.
-      const hint = truncateToWidth(PLACEHOLDER_HINT, Math.max(0, contentWidth - 3))
+      // The caret occupies 1 column; the rest is hint.
+      const hint = truncateToWidth(PLACEHOLDER_HINT, Math.max(0, contentWidth - 1))
       lines.push(line(
-        promptGlyph(),
         plain(CURSOR_MARKER),
-        inverse(' '),
+        caret(),
         ...(hint ? [dim(hint)] : []),
       ))
       continue
@@ -161,41 +164,27 @@ function buildInputLines(input: PromptVMInput, contentWidth: number): { lines: S
 
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
       const chunk = chunks[chunkIndex]!
-      const prefix = lineIndex === 0 && chunkIndex === 0
-        ? promptGlyph()
-        : plain('  ')
       const textChunk = text.slice(chunk.start, chunk.end)
       if (!active || chunkIndex !== cursorChunk) {
-        lines.push(line(prefix, ...(textChunk ? styleInputText(textChunk) : [plain(' ')])))
+        lines.push(line(...(textChunk ? styleInputText(textChunk) : [plain(' ')])))
         continue
       }
 
       cursorIndex = lines.length
       const cursorCol = Math.max(0, input.cursorCol - chunk.start)
-      const cursorEnd = nextGraphemeBoundary(textChunk, cursorCol)
-      const before = textChunk.slice(0, cursorCol)
-      const cursorChar = textChunk.slice(cursorCol, cursorEnd) || ' '
-      const after = textChunk.slice(cursorEnd)
       const rawGhost = !input.completion && chunk.end === text.length ? input.ghostHint : ''
-      const spans: StyledSpan[] = [prefix, ...styleInputText(before), plain(CURSOR_MARKER)]
-      const atLineEnd = rawGhost !== '' && cursorCol >= textChunk.length
+      // Style the whole chunk before splitting, otherwise a command straddling
+      // the caret is scored as two fragments and loses its brand hue.
+      const [before, under] = splitSpansAt(styleInputText(textChunk), cursorCol)
+      // The caret sits before the character it points at, so the text under it
+      // stays legible and no cell has to be swapped out for inverse video.
+      const spans: StyledSpan[] = [...before, plain(CURSOR_MARKER), caret(), ...under]
       // The hint is advisory, so it yields to the terminal edge rather than
       // overflowing it: `getGhostHint` can return the full command list, which
-      // is far wider than a narrow terminal.
-      const ghostBudget = contentWidth
-        - 2
-        - stringWidth(before)
-        - (atLineEnd ? 0 : stringWidth(cursorChar) + stringWidth(after))
+      // is far wider than a narrow terminal. The caret costs one column.
+      const ghostBudget = contentWidth - 1 - stringWidth(textChunk)
       const ghost = rawGhost ? truncateToWidth(rawGhost, Math.max(0, ghostBudget)) : ''
-      if (ghost && atLineEnd) {
-        // Cursor sits on the first ghost grapheme (pi-style: overlay, don't
-        // insert a blank cell that would visually split the suggested word).
-        const ghostEnd = nextGraphemeBoundary(ghost, 0)
-        spans.push(inverse(ghost.slice(0, ghostEnd)), dim(ghost.slice(ghostEnd)))
-      } else {
-        spans.push(inverse(cursorChar), ...styleInputText(after))
-        if (ghost) spans.push(dim(ghost))
-      }
+      if (ghost) spans.push(dim(ghost))
       lines.push(line(...spans))
     }
   }
@@ -260,9 +249,34 @@ function styleInputText(text: string): StyledSpan[] {
 }
 
 /**
- * The `❯` marker carries the same brand hue as the frame it sits in, so a
- * theme swap moves both together.
+ * The caret. A left-half block in the cursor hue, drawn inline rather than as
+ * an inverse-video cell: it marks the insertion point without hiding the
+ * character that sits there, and it needs no `❯` prefix to say "type here".
  */
-function promptGlyph(): StyledSpan {
-  return { text: '❯ ', hex: getTheme().brandHex, bold: true }
+function caret(): StyledSpan {
+  return { text: CARET, hex: getTheme().cursorHex, bold: true }
+}
+
+/**
+ * Cut a styled run at `index` code units, splitting the span that straddles it
+ * and preserving each span's styling on both sides.
+ */
+function splitSpansAt(spans: StyledSpan[], index: number): [StyledSpan[], StyledSpan[]] {
+  const before: StyledSpan[] = []
+  const after: StyledSpan[] = []
+  let seen = 0
+  for (const span of spans) {
+    const length = span.text.length
+    if (seen >= index) {
+      after.push(span)
+    } else if (seen + length <= index) {
+      before.push(span)
+    } else {
+      const at = index - seen
+      before.push({ ...span, text: span.text.slice(0, at) })
+      after.push({ ...span, text: span.text.slice(at) })
+    }
+    seen += length
+  }
+  return [before, after]
 }

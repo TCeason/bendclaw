@@ -233,10 +233,10 @@ describe('renderPrompt', () => {
     expect(lines.length).toBeGreaterThan(0)
   })
 
-  test('contains cursor (inverse video)', () => {
+  test('contains the caret', () => {
     const lines = blocksToLines(buildPromptBlocks(defaultPromptVM()))
     const joined = lines.join('\n')
-    expect(joined).toContain('\x1b[7m')
+    expect(joined).toContain('▌')
   })
 
   test('contains border', () => {

@@ -31,6 +31,8 @@ export interface Theme {
   selectionBgHex: string
   /** Secondary text on `selectionBgHex`, where the normal dim gray is too dark. */
   selectionMutedHex: string
+  /** The prompt caret. Deliberately off-palette so it reads as "you are here". */
+  cursorHex: string
 
   // Inline
   text: Style
@@ -97,6 +99,10 @@ function darkTheme(): Theme {
     // dark enough that brand-hued text on top keeps its contrast.
     selectionBgHex: '#2c2f4a',
     selectionMutedHex: '#9aa0b4',
+
+    // Lime, against a periwinkle frame: the caret has to win attention over
+    // everything around it, so it sits outside the brand palette.
+    cursorHex: '#9ae65c',
 
     text: plain,
     bold: style(s => chalk.bold(s)),
@@ -166,6 +172,9 @@ function lightTheme(): Theme {
     // keeps the brand-hued label readable on a white background.
     selectionBgHex: '#dfe3fd',
     selectionMutedHex: '#5b6070',
+
+    // Darker, more saturated green: the dark theme's lime disappears on white.
+    cursorHex: '#3f9142',
 
     text: plain,
     bold: style(s => chalk.bold(s)),
