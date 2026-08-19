@@ -116,6 +116,7 @@ import {
   formatSessionWithTextItems,
   isResumeSelectorTitle,
   isSessionIdPrefix,
+  normalizeResumeQuery,
   resolveSessionByPrefix,
   shortenSessionCwd,
 } from './app/resume.js'
@@ -2126,17 +2127,18 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     } else if (name === '/log') {
       await handleLogCommand(args)
     } else if (name === '/resume') {
+      const query = normalizeResumeQuery(args)
       try {
-        if (args && isSessionIdPrefix(args)) {
+        if (query && isSessionIdPrefix(query)) {
           const allSessions: SessionMeta[] = await agent.listSessions(0)
-          const resolved = resolveSessionByPrefix(allSessions, args)
+          const resolved = resolveSessionByPrefix(allSessions, query)
           if (resolved.kind === 'matched') {
             await resumeSession(resolved.session)
           } else {
-            openResumeSelector(args)
+            openResumeSelector(query)
           }
-        } else if (args) {
-          await handleSemanticResume(args)
+        } else if (query) {
+          await handleSemanticResume(query)
         } else {
           openResumeSelector(undefined)
         }

@@ -6,6 +6,7 @@ import {
   formatSessionWithTextItems,
   isResumeSelectorTitle,
   isSessionIdPrefix,
+  normalizeResumeQuery,
   resolveSessionByPrefix,
   sanitizeSessionTitle,
 } from '../src/term/app/resume.js'
@@ -22,6 +23,14 @@ describe('repl resume helpers', () => {
     expect(isSessionIdPrefix('ABCDEF')).toBe(true)
     expect(isSessionIdPrefix('not-hex')).toBe(false)
     expect(isSessionIdPrefix('')).toBe(false)
+  })
+
+  test('normalizeResumeQuery accepts plain and quoted search terms', () => {
+    expect(normalizeResumeQuery('NEBULA-4729')).toBe('NEBULA-4729')
+    expect(normalizeResumeQuery(" 'NEBULA-4729' ")).toBe('NEBULA-4729')
+    expect(normalizeResumeQuery('"NEBULA-4729"')).toBe('NEBULA-4729')
+    expect(normalizeResumeQuery('“NEBULA-4729”')).toBe('NEBULA-4729')
+    expect(normalizeResumeQuery("'unclosed")).toBe("'unclosed")
   })
 
   test('resolveSessionByPrefix matches unique prefix', () => {
@@ -90,7 +99,7 @@ describe('repl resume helpers', () => {
       'The conversation history before this point was compacted into the following summary:\n\nstuff',
     )).toBe('(compacted)')
     // Title already truncated mid-prefix by the 40-char head budget.
-    expect(sanitizeSessionTitle('The conversation history before this poi.. … 继续')).toBe('(compacted)')
+    expect(sanitizeSessionTitle('The conversation history before this poi.. … continue')).toBe('(compacted)')
     expect(COMPACT_SUMMARY_PREFIX).toBe('The conversation history before this')
   })
 

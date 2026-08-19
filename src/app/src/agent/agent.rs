@@ -1099,14 +1099,17 @@ impl Agent {
         (text, sections)
     }
 
-    /// Rank recent sessions against `query` with a one-shot LLM call and
-    /// return a human-readable result list (backs the hidden `/_rsearch`
-    /// command used by `/resume <query>`).
+    /// Search recent sessions for literal matches before falling back to
+    /// semantic ranking with the configured LLM.
     async fn handle_resume_search(&self, query: &str) -> Result<String> {
         let storage = self.storage.read().clone();
         let sessions = storage
             .list_sessions_with_text(crate::agent::resume_search::SESSION_LIMIT)
             .await?;
+        if let Some(results) = crate::agent::resume_search::literal_results(query, &sessions) {
+            return Ok(results);
+        }
+
         let llm = self.llm.read().clone();
         if llm.provider.is_empty() || llm.api_key.trim().is_empty() {
             return Err(EvotError::Conf(

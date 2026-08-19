@@ -59,11 +59,12 @@ impl SessionSearcher {
         }
 
         for entry in entries {
-            if let Some(text) = extract_text(&entry.item) {
-                if self.matcher.matches(&text) {
-                    let snippet = truncate(&text, 120);
-                    return Some(hit(session, "content", &snippet));
-                }
+            let Some(text) = extract_text(&entry.item) else {
+                continue;
+            };
+            if self.matcher.matches(&text) {
+                let snippet = truncate(&text, 120);
+                return Some(hit(session, "content", &snippet));
             }
         }
         None
@@ -71,9 +72,8 @@ impl SessionSearcher {
 }
 
 /// Max characters of combined transcript body included per session in the
-/// flat `search_text`. Keeps the `/api/sessions` payload bounded while still
-/// carrying enough message content for keyword search and snippets. Metadata
-/// (id/title/cwd/source/model) is always included on top of this budget.
+/// flat `search_text`. Metadata (id/title/cwd/source/model) is always included
+/// on top of this budget.
 const TRANSCRIPT_TEXT_BUDGET: usize = 6000;
 
 pub fn collect_search_text(session: &SessionMeta, entries: &[TranscriptEntry]) -> String {
@@ -86,23 +86,23 @@ pub fn collect_search_text(session: &SessionMeta, entries: &[TranscriptEntry]) -
     parts.push(session.source.clone());
     parts.push(session.model.clone());
 
-    // Flatten whole-message text (not just the first line) so keywords buried
-    // in multi-line content are searchable and snippets can center on the
-    // real hit. Budgeted so one long session can't bloat the response.
-    let mut remaining = TRANSCRIPT_TEXT_BUDGET;
+    // Conversation text is more useful for recalling a session than verbose
+    // command output, so give it the budget first. Thinking is searchable too:
+    // it often contains details learned from images or other non-text inputs.
+    let mut conversation = Vec::new();
+    let mut tool_results = Vec::new();
     for entry in entries {
-        if remaining == 0 {
-            break;
-        }
-        if let Some(text) = extract_text(&entry.item) {
-            let normalized = normalize_ws(&text);
-            if normalized.is_empty() {
-                continue;
-            }
-            let clipped = clip_chars(&normalized, remaining);
-            remaining = remaining.saturating_sub(clipped.chars().count());
-            parts.push(clipped);
-        }
+        collect_item_text(&entry.item, &mut conversation, &mut tool_results);
+    }
+
+    let conversation = clip_representative(&conversation.join(" "), TRANSCRIPT_TEXT_BUDGET);
+    let remaining = TRANSCRIPT_TEXT_BUDGET.saturating_sub(conversation.chars().count());
+    if !conversation.is_empty() {
+        parts.push(conversation);
+    }
+    let tool_results = clip_representative(&tool_results.join(" "), remaining);
+    if !tool_results.is_empty() {
+        parts.push(tool_results);
     }
     parts.join(" ")
 }
@@ -113,14 +113,62 @@ fn normalize_ws(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Keep at most `max` characters, cutting on a char boundary so we never split
-/// a multi-byte (e.g. CJK) character.
-fn clip_chars(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
+/// Keep a bounded, representative excerpt from both ends of a long body.
+fn clip_representative(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max {
         return s.to_string();
     }
-    let end = s.char_indices().nth(max).map(|(i, _)| i).unwrap_or(s.len());
-    s[..end].to_string()
+    if max <= 3 {
+        return s.chars().take(max).collect();
+    }
+
+    let content = max - 3;
+    let head = content / 2;
+    let tail = content - head;
+    let start: String = s.chars().take(head).collect();
+    let end: String = s.chars().skip(count - tail).collect();
+    format!("{start} … {end}")
+}
+
+fn collect_item_text(
+    item: &TranscriptItem,
+    conversation: &mut Vec<String>,
+    tool_results: &mut Vec<String>,
+) {
+    let push = |parts: &mut Vec<String>, text: &str| {
+        let text = normalize_ws(text);
+        if !text.is_empty() {
+            parts.push(text);
+        }
+    };
+
+    match item {
+        TranscriptItem::User { text, .. } | TranscriptItem::System { text } => {
+            push(conversation, text);
+        }
+        TranscriptItem::Assistant { content, .. } => {
+            for block in content {
+                match block {
+                    crate::types::AssistantBlock::Text { text }
+                    | crate::types::AssistantBlock::Thinking { text, .. } => {
+                        push(conversation, text);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        TranscriptItem::ToolResult { content, .. } => push(tool_results, content),
+        _ => {}
+    }
+}
+
+fn extract_text(item: &TranscriptItem) -> Option<String> {
+    let mut conversation = Vec::new();
+    let mut tool_results = Vec::new();
+    collect_item_text(item, &mut conversation, &mut tool_results);
+    conversation.extend(tool_results);
+    (!conversation.is_empty()).then(|| conversation.join(" "))
 }
 
 fn hit(session: &SessionMeta, field: &str, snippet: &str) -> SearchHit {
@@ -128,16 +176,6 @@ fn hit(session: &SessionMeta, field: &str, snippet: &str) -> SearchHit {
         session: session.clone(),
         matched_field: field.to_string(),
         snippet: snippet.to_string(),
-    }
-}
-
-fn extract_text(item: &TranscriptItem) -> Option<String> {
-    match item {
-        TranscriptItem::User { text, .. } => Some(text.clone()),
-        TranscriptItem::Assistant { content, .. } => Some(crate::types::assistant_text(content)),
-        TranscriptItem::ToolResult { content, .. } => Some(content.clone()),
-        TranscriptItem::System { text } => Some(text.clone()),
-        _ => None,
     }
 }
 

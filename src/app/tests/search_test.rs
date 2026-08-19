@@ -109,6 +109,26 @@ fn searcher_matches_transcript_assistant_text() {
 }
 
 #[test]
+fn searcher_matches_transcript_assistant_thinking() {
+    let session = make_session("s1", "untitled", "/tmp");
+    let entries = vec![make_entry("s1", 1, TranscriptItem::Assistant {
+        content: vec![AssistantBlock::Thinking {
+            text: "Incident code is NEBULA-4729".to_string(),
+            metadata: None,
+        }],
+        stop_reason: "end_turn".to_string(),
+        usage: UsageSummary::default(),
+        model: String::new(),
+        provider: String::new(),
+        timestamp: 0,
+        error_message: None,
+    })];
+    let searcher = SessionSearcher::new("NEBULA-4729");
+    let hit = searcher.matches_transcript(&session, &entries);
+    assert!(hit.is_some());
+}
+
+#[test]
 fn searcher_empty_query_matches_all_meta() {
     let session = make_session("s1", "anything", "/tmp");
     let searcher = SessionSearcher::new("");
@@ -141,14 +161,14 @@ fn searcher_fuzzy_matches_transcript() {
 #[test]
 fn searcher_snippet_truncates_utf8_safely() {
     let session = make_session("s1", "untitled", "/tmp");
-    let long_cjk =
-        "这是一段很长的中文文本用来测试截断功能是否会在多字节字符边界上出错导致panic的情况"
+    let long_unicode =
+        "This is a long Unicode string with emoji 🚀✨ used to verify safe truncation at multibyte character boundaries without panicking"
             .to_string();
     let entries = vec![make_entry("s1", 1, TranscriptItem::User {
-        text: long_cjk,
+        text: long_unicode,
         content: vec![],
     })];
-    let searcher = SessionSearcher::new("测试");
+    let searcher = SessionSearcher::new("verify");
     let hit = searcher.matches_transcript(&session, &entries);
     assert!(hit.is_some());
     let snippet = &hit.unwrap().snippet;

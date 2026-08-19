@@ -15,9 +15,9 @@ use evot::types::ListSessions;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
-fn assistant(text: &str) -> TranscriptItem {
+fn assistant_with_blocks(content: Vec<AssistantBlock>) -> TranscriptItem {
     TranscriptItem::Assistant {
-        content: vec![AssistantBlock::Text { text: text.into() }],
+        content,
         stop_reason: "stop".into(),
         usage: UsageSummary::default(),
         model: String::new(),
@@ -25,6 +25,10 @@ fn assistant(text: &str) -> TranscriptItem {
         timestamp: 0,
         error_message: None,
     }
+}
+
+fn assistant(text: &str) -> TranscriptItem {
+    assistant_with_blocks(vec![AssistantBlock::Text { text: text.into() }])
 }
 
 #[tokio::test]
@@ -80,7 +84,7 @@ async fn search_text_includes_content_past_first_line() -> TestResult {
     // carry it so the UI can match and highlight it.
     session
         .write_items(vec![assistant(
-            "概述\n这是第二行\n关键词出现在这里：标准化流程\n收尾",
+            "Overview\nThis is the second line\nKeyword appears here: normalization pipeline\nDone",
         )])
         .await?;
 
@@ -90,9 +94,74 @@ async fn search_text_includes_content_past_first_line() -> TestResult {
         .find(|r| r.session.session_id == "search-sess-multiline")
         .ok_or("session not returned")?;
 
-    assert!(row.search_text.contains("标准化流程"));
+    assert!(row.search_text.contains("normalization pipeline"));
     // Newlines are flattened to spaces so the body is one searchable line.
     assert!(!row.search_text.contains('\n'));
+    Ok(())
+}
+
+#[tokio::test]
+async fn search_text_includes_assistant_thinking_after_large_tool_output() -> TestResult {
+    let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
+    let session = Session::new(
+        "search-sess-thinking".into(),
+        "/home/me/project".into(),
+        "test-model".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    session
+        .write_items(vec![
+            TranscriptItem::ToolResult {
+                tool_call_id: "call-1".into(),
+                tool_name: "bash".into(),
+                content: "noise ".repeat(2_000),
+                is_error: false,
+                details: serde_json::Value::Null,
+            },
+            assistant_with_blocks(vec![AssistantBlock::Thinking {
+                text: "Incident code is NEBULA-4729".into(),
+                metadata: None,
+            }]),
+        ])
+        .await?;
+
+    let rows = storage.list_sessions_with_text(10).await?;
+    let row = rows
+        .iter()
+        .find(|row| row.session.session_id == "search-sess-thinking")
+        .ok_or("session not returned")?;
+    assert!(row.search_text.contains("NEBULA-4729"));
+    assert!(row.search_text.chars().count() < 6_500);
+    Ok(())
+}
+
+#[tokio::test]
+async fn search_text_keeps_both_ends_of_long_conversations() -> TestResult {
+    let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
+    let session = Session::new(
+        "search-sess-long".into(),
+        "/home/me/project".into(),
+        "test-model".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    session
+        .write_items(vec![
+            assistant(&format!("early-marker {}", "a".repeat(7_000))),
+            assistant("late-marker"),
+        ])
+        .await?;
+
+    let rows = storage.list_sessions_with_text(10).await?;
+    let row = rows
+        .iter()
+        .find(|row| row.session.session_id == "search-sess-long")
+        .ok_or("session not returned")?;
+    assert!(row.search_text.contains("early-marker"));
+    assert!(row.search_text.contains("late-marker"));
     Ok(())
 }
 

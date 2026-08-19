@@ -46,6 +46,7 @@ pub async fn rank_sessions(
     if sessions.is_empty() {
         return Ok("No sessions to search.".to_string());
     }
+    let query = normalize_query(query);
     let prompt = build_rank_prompt(query, sessions);
     let response = tokio::time::timeout(RANK_TIMEOUT, call_provider(ctx, &prompt))
         .await
@@ -97,6 +98,46 @@ pub fn format_results(query: &str, response: &str, sessions: &[SessionWithText])
         return format!("No sessions relevant to '{query}'.");
     }
     format!("Sessions relevant to '{query}':\n\n{out}\nResume with /resume <id>.")
+}
+
+pub fn literal_results(query: &str, sessions: &[SessionWithText]) -> Option<String> {
+    let query = normalize_query(query);
+    let matches: Vec<_> = sessions
+        .iter()
+        .filter(|session| contains_ignore_case(&session.search_text, query))
+        .take(MAX_RESULTS)
+        .collect();
+    if matches.is_empty() {
+        return None;
+    }
+
+    let mut out = String::new();
+    for hit in matches {
+        let id = &hit.session.session_id;
+        let title = hit.session.title.as_deref().unwrap_or("(untitled)");
+        out.push_str(&format!("- {id} — {title} — exact text match\n"));
+    }
+    Some(format!(
+        "Sessions relevant to '{query}':\n\n{out}\nResume with /resume <id>."
+    ))
+}
+
+fn normalize_query(query: &str) -> &str {
+    let query = query.trim();
+    for (open, close) in [("'", "'"), ("\"", "\""), ("‘", "’"), ("“", "”")] {
+        if let Some(inner) = query
+            .strip_prefix(open)
+            .and_then(|value| value.strip_suffix(close))
+        {
+            return inner.trim();
+        }
+    }
+    query
+}
+
+fn contains_ignore_case(text: &str, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    !query.is_empty() && text.to_lowercase().contains(&query)
 }
 
 fn truncate_chars(s: &str, max: usize) -> &str {

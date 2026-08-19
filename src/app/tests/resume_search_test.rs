@@ -1,5 +1,6 @@
 use evot::agent::resume_search::build_rank_prompt;
 use evot::agent::resume_search::format_results;
+use evot::agent::resume_search::literal_results;
 use evot::agent::Agent;
 use evot::agent::QueryRequest;
 use evot::agent::SubmitOutcome;
@@ -37,6 +38,26 @@ fn rank_prompt_truncates_long_transcripts() {
     let sessions = vec![session("s1", "big", &long_text)];
     let prompt = build_rank_prompt("q", &sessions);
     assert!(prompt.len() < 3_000);
+}
+
+#[test]
+fn literal_results_return_exact_matches_without_llm_ranking() {
+    let sessions = vec![
+        session(
+            "s1",
+            "flight form",
+            "assistant thinking: incident NEBULA-4729",
+        ),
+        session("s2", "spill oom", "databend spill buffer"),
+    ];
+    let out = literal_results("NEBULA-4729", &sessions).ok_or("missing literal result");
+    assert!(out.is_ok());
+    let out = out.unwrap_or_default();
+    assert!(out.contains("- s1 — flight form — exact text match"));
+    assert!(!out.contains("s2"));
+    assert!(literal_results("'NEBULA-4729'", &sessions).is_some());
+    assert!(literal_results("\"NEBULA-4729\"", &sessions).is_some());
+    assert!(literal_results("missing", &sessions).is_none());
 }
 
 #[test]
