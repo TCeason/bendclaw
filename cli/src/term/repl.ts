@@ -438,7 +438,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       ghostHint: editor.ghostHint,
       columns: renderer.termCols,
       rows: renderer.termRows,
-      placeholder: isEditorEmpty(editor) && !isLoading,
+      placeholder: isEditorEmpty(editor),
       cwd: appState.cwd,
       gitBranch: gitInfo.getBranch(),
       // Footer shows session state only (context/model/thinking). Per-call
