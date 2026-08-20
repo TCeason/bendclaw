@@ -11,6 +11,7 @@ const MUTED = '#808080'
 const LOGO_MIN_COLUMNS = 50
 const PROMPT_RESERVED_ROWS = 5
 const PROJECT_CONTEXT_FILES = ['EVOT.md', 'CLAUDE.md', 'AGENTS.md']
+const LOGO_SHADOW_CHARS = new Set(['╚', '═', '╝', '║', '╔', '╗', '╠', '╣', '╦', '╩', '╬'])
 const EVOT_LOGO = [
   ' ███████╗██╗   ██╗ ██████╗ ████████╗',
   ' ██╔════╝██║   ██║██╔═══██╗╚══██╔══╝',
@@ -30,10 +31,31 @@ function getContextFiles(cwd: string): string[] {
   return PROJECT_CONTEXT_FILES.filter(name => existsSync(join(cwd, name)))
 }
 
-function renderLogo(version: string): string[] {
+function renderLogoLine(line: string): string {
   const theme = getTheme()
+  const spans: string[] = []
+  let run = ''
+  let shadow = false
+
+  const flush = () => {
+    if (!run) return
+    spans.push((shadow ? theme.accentBold : theme.brandBold).paint(run))
+    run = ''
+  }
+
+  for (const char of line.trimEnd()) {
+    const nextShadow = LOGO_SHADOW_CHARS.has(char)
+    if (run && nextShadow !== shadow) flush()
+    shadow = nextShadow
+    run += char
+  }
+  flush()
+  return spans.join('')
+}
+
+function renderLogo(version: string): string[] {
   return [
-    ...EVOT_LOGO.map(line => theme.brandBold.paint(line.trimEnd())),
+    ...EVOT_LOGO.map(renderLogoLine),
     `  ${chalk.dim(`v${version}`)}`,
   ]
 }

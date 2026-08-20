@@ -61,7 +61,7 @@ describe('renderBanner', () => {
     expect(banner).not.toContain(join(skillsDir, 'skill-00'))
   })
 
-  test('uses EVOT primary for logos and gold accent for section headings', () => {
+  test('uses EVOT primary for logo blocks and gold accent for shadows and headings', () => {
     const { cwd, skillsDir } = createFixture(1)
     const previousTheme = process.env.EVOT_THEME
     try {
@@ -81,7 +81,9 @@ describe('renderBanner', () => {
           rows: 40,
           skillsDirs: [skillsDir],
         })
-        expect(full).toContain(chalk.hex(brandHex).bold(' ███████╗██╗   ██╗ ██████╗ ████████╗'))
+        expect(full).toContain(chalk.hex(brandHex).bold(' ███████'))
+        expect(full).toContain(chalk.hex(accentHex).bold('╗'))
+        expect(full).toContain(chalk.hex(accentHex).bold('╚══════╝'))
         expect(full).toContain(chalk.hex(accentHex)('  [Context]'))
         expect(full).toContain(chalk.hex(accentHex)('  [Skills]'))
 
