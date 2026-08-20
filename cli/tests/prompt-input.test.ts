@@ -23,6 +23,7 @@ function defaultPromptVM(overrides?: Partial<PromptVMInput>): PromptVMInput {
     cursorLine: 0,
     cursorCol: 0,
     active: true,
+    caretVisible: true,
     model: 'test-model',
     provider: '',
     thinkingLevel: '',

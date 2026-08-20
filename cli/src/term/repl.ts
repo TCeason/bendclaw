@@ -133,6 +133,7 @@ import {
 import { extractAtPrefix, completeAtFile } from '../commands/file-completion.js'
 import { transcriptToMessages } from '../session/transcript.js'
 import { GitInfoProvider } from './git-info.js'
+import { CaretBlink } from './caret-blink.js'
 
 const SPINNER_INTERVAL_MS = 100
 
@@ -157,6 +158,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     trace: rendererTrace.isEnabled ? entry => rendererTrace.log(entry) : undefined,
   })
   renderer.init()
+
+  // The composer paints its own caret, so the idle blink is ours to drive.
+  const caretBlink = new CaretBlink({ onChange: () => renderer.requestRender() })
 
   let appState: AppState = {
     ...createInitialState(agent.model, agent.cwd),
@@ -423,6 +427,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       cursorLine: editor.cursorLine,
       cursorCol: editor.cursorCol,
       active: overlay.kind === 'none',
+      caretVisible: caretBlink.visible,
       model: appState.model,
       provider: configInfo?.provider ?? '',
       planning,
@@ -440,7 +445,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       // token usage renders on the spinner; session totals belong to logs.
       contextTokens: appState.sessionTokens.contextTokens,
       contextWindow: appState.sessionTokens.contextWindow,
-      cacheUsage: appState.promptCache?.usage ?? null,
       thinkingLevel: configInfo?.thinkingLevel ?? '',
     }
   }
@@ -520,6 +524,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function buildFrame(): RenderFrame {
     if (destroyed) return { lines: [] }
+
+    // An overlay owns the screen, so hold the caret solid rather than
+    // animating behind a modal.
+    caretBlink.setEnabled(overlay.kind === 'none')
 
     const blocks: ViewBlock[] = []
 
@@ -1232,6 +1240,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   function handleKey(event: KeyEvent) {
+    caretBlink.bump()
+
     // Mouse dragging creates a native terminal selection outside our editor
     // state. Repaint only the active input row on the next frame so a following
     // keypress releases that stale highlight without clearing scrollback.
@@ -2789,6 +2799,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     compactionTask?.abort()
     streamRef?.abort()
     stopSpinner()
+    caretBlink.dispose()
     gitInfo.dispose()
     updateMgr.cleanup()
     if (exitHintTimer) clearTimeout(exitHintTimer)

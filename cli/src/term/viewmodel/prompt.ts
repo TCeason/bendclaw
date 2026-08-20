@@ -29,6 +29,8 @@ export interface PromptVMInput extends PromptFooterVM {
   rows: number
   placeholder: boolean
   exitHint: boolean
+  /** Blink phase of the end-of-line caret; the on-character block never blinks. */
+  caretVisible: boolean
 }
 
 export interface PromptLayoutOptions {
@@ -43,7 +45,10 @@ const KNOWN_COMMANDS = new Set(
 const COMPLETION_ROWS_COMPACT = 5
 const COMPLETION_ROWS_TALL = 12
 const COMPLETION_TALL_ROWS_THRESHOLD = 35
-const PLACEHOLDER_HINT = ' Type a message...'
+const PLACEHOLDER_HINT = ' Enter a coding task or / for commands'
+/** Below this terminal width the hint drops the `/ for commands` half. */
+const PLACEHOLDER_SHORT_HINT = ' Enter a coding task'
+const PLACEHOLDER_SHORT_COLUMNS = 65
 
 /**
  * Three-eighths block (U+258D): the end-of-line caret. Thin enough to read as
@@ -88,7 +93,7 @@ export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOpt
   const rows = finiteSize(input.rows, 24)
   const frame = createFrame(columns)
 
-  const visual = buildInputLines(input, frame.contentWidth)
+  const visual = buildInputLines(input, frame.contentWidth, columns)
   const maxInputRows = Math.max(MAX_INPUT_ROWS_FLOOR, Math.floor(rows * MAX_INPUT_ROWS_RATIO))
   const start = Math.max(0, Math.min(visual.cursorIndex - maxInputRows + 1, visual.lines.length - maxInputRows))
   const end = Math.min(visual.lines.length, start + maxInputRows)
@@ -132,7 +137,11 @@ export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOpt
 }
 
 /** `contentWidth` is the room inside the frame, not the terminal width. */
-function buildInputLines(input: PromptVMInput, contentWidth: number): { lines: StyledLine[]; cursorIndex: number } {
+function buildInputLines(
+  input: PromptVMInput,
+  contentWidth: number,
+  columns: number,
+): { lines: StyledLine[]; cursorIndex: number } {
   const lines: StyledLine[] = []
   // No prompt prefix any more, so text gets the full content width. When the
   // cursor lands past a full row, the end-of-line caret wraps onto a fresh row
@@ -146,10 +155,11 @@ function buildInputLines(input: PromptVMInput, contentWidth: number): { lines: S
     if (active && text === '' && input.lines.length === 1 && input.placeholder) {
       cursorIndex = lines.length
       // The caret occupies 1 column; the rest is hint.
-      const hint = truncateToWidth(PLACEHOLDER_HINT, Math.max(0, contentWidth - 1))
+      const full = columns < PLACEHOLDER_SHORT_COLUMNS ? PLACEHOLDER_SHORT_HINT : PLACEHOLDER_HINT
+      const hint = truncateToWidth(full, Math.max(0, contentWidth - 1))
       lines.push(line(
         plain(CURSOR_MARKER),
-        caret(),
+        caret(input.caretVisible),
         ...(hint ? [dim(hint)] : []),
       ))
       continue
@@ -195,7 +205,7 @@ function buildInputLines(input: PromptVMInput, contentWidth: number): { lines: S
       } else {
         // At the end of the line there is nothing to sit on, so draw a thin
         // bar in the caret column instead.
-        spans.push(caret())
+        spans.push(caret(input.caretVisible))
       }
       // The hint is advisory, so it yields to the terminal edge rather than
       // overflowing it: `getGhostHint` can return the full command list, which
@@ -270,8 +280,12 @@ function styleInputText(text: string): StyledSpan[] {
  * The end-of-line caret: a thin vertical bar in the cursor hue. Used only
  * where there is no character to sit on, so it reads as "type here" without an
  * `❯` prefix. Mid-line, `cursorBlock` highlights the character instead.
+ *
+ * On the blink's off phase the bar becomes a space, so the column stays claimed
+ * and nothing after it shifts.
  */
-function caret(): StyledSpan {
+function caret(visible = true): StyledSpan {
+  if (!visible) return plain(' ')
   return { text: CARET, hex: getTheme().cursorHex, bold: true }
 }
 

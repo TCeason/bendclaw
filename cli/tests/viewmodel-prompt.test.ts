@@ -17,6 +17,7 @@ function defaultInput(overrides: Partial<PromptVMInput> = {}): PromptVMInput {
     cursorLine: 0,
     cursorCol: 0,
     active: true,
+    caretVisible: true,
     completion: null,
     ghostHint: '',
     columns: 80,
@@ -91,7 +92,7 @@ describe('prompt editor', () => {
     expect(plain).toContain(`╭${'─'.repeat(78)}╮`)
     expect(plain).toContain(`╰${'─'.repeat(78)}╯`)
     expect(plain).toContain('▍')
-    expect(plain).toContain('Type a message...')
+    expect(plain).toContain('Enter a coding task or / for commands')
     // The end-of-line caret carries the cursor hue, not inverse video.
     expect(ansi).toContain(chalk.bold(chalk.hex('#9ae65c')('▍')))
   })
@@ -180,6 +181,39 @@ describe('prompt editor', () => {
   test('renders a caret at end of line without a ghost hint', () => {
     const ansi = render(defaultInput({ lines: ['/mo'], cursorCol: 3, placeholder: false }))
     expect(stripAnsi(ansi).replaceAll(CURSOR_MARKER, '')).toContain('/mo▍')
+  })
+
+  test('blanks the end-of-line caret on the dark half of the blink cycle', () => {
+    const input = { lines: ['/mo'], cursorCol: 3, placeholder: false }
+    const off = render(defaultInput({ ...input, caretVisible: false }))
+    const plain = stripAnsi(off).replaceAll(CURSOR_MARKER, '')
+    expect(plain).not.toContain('▍')
+    expect(off).not.toContain(chalk.bold(chalk.hex('#9ae65c')('▍')))
+    // A space still claims the caret column, so the row keeps its width.
+    const onRow = renderPlain(defaultInput({ ...input, caretVisible: true }))
+      .split('\n').find(row => row.includes('▍'))
+    const offRow = plain.split('\n').find(row => row.includes('/mo'))
+    expect(offRow).toBeDefined()
+    expect(offRow?.length).toBe(onRow?.length)
+  })
+
+  test('blanks the placeholder caret while the hint stays put', () => {
+    const hint = 'Enter a coding task or / for commands'
+    const off = renderPlain(defaultInput({ caretVisible: false }))
+    expect(off).not.toContain('▍')
+    const offRow = off.split('\n').find(row => row.includes(hint))
+    const onRow = renderPlain(defaultInput()).split('\n').find(row => row.includes(hint))
+    expect(offRow).toBeDefined()
+    expect(offRow?.indexOf(hint)).toBe(onRow?.indexOf(hint) ?? -1)
+    expect(offRow?.length).toBe(onRow?.length)
+  })
+
+  test('keeps the on-character cursor block solid across the blink cycle', () => {
+    const input = { lines: ['/model '], cursorCol: 6, placeholder: false }
+    const on = render(defaultInput({ ...input, caretVisible: true }))
+    const off = render(defaultInput({ ...input, caretVisible: false }))
+    expect(off).toContain('\x1b[48;2;154;230;92m')
+    expect(off).toBe(on)
   })
 
   test('highlights the character under the cursor when it is not at end of line', () => {
@@ -532,6 +566,16 @@ describe('prompt overflow guards', () => {
     }
   })
 
+  test('drops the commands half of the placeholder below 65 columns', () => {
+    const hintRow = (columns: number) => renderPlain(defaultInput({ columns }))
+      .split('\n').find(row => row.includes('Enter a coding task'))
+    expect(hintRow(65)).toContain('Enter a coding task or / for commands')
+    expect(hintRow(64)).toContain('Enter a coding task')
+    expect(hintRow(64)).not.toContain('/ for commands')
+    // The short hint fits outright, so it is never cut mid-word.
+    expect(hintRow(45)).not.toContain('…')
+  })
+
   test('truncates the exit hint on a narrow terminal', () => {
     for (const row of renderLines(defaultInput({ columns: 10, exitHint: true }))) {
       expect(visibleWidth(row)).toBeLessThanOrEqual(10)
@@ -604,7 +648,7 @@ describe('prompt footer', () => {
     expect(footer).toBe('~/github/evotai/evot (main) │ gpt-5.6-sol@anthropic • high │ context: 38.9% (105.8k/272k)')
   })
 
-  test('shows last-call cache hit rate and drops it before provider when narrow', () => {
+  test('carries no cache segment: per-call cache usage belongs to the spinner', () => {
     const footerAt = (columns: number) => blocksToLines(buildPromptFooterBlocks(defaultInput({
       columns,
       model: 'gpt-5.6-sol',
@@ -612,38 +656,14 @@ describe('prompt footer', () => {
       thinkingLevel: 'high',
       contextTokens: 105800,
       contextWindow: 272000,
-      cacheUsage: { inputTokens: 4, cacheReadTokens: 200_000, cacheWriteTokens: 500 },
     }))).map(stripAnsi)[0]!
 
+    for (const columns of [200, 160, 80]) {
+      expect(footerAt(columns)).not.toContain('cache')
+    }
     const wide = footerAt(160)
     expect(wide).toContain('context: 38.9% (105.8k/272k)')
-    expect(wide).toContain('cache: 99.7%')
-
-    // cache is dropped before provider/branch/context.
-    const narrow = footerAt(80)
-    expect(narrow).not.toContain('cache:')
-    expect(narrow).toContain('@anthropic')
-    expect(narrow).toContain('context: 38.9%')
-  })
-
-  test('hides the cache segment when the last call reported no cache activity', () => {
-    const plain = renderPlain(defaultInput({
-      columns: 200,
-      contextTokens: 105800,
-      contextWindow: 272000,
-      cacheUsage: { inputTokens: 50_000, cacheReadTokens: 0, cacheWriteTokens: 0 },
-    }))
-    expect(plain).not.toContain('cache:')
-  })
-
-  test('cold cache write shows 0% instead of hiding', () => {
-    const plain = renderPlain(defaultInput({
-      columns: 200,
-      contextTokens: 105800,
-      contextWindow: 272000,
-      cacheUsage: { inputTokens: 500, cacheReadTokens: 0, cacheWriteTokens: 20_000 },
-    }))
-    expect(plain).toContain('cache: 0%')
+    expect(wide).toContain('@anthropic')
   })
 
   test('degrades footer details in priority order as width narrows', () => {
@@ -702,6 +722,6 @@ describe('prompt footer', () => {
     expect(lines).toHaveLength(2)
     expect(lines[0]).toContain('gpt-5.6-sol@openai')
     expect(lines[1]).toBe('')
-    expect(lines.join('\n')).not.toContain('Type a message...')
+    expect(lines.join('\n')).not.toContain('Enter a coding task or / for commands')
   })
 })

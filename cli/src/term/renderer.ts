@@ -603,6 +603,11 @@ export class TermRenderer {
     return null
   }
 
+  /**
+   * Park the terminal's own cursor on the caret cell but keep it hidden: input
+   * methods anchor their preedit window to the reported position, while the
+   * prompt paints the visible caret itself.
+   */
   private positionHardwareCursor(cursorPos: { row: number; col: number } | null, totalLines: number): void {
     if (!cursorPos || totalLines <= 0) {
       this.write(HIDE_CURSOR)
@@ -615,7 +620,7 @@ export class TermRenderer {
     if (rowDelta > 0) buffer += `\x1b[${rowDelta}B`
     else if (rowDelta < 0) buffer += `\x1b[${-rowDelta}A`
     buffer += `\x1b[${targetCol + 1}G`
-    buffer += SHOW_CURSOR
+    buffer += HIDE_CURSOR
     this.write(buffer)
     this.hardwareCursorRow = targetRow
   }

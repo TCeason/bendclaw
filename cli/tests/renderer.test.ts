@@ -640,6 +640,21 @@ describe('TermRenderer', () => {
       renderer.destroy()
     })
 
+    test('cursor marker parks the hardware cursor but keeps it hidden', async () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      renderer.setRenderCallback(() => [`ab${CURSOR_MARKER}cd`])
+      stdout.clear()
+      await renderFrame(renderer)
+
+      // The column tracks the caret for input methods, but the prompt paints
+      // the visible caret itself.
+      expect(stdout.output).toContain('\x1b[3G')
+      expect(stdout.output).toContain('\x1b[?25l')
+      expect(stdout.output).not.toContain('\x1b[?25h')
+      renderer.destroy()
+    })
+
     test('lines wider than terminal are clipped by DECAWM off', async () => {
       const { renderer, stdout } = createRenderer()
       stdout.columns = 20

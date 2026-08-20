@@ -22,6 +22,7 @@ function promptInput(text: string, cursorCol: number, columns = 20): PromptVMInp
     cursorLine: 0,
     cursorCol,
     active: true,
+    caretVisible: true,
     completion: null,
     ghostHint: '',
     columns,

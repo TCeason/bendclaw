@@ -8,7 +8,6 @@
  */
 
 import stringWidth from 'string-width'
-import { formatCacheHitPercent, type PromptUsageBuckets } from '../../render/cache.js'
 import { line, block, plain, dim, colored, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
 import { finiteSize, spansWidth, truncateTailToWidth } from './width.js'
 
@@ -25,8 +24,6 @@ export interface PromptFooterVM {
   gitBranch: string | null
   contextTokens: number
   contextWindow: number
-  /** Prompt buckets of the last billed request; null hides the cache segment. */
-  cacheUsage?: PromptUsageBuckets | null
 }
 
 export function buildPromptFooterBlocks(input: PromptFooterVM): ViewBlock[] {
@@ -53,7 +50,6 @@ type FooterContextDetail = 'full' | 'compact' | 'hidden'
 interface FooterLayout {
   dashboard: boolean
   context: FooterContextDetail
-  cache: boolean
   provider: boolean
   branch: boolean
   thinking: boolean
@@ -63,15 +59,14 @@ interface FooterLayout {
 
 /** Widest first: the first entry that fits wins, so detail sheds in this order. */
 const FOOTER_LAYOUTS: FooterLayout[] = [
-  { dashboard: true, context: 'full', cache: true, provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
-  { dashboard: false, context: 'full', cache: true, provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
-  { dashboard: false, context: 'compact', cache: true, provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
-  { dashboard: false, context: 'compact', cache: false, provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
-  { dashboard: false, context: 'compact', cache: false, provider: false, branch: true, thinking: true, model: true, truncateCwd: false },
-  { dashboard: false, context: 'compact', cache: false, provider: false, branch: false, thinking: true, model: true, truncateCwd: false },
-  { dashboard: false, context: 'hidden', cache: false, provider: false, branch: false, thinking: true, model: true, truncateCwd: true },
-  { dashboard: false, context: 'hidden', cache: false, provider: false, branch: false, thinking: false, model: true, truncateCwd: true },
-  { dashboard: false, context: 'hidden', cache: false, provider: false, branch: false, thinking: false, model: false, truncateCwd: true },
+  { dashboard: true, context: 'full', provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
+  { dashboard: false, context: 'full', provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
+  { dashboard: false, context: 'compact', provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
+  { dashboard: false, context: 'compact', provider: false, branch: true, thinking: true, model: true, truncateCwd: false },
+  { dashboard: false, context: 'compact', provider: false, branch: false, thinking: true, model: true, truncateCwd: false },
+  { dashboard: false, context: 'hidden', provider: false, branch: false, thinking: true, model: true, truncateCwd: true },
+  { dashboard: false, context: 'hidden', provider: false, branch: false, thinking: false, model: true, truncateCwd: true },
+  { dashboard: false, context: 'hidden', provider: false, branch: false, thinking: false, model: false, truncateCwd: true },
 ]
 
 interface FooterCandidate {
@@ -118,15 +113,6 @@ function buildFooterCandidate(
             ? colored(text, 'yellow')
             : dim(text),
       ])
-    }
-    if (layout.cache && input.cacheUsage
-      && input.cacheUsage.cacheReadTokens + input.cacheUsage.cacheWriteTokens > 0) {
-      const pct = formatCacheHitPercent(
-        input.cacheUsage.inputTokens,
-        input.cacheUsage.cacheReadTokens,
-        input.cacheUsage.cacheWriteTokens,
-      )
-      groups.push([dim(`cache: ${pct}%`)])
     }
     return groups.flatMap((group, index) => index === 0 ? group : [dim(' │ '), ...group])
   }
