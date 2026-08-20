@@ -13,20 +13,17 @@
 
 import stringWidth from 'string-width'
 import { getTheme } from '../../render/theme.js'
+import { atLeastHeight, atLeastWidth, heightTier, widthTier } from './breakpoints.js'
 import { line, plain, type StyledLine, type StyledSpan } from './types.js'
 import { spansWidth, truncateSpansToWidth, truncateToWidth } from './width.js'
-
-/**
- * Below this width the side rails cost more than they earn: rails plus gutters
- * take at least 4 of very few columns, so the frame degrades to plain
- * horizontal rules and hands the full width back to content.
- */
-const MIN_FRAMED_COLUMNS = 30
 
 /**
  * Blank columns between each rail and the content, scaled to the terminal.
  * Wide terminals can spend cells on breathing room; narrow ones need every
  * column for text, so the gutter shrinks before content does. Costs no rows.
+ *
+ * This stays a step table rather than a tier: it scales smoothly with width
+ * instead of tracking a semantic threshold.
  */
 const GUTTER_STEPS: readonly { minColumns: number; gutter: number }[] = [
   { minColumns: 100, gutter: 3 },
@@ -44,8 +41,13 @@ const LABEL_CHROME_COST = 5
 export interface Frame {
   /** Columns available to content inside the rails. */
   readonly contentWidth: number
-  /** False on narrow terminals, where rails degrade to plain rules. */
+  /** False when rails degrade to plain rules, or vanish entirely. */
   readonly framed: boolean
+  /**
+   * False on very short terminals, where even a horizontal rule is a row the
+   * transcript needs more. Callers skip the border rows entirely.
+   */
+  readonly ruled: boolean
   /** Top border, optionally labelled (`╭─ ↑ 3 lines ────╮`). */
   top(label?: string): StyledLine
   /** Bottom border, optionally labelled. */
@@ -54,14 +56,26 @@ export interface Frame {
   row(styled: StyledLine): StyledLine
 }
 
-export function createFrame(columns: number): Frame {
-  const framed = columns >= MIN_FRAMED_COLUMNS
+export interface FrameOptions {
+  /** Terminal rows. Short terminals drop the border to keep the transcript. */
+  rows?: number
+  /** Border hue; defaults to the brand colour. Input modes recolour the frame. */
+  hex?: string
+}
+
+export function createFrame(columns: number, options: FrameOptions = {}): Frame {
+  const { rows, hex } = options
+  // Two chrome rows are affordable down to 10 rows. Below that a framed
+  // composer plus footer claims the whole screen, so the border goes.
+  const ruled = rows === undefined || atLeastHeight(heightTier(rows), 'sm')
+  const framed = ruled && atLeastWidth(widthTier(columns), 'sm')
   const gutterWidth = framed ? gutterFor(columns) : 0
   // Two rails plus a gutter on each side.
   const contentWidth = Math.max(1, framed ? columns - 2 - gutterWidth * 2 : columns)
+  const borderHex = () => hex ?? getTheme().brandHex
 
   const border = (label: string | undefined, left: string, right: string): StyledLine => {
-    const hex = getTheme().brandHex
+    const hex = borderHex()
     if (!framed) return line({ text: plainRule(columns, label), hex })
     // `╭─ ` + label + ` ` on the left, one corner on the right.
     const lead = label ? `${left}─ ${truncateToWidth(label, Math.max(0, columns - LABEL_CHROME_COST))} ` : left
@@ -72,6 +86,7 @@ export function createFrame(columns: number): Frame {
   return {
     contentWidth,
     framed,
+    ruled,
     top: label => border(label, '╭', '╮'),
     bottom: label => border(label, '╰', '╯'),
     row: styled => {
@@ -92,7 +107,7 @@ export function createFrame(columns: number): Frame {
         if (styled.bg) return { spans: [...spans, ...fill] }
         return spans === styled.spans ? styled : { spans }
       }
-      const rail = { text: '│', hex: getTheme().brandHex }
+      const rail = { text: '│', hex: borderHex() }
       // The gutter carries the row background so a selected row reads as one
       // continuous band from rail to rail.
       const blanks = ' '.repeat(gutterWidth)

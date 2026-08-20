@@ -14,7 +14,9 @@ import { getTheme } from '../../render/theme.js'
 import type { CompletionMenu } from '../input/editor.js'
 import { nextGraphemeBoundary } from '../input/grapheme.js'
 import { CURSOR_MARKER } from '../renderer.js'
+import { atLeastHeight, atLeastWidth, heightTier, widthTier } from './breakpoints.js'
 import { createFrame } from './frame.js'
+import { promptMode, promptModeLabels, promptModeStyle, type PromptModeStyle } from './prompt-mode.js'
 import { buildPromptFooterBlocks, type PromptFooterVM } from './prompt-footer.js'
 import { line, block, plain, dim, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
 import { finiteSize, truncateToWidth, wrapTextByWidth } from './width.js'
@@ -44,11 +46,6 @@ const KNOWN_COMMANDS = new Set(
 /** Completion viewport height: taller terminals get more candidates. */
 const COMPLETION_ROWS_COMPACT = 5
 const COMPLETION_ROWS_TALL = 12
-const COMPLETION_TALL_ROWS_THRESHOLD = 35
-const PLACEHOLDER_HINT = ' Enter a coding task or / for commands'
-/** Below this terminal width the hint drops the `/ for commands` half. */
-const PLACEHOLDER_SHORT_HINT = ' Enter a coding task'
-const PLACEHOLDER_SHORT_COLUMNS = 65
 
 /**
  * Three-eighths block (U+258D): the end-of-line caret. Thin enough to read as
@@ -67,19 +64,17 @@ const MAX_INPUT_ROWS_FLOOR = 5
  *
  * Three is the smallest floor that can centre: an even interior cannot put
  * equal blanks above and below a one-line draft, which is what makes a 2-row
- * composer look top-heavy. Only on terminals with rows to spare — below the
- * threshold the floor drops to 1, because a fixed composer plus borders and
- * footer would claim over 40% of a 14-row terminal.
+ * composer look top-heavy. Only from the `md` height tier up — below it a fixed
+ * composer plus borders and footer would claim over 40% of the screen.
  */
 const MIN_INPUT_ROWS_TALL = 3
-const MIN_INPUT_ROWS_TALL_THRESHOLD = 20
 
 function completionRows(rows: number): number {
-  return rows > COMPLETION_TALL_ROWS_THRESHOLD ? COMPLETION_ROWS_TALL : COMPLETION_ROWS_COMPACT
+  return atLeastHeight(heightTier(rows), 'lg') ? COMPLETION_ROWS_TALL : COMPLETION_ROWS_COMPACT
 }
 
 function minInputRows(rows: number): number {
-  return rows >= MIN_INPUT_ROWS_TALL_THRESHOLD ? MIN_INPUT_ROWS_TALL : 1
+  return atLeastHeight(heightTier(rows), 'md') ? MIN_INPUT_ROWS_TALL : 1
 }
 
 /** `↑ 3 lines` / `↓ 1 line` — hidden rows above or below the viewport. */
@@ -88,12 +83,28 @@ function overflowLabel(arrow: '↑' | '↓', count: number): string | undefined 
   return `${arrow} ${count} ${count === 1 ? 'line' : 'lines'}`
 }
 
+/**
+ * The top border label. Mode and scroll overflow compete for one slot, so they
+ * share it: `╭─ plan · ↑ 3 lines ──╮`. Mode leads because it says what pressing
+ * enter will do, while overflow only says where you are in a draft.
+ *
+ * The label carries the mode as text, not just as border hue — colour alone
+ * fails on monochrome terminals and for colour-blind users.
+ */
+function topLabel(modes: string[], overflow: string | undefined): string | undefined {
+  const mode = modes.join(' · ')
+  if (!mode) return overflow
+  return overflow ? `${mode} · ${overflow}` : mode
+}
+
 export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOptions = {}): ViewBlock[] {
   const columns = finiteSize(input.columns, 80)
   const rows = finiteSize(input.rows, 24)
-  const frame = createFrame(columns)
+  const mode = promptModeStyle(promptMode(input))
+  const modeLabels = promptModeLabels(input)
+  const frame = createFrame(columns, { rows, hex: mode.hex })
 
-  const visual = buildInputLines(input, frame.contentWidth, columns)
+  const visual = buildInputLines(input, frame.contentWidth, columns, mode)
   const maxInputRows = Math.max(MAX_INPUT_ROWS_FLOOR, Math.floor(rows * MAX_INPUT_ROWS_RATIO))
   const start = Math.max(0, Math.min(visual.cursorIndex - maxInputRows + 1, visual.lines.length - maxInputRows))
   const end = Math.min(visual.lines.length, start + maxInputRows)
@@ -113,14 +124,17 @@ export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOpt
   const above = Math.floor(filler / 2)
   const blank = () => frame.row(line(plain('')))
 
-  const blocks: ViewBlock[] = [
-    block([frame.top(overflowLabel('↑', start))], options.attachedAbove ? 0 : 1),
-    block([
-      ...Array.from({ length: above }, blank),
-      ...inputRows.map(frame.row),
-      ...Array.from({ length: filler - above }, blank),
-    ]),
-  ]
+  const blocks: ViewBlock[] = []
+  // On a very short terminal the border rows are two of very few, and the
+  // transcript needs them more than the composer needs an outline. The caret
+  // still marks the row as the place you type, and the footer takes the mode
+  // back over.
+  if (frame.ruled) blocks.push(block([frame.top(topLabel(modeLabels, overflowLabel('↑', start)))], options.attachedAbove ? 0 : 1))
+  blocks.push(block([
+    ...Array.from({ length: above }, blank),
+    ...inputRows.map(frame.row),
+    ...Array.from({ length: filler - above }, blank),
+  ], frame.ruled ? undefined : (options.attachedAbove ? 0 : 1)))
 
   if (completionLines.length > 0) {
     // A blank rail row separates what you typed from what is being suggested;
@@ -129,10 +143,12 @@ export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOpt
     if (frame.framed) blocks.push(block([frame.row(line(plain('')))]))
     blocks.push(block(completionLines.map(frame.row)))
   }
-  blocks.push(block([frame.bottom(overflowLabel('↓', visual.lines.length - end))]))
+  if (frame.ruled) blocks.push(block([frame.bottom(overflowLabel('↓', visual.lines.length - end))]))
 
   if (input.exitHint) blocks.push(block([line(dim(truncateToWidth('  Press Ctrl+C again to exit', columns)))]))
-  blocks.push(...buildPromptFooterBlocks(input))
+  // The border label carries the mode whenever it is drawn, so the footer only
+  // repeats it on terminals too short for a border.
+  blocks.push(...buildPromptFooterBlocks(input, { modeShownAbove: frame.ruled }))
   return blocks
 }
 
@@ -141,6 +157,7 @@ function buildInputLines(
   input: PromptVMInput,
   contentWidth: number,
   columns: number,
+  mode: PromptModeStyle,
 ): { lines: StyledLine[]; cursorIndex: number } {
   const lines: StyledLine[] = []
   // No prompt prefix any more, so text gets the full content width. When the
@@ -155,8 +172,8 @@ function buildInputLines(
     if (active && text === '' && input.lines.length === 1 && input.placeholder) {
       cursorIndex = lines.length
       // The caret occupies 1 column; the rest is hint.
-      const full = columns < PLACEHOLDER_SHORT_COLUMNS ? PLACEHOLDER_SHORT_HINT : PLACEHOLDER_HINT
-      const hint = truncateToWidth(full, Math.max(0, contentWidth - 1))
+      const full = atLeastWidth(widthTier(columns), 'md') ? mode.hint : mode.shortHint
+      const hint = truncateToWidth(` ${full}`, Math.max(0, contentWidth - 1))
       lines.push(line(
         plain(CURSOR_MARKER),
         caret(input.caretVisible),

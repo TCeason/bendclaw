@@ -26,12 +26,31 @@ export interface PromptFooterVM {
   contextWindow: number
 }
 
-export function buildPromptFooterBlocks(input: PromptFooterVM): ViewBlock[] {
-  return [buildFooter(input, finiteSize(input.columns, 80)), block([line(plain(''))])]
+export interface PromptFooterOptions {
+  /**
+   * True when the composer border above already names the input mode. The
+   * footer then drops its `[plan]` prefix rather than repeating the same word
+   * two rows apart. It stays authoritative whenever nothing above it carries
+   * the mode: overlays replace the composer, and short terminals drop the
+   * border entirely.
+   */
+  modeShownAbove?: boolean
 }
 
-function buildFooter(input: PromptFooterVM, columns: number): ViewBlock {
-  const mode = `${input.logMode ? '[log] ' : ''}${input.planning ? '[plan] ' : ''}`
+export function buildPromptFooterBlocks(
+  input: PromptFooterVM,
+  options: PromptFooterOptions = {},
+): ViewBlock[] {
+  return [
+    buildFooter(input, finiteSize(input.columns, 80), options.modeShownAbove ?? false),
+    block([line(plain(''))]),
+  ]
+}
+
+function buildFooter(input: PromptFooterVM, columns: number, modeShownAbove: boolean): ViewBlock {
+  const mode = modeShownAbove
+    ? ''
+    : `${input.logMode ? '[log] ' : ''}${input.planning ? '[plan] ' : ''}`
   const cwd = compactCwd(input.cwd)
   const contextPercent = input.contextWindow > 0
     ? input.contextTokens / input.contextWindow * 100

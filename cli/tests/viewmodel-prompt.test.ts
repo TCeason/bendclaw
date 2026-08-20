@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, test } from 'bun:test'
 import chalk from 'chalk'
 import stringWidth from 'string-width'
 import stripAnsi from 'strip-ansi'
-import { resetThemeCache } from '../src/render/theme.js'
+import { getTheme, resetThemeCache } from '../src/render/theme.js'
 import { visibleWidth } from '../src/render/wrap.js'
 import { CURSOR_MARKER } from '../src/term/renderer.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
@@ -451,6 +451,71 @@ describe('prompt frame', () => {
     const prefix = row!.slice(0, row!.indexOf(CURSOR_MARKER))
     expect(visibleWidth(prefix)).toBe(2)
   })
+
+  test('drops the border entirely on a terminal too short to spare the rows', () => {
+    // At 9 rows the two border rows plus footer would leave the transcript
+    // nothing, so the composer keeps only its caret row.
+    const plain = renderPlain(defaultInput({ rows: 9 })).split('\n')
+    for (const glyph of ['╭', '╮', '╰', '╯', '│']) {
+      expect(plain.filter(row => row.startsWith(glyph))).toEqual([])
+    }
+    expect(plain.some(row => row.includes('▍'))).toBe(true)
+  })
+
+  test('keeps the border down to the height where it still pays', () => {
+    const plain = renderPlain(defaultInput({ rows: 10 }))
+    expect(plain).toContain('╭')
+    expect(plain).toContain('╰')
+  })
+
+  test('reclaims rows as the terminal shortens rather than crowding out history', () => {
+    const height = (rows: number) => renderLines(defaultInput({ rows })).length
+    // Each step down sheds chrome: blank filler rows first, then the border.
+    expect(height(40)).toBe(8)
+    expect(height(14)).toBe(6)
+    expect(height(9)).toBe(4)
+    // A 9-row terminal must keep most of itself for the transcript.
+    expect(height(9)).toBeLessThan(9 / 2 + 1)
+  })
+
+  test('recolours both rails and corners for an active mode', () => {
+    const { accentHex, brandHex } = getTheme()
+    // A border row is painted as one span, so the hue is asserted on the row
+    // rather than on the corner glyph alone.
+    const rowsFor = (input: PromptVMInput) =>
+      renderLines(input).filter(row => /^\x1b\[[\d;]+m[╭╰│]/.test(row))
+    const hueOf = (row: string) => row.slice(0, row.indexOf('m') + 1)
+
+    const planned = rowsFor(defaultInput({ planning: true }))
+    expect(planned.length).toBeGreaterThan(0)
+    for (const row of planned) {
+      expect(hueOf(row)).toBe(chalk.hex(accentHex)('x').slice(0, -'x\x1b[39m'.length))
+    }
+    // The default mode keeps the brand hue.
+    for (const row of rowsFor(defaultInput())) {
+      expect(hueOf(row)).toBe(chalk.hex(brandHex)('x').slice(0, -'x\x1b[39m'.length))
+    }
+  })
+
+  test('names the mode in the border label, not just by hue', () => {
+    // Colour alone fails on monochrome terminals and for colour-blind users.
+    expect(renderPlain(defaultInput({ planning: true }))).toContain('╭─ plan ')
+    expect(renderPlain(defaultInput({ logMode: true }))).toContain('╭─ log ')
+  })
+
+  test('shares the label slot between mode and scroll overflow', () => {
+    const plain = renderPlain(defaultInput({
+      columns: 60,
+      rows: 20,
+      planning: true,
+      placeholder: false,
+      lines: Array.from({ length: 12 }, (_, index) => `line ${index + 1}`),
+      cursorLine: 11,
+      cursorCol: 7,
+    }))
+    // Mode leads: it says what enter will do, overflow only says where you are.
+    expect(plain).toContain('╭─ plan · ↑ ')
+  })
 })
 
 describe('prompt completion menu', () => {
@@ -590,7 +655,7 @@ describe('prompt overflow guards', () => {
 })
 
 describe('prompt footer', () => {
-  test('renders modes, repository state and model identity', () => {
+  test('renders repository state and model identity', () => {
     const plain = renderPlain(defaultInput({
       planning: true,
       logMode: true,
@@ -598,9 +663,29 @@ describe('prompt footer', () => {
       thinkingLevel: 'xhigh',
       columns: 160,
     }))
-    expect(plain).toContain('[log] [plan]')
+    // The border names the modes, so the footer drops its own prefix rather
+    // than repeating the same words two rows apart.
+    expect(plain).toContain('╭─ log · plan ')
+    expect(plain).not.toContain('[log]')
+    expect(plain).not.toContain('[plan]')
     expect(plain).toContain('/Users/test/project (main)')
     expect(plain).toContain('claude-sonnet@anthropic • xhigh')
+  })
+
+  test('footer keeps the mode prefix when no border carries it', () => {
+    // Below the border threshold nothing above the footer names the mode, so
+    // the footer stays authoritative.
+    const plain = renderPlain(defaultInput({ planning: true, logMode: true, rows: 9, columns: 160 }))
+    expect(plain).not.toContain('╭')
+    expect(plain).toContain('[log] [plan]')
+  })
+
+  test('footer keeps the mode prefix when asked directly, as overlays do', () => {
+    // Selector and ask overlays replace the composer but keep the footer, so
+    // the default must carry the mode.
+    const footer = blocksToLines(buildPromptFooterBlocks(defaultInput({ planning: true, columns: 160 })))
+      .map(stripAnsi)[0]!
+    expect(footer).toContain('[plan]')
   })
 
   test('labels disabled thinking', () => {
