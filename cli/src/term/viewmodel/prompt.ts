@@ -37,6 +37,8 @@ export interface PromptVMInput extends PromptFooterVM {
 
 export interface PromptLayoutOptions {
   attachedAbove?: boolean
+  /** Spinner and queue rows already occupying the live region above the prompt. */
+  reservedAboveRows?: number
 }
 
 const KNOWN_COMMANDS = new Set(
@@ -110,7 +112,20 @@ export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOpt
   const end = Math.min(visual.lines.length, start + maxInputRows)
   const inputRows = visual.lines.slice(start, end)
 
-  const completionLines = buildCompletionLines(input.completion, frame.contentWidth, rows)
+  const completionBudget = Math.max(1, rows
+    - (options.reservedAboveRows ?? 0)
+    - (options.attachedAbove ? 0 : 1)
+    - (frame.ruled ? 2 : 0)
+    - inputRows.length
+    - (frame.framed ? 1 : 0)
+    - (input.exitHint ? 1 : 0)
+    - 2) // footer + trailing blank
+  const completionLines = buildCompletionLines(
+    input.completion,
+    frame.contentWidth,
+    rows,
+    completionBudget,
+  )
   // The candidate list already gives the composer height, so the blank-row
   // floor only applies when no menu is open. Otherwise the two stack and push
   // the candidates away from what you typed. Rails are what make the blanks
@@ -241,10 +256,24 @@ function buildInputLines(
 }
 
 /** `contentWidth` is the room inside the frame, not the terminal width. */
-function buildCompletionLines(menu: CompletionMenu | null, contentWidth: number, rows: number): StyledLine[] {
-  if (!menu || menu.items.length === 0) return []
+function buildCompletionLines(
+  menu: CompletionMenu | null,
+  contentWidth: number,
+  rows: number,
+  lineBudget: number,
+): StyledLine[] {
+  if (!menu) return []
+  if (menu.items.length === 0) {
+    return menu.note
+      ? [line(dim(truncateToWidth(`  ${menu.note}`, contentWidth)))]
+      : []
+  }
   const { brandHex, selectionBgHex, selectionMutedHex } = getTheme()
-  const visible = Math.min(completionRows(rows), menu.items.length)
+  const showNote = Boolean(menu.note) && lineBudget >= 2
+  const available = Math.max(1, lineBudget - (showNote ? 1 : 0))
+  let visible = Math.min(completionRows(rows), menu.items.length, available)
+  const showCounter = menu.items.length > visible && available >= 2
+  if (showCounter) visible = Math.min(visible, available - 1)
   // Keep the selection near the middle of the viewport so paging down does not
   // pin it to the last row (which reads as "nothing below").
   const ideal = menu.selectedIndex - Math.floor((visible - 1) / 2)
@@ -281,8 +310,11 @@ function buildCompletionLines(menu: CompletionMenu | null, contentWidth: number,
     })
   }
 
-  if (menu.items.length > visible) {
+  if (showCounter) {
     lines.push(line(dim(`  ${menu.selectedIndex + 1}/${menu.items.length}`)))
+  }
+  if (showNote && menu.note) {
+    lines.push(line(dim(truncateToWidth(`  ${menu.note}`, contentWidth))))
   }
   return lines
 }

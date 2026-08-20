@@ -631,6 +631,89 @@ describe('prompt completion menu', () => {
     expect(hasCounter(13, 40)).toBe(true)
   })
 
+  test('renders an advisory note below candidates and their counter', () => {
+    const note = 'files up to 6 levels deep — install fd to search deeper'
+    const lines = renderPlain(defaultInput({
+      rows: 24,
+      lines: ['@src'],
+      cursorCol: 4,
+      placeholder: false,
+      completion: { ...menuOf(6, 0), note },
+    })).split('\n')
+
+    const counter = lines.findIndex(row => row.includes('1/6'))
+    const advisory = lines.findIndex(row => row.includes(note))
+    expect(counter).toBeGreaterThan(-1)
+    expect(advisory).toBe(counter + 1)
+  })
+
+  test('renders a note-only empty result without a fake candidate', () => {
+    const note = 'no matches · files up to 6 levels deep'
+    const plain = renderPlain(defaultInput({
+      lines: ['@deep'],
+      cursorCol: 5,
+      placeholder: false,
+      completion: {
+        items: [],
+        selectedIndex: 0,
+        replaceStart: 0,
+        replaceEnd: 5,
+        note,
+      },
+    }))
+    expect(plain).toContain(note)
+    expect(plain).not.toContain('❯')
+    expect(plain).not.toMatch(/\d+\/0/)
+  })
+
+  test('truncates a completion note to the menu width', () => {
+    const columns = 32
+    const note = 'files up to 6 levels deep — install fd to search deeper'
+    const rows = renderLines(defaultInput({
+      columns,
+      lines: ['@src'],
+      cursorCol: 4,
+      placeholder: false,
+      completion: { ...menuOf(2, 0), note },
+    }))
+    const advisory = rows.find(row => stripAnsi(row).includes('files up to'))
+    expect(advisory).toBeDefined()
+    expect(stripAnsi(advisory!)).toContain('…')
+    expect(visibleWidth(advisory!)).toBeLessThanOrEqual(columns)
+  })
+
+  test('shrinks candidates so the prompt never exceeds a short terminal', () => {
+    const note = 'files up to 6 levels deep — install fd to search deeper'
+    for (const rows of [5, 6, 9, 10, 12, 14]) {
+      const rendered = renderLines(defaultInput({
+        rows,
+        lines: ['@src'],
+        cursorCol: 4,
+        placeholder: false,
+        completion: { ...menuOf(20, 0), note },
+      }))
+      expect(rendered.length).toBeLessThanOrEqual(rows)
+    }
+  })
+
+  test('budgets spinner and queue rows before choosing candidate count', () => {
+    const rows = 10
+    const prompt = blocksToLines(buildPromptBlocks(defaultInput({
+      rows,
+      lines: ['@src'],
+      cursorCol: 4,
+      placeholder: false,
+      completion: {
+        ...menuOf(20, 0),
+        note: 'files up to 6 levels deep — install fd to search deeper',
+      },
+    }), {
+      attachedAbove: true,
+      reservedAboveRows: 2,
+    }))
+    expect(prompt.length + 2).toBeLessThanOrEqual(rows)
+  })
+
   test('separates the input from candidates only while framed', () => {
     const blankRows = (columns: number) => renderLines(defaultInput({
       columns,

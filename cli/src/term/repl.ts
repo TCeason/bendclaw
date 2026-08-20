@@ -69,6 +69,7 @@ import {
   deleteWordBefore,
   deleteWordForward,
   insertNewline,
+  insertContinuationNewline,
   moveUp,
   moveDown,
   moveWordLeft,
@@ -680,6 +681,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const footerBlocks = [...preEditorBlocks]
     footerBlocks.push(...buildPromptBlocks(getPromptVM(), {
       attachedAbove: spinnerBlock !== null || queueLines.length > 0,
+      reservedAboveRows: blocksToLines(preEditorBlocks).length,
     }))
 
     return {
@@ -1684,7 +1686,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           label: item.label,
           value: item.value + (item.isDirectory ? '' : ' '),
         }))
-        editor = showCompletions(editor, items, result.prefixStart, cursorCol)
+        editor = showCompletions(editor, items, result.prefixStart, cursorCol, result.note)
         if (acceptSingle && items.length === 1) editor = acceptCompletion(editor)
       }
       renderer.requestRender()
@@ -1734,7 +1736,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   function handleNormalKey(event: KeyEvent) {
-    if (editor.completion) {
+    if (editor.completion && editor.completion.items.length > 0) {
       if (event.type === 'up' || event.type === 'down') {
         editor = moveCompletion(editor, event.type === 'up' ? -1 : 1)
         renderer.requestRender()
@@ -1799,7 +1801,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         if (!rawText) return
         // Check for continuation (unclosed fences, trailing backslash)
         if (editorNeedsContinuation(editor)) {
-          mutateEditor(state => insertNewline(state))
+          mutateEditor(state => insertContinuationNewline(state))
           renderer.requestRender()
           return
         }
@@ -1847,6 +1849,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         break
       }
       case 'shift-enter':
+      case 'ctrl-enter':
       case 'alt-enter': {
         mutateEditor(state => insertNewline(state))
         renderer.requestRender()

@@ -23,6 +23,8 @@ export interface CompletionMenu {
   selectedIndex: number
   replaceStart: number
   replaceEnd: number
+  /** Context line under the candidates; absent on plain command completion. */
+  note?: string
 }
 
 export interface EditorState {
@@ -35,9 +37,10 @@ export interface EditorState {
   completion: CompletionMenu | null
 }
 
-/** Check if current editor content needs continuation (unclosed fence, trailing backslash). */
+/** Check whether Enter should continue the draft instead of submitting it. */
 export function editorNeedsContinuation(state: EditorState): boolean {
-  return needsContinuation(getEditorText(state))
+  const line = state.lines[state.cursorLine] ?? ''
+  return line[state.cursorCol - 1] === '\\' || needsContinuation(getEditorText(state))
 }
 
 export interface HistoryState {
@@ -236,12 +239,13 @@ export function showCompletions(
   items: CompletionCandidate[],
   replaceStart: number,
   replaceEnd = state.cursorCol,
+  note?: string,
 ): EditorState {
   return {
     ...state,
     ghostHint: '',
-    completion: items.length > 0
-      ? { items, selectedIndex: 0, replaceStart, replaceEnd }
+    completion: items.length > 0 || note
+      ? { items, selectedIndex: 0, replaceStart, replaceEnd, ...(note ? { note } : {}) }
       : null,
   }
 }
@@ -434,6 +438,26 @@ export function insertNewline(state: EditorState): EditorState {
   const line = state.lines[state.cursorLine]!
   const newLines = [...state.lines]
   newLines.splice(state.cursorLine, 1, line.slice(0, state.cursorCol), line.slice(state.cursorCol))
+  return withCompletionsCleared({
+    ...state,
+    lines: newLines,
+    cursorLine: state.cursorLine + 1,
+    cursorCol: 0,
+  })
+}
+
+/** `\\` before the cursor is a newline gesture, not part of the prompt. */
+export function insertContinuationNewline(state: EditorState): EditorState {
+  const line = state.lines[state.cursorLine]!
+  if (line[state.cursorCol - 1] !== '\\') return insertNewline(state)
+
+  const newLines = [...state.lines]
+  newLines.splice(
+    state.cursorLine,
+    1,
+    line.slice(0, state.cursorCol - 1),
+    line.slice(state.cursorCol),
+  )
   return withCompletionsCleared({
     ...state,
     lines: newLines,

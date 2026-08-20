@@ -11,7 +11,8 @@
 
 import { spawn } from 'child_process'
 import { readdirSync, statSync } from 'fs'
-import { join, basename } from 'path'
+import { homedir } from 'os'
+import { join, basename, resolve } from 'path'
 
 export interface FileCompletionItem {
   /** Display label (relative path, directories end with /) */
@@ -28,6 +29,8 @@ export interface FileCompletionResult {
   prefix: string
   /** Start index of the prefix in the line */
   prefixStart: number
+  /** Context line shown below file candidates when search scope needs explaining. */
+  note?: string
 }
 
 /** Max items shown in the completion menu. */
@@ -38,6 +41,21 @@ const FD_FUZZY_FETCH = 400
 const WALK_MAX_ENTRIES = 2000
 const WALK_MAX_DEPTH = 6
 const WALK_SKIP = new Set(['node_modules', 'target', 'dist', '.git'])
+
+/** Explain search scope only when it may surprise the user. */
+export function fileCompletionNote(
+  hasFd: boolean,
+  browse: boolean,
+  homeRoot: boolean,
+): string | undefined {
+  if (!hasFd && !browse) {
+    return `files up to ${WALK_MAX_DEPTH} levels deep — install fd to search deeper`
+  }
+  if (homeRoot) {
+    return 'searching home — open a project folder for more relevant results'
+  }
+  return undefined
+}
 
 /**
  * Extract the @-prefix from text before cursor.
@@ -106,7 +124,12 @@ function rankCandidates(paths: string[], query: string): FileCompletionItem[] {
  * Find fd binary path.
  */
 function findFd(): string | null {
-  // Common locations
+  for (const name of ['fd', 'fdfind']) {
+    const path = Bun.which(name)
+    if (path) return path
+  }
+
+  // Some launchers pass a restricted PATH; keep common absolute fallbacks.
   const candidates = ['/opt/homebrew/bin/fd', '/usr/local/bin/fd', '/usr/bin/fd', '/usr/bin/fdfind']
   for (const p of candidates) {
     try {
@@ -145,6 +168,8 @@ export async function completeAtFile(
   const browse = query === '' || query.endsWith('/')
 
   const fd = getFdPath()
+  const homeRoot = resolve(cwd) === resolve(homedir())
+  const note = fileCompletionNote(fd !== null, browse, homeRoot)
   let items: FileCompletionItem[]
 
   if (browse) {
@@ -159,9 +184,15 @@ export async function completeAtFile(
     items = rankCandidates(candidates, query)
   }
 
-  if (items.length === 0) return null
+  if (items.length === 0 && !note) return null
+  const displayedNote = items.length === 0 && note ? `no matches · ${note}` : note
 
-  return { items, prefix, prefixStart: start }
+  return {
+    items,
+    prefix,
+    prefixStart: start,
+    ...(displayedNote ? { note: displayedNote } : {}),
+  }
 }
 
 /** Run fd and return its output lines (directories carry a trailing slash). */

@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { extractAtPrefix, completeAtFile, fuzzyScore } from '../src/commands/file-completion.js'
+import { extractAtPrefix, completeAtFile, fileCompletionNote, fuzzyScore } from '../src/commands/file-completion.js'
 import { mkdtempSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -27,6 +27,33 @@ describe('extractAtPrefix', () => {
 
   test('extracts @ after multiple words', () => {
     expect(extractAtPrefix('fix the bug in @cli/src')).toEqual({ prefix: '@cli/src', start: 15 })
+  })
+})
+
+describe('fileCompletionNote', () => {
+  test('explains the bounded no-fd fuzzy fallback', () => {
+    expect(fileCompletionNote(false, false, false)).toBe(
+      'files up to 6 levels deep — install fd to search deeper',
+    )
+  })
+
+  test('explains when completion searches the whole home directory', () => {
+    expect(fileCompletionNote(true, false, true)).toBe(
+      'searching home — open a project folder for more relevant results',
+    )
+    expect(fileCompletionNote(true, true, true)).toBe(
+      'searching home — open a project folder for more relevant results',
+    )
+  })
+
+  test('prefers the actionable no-fd limitation in home', () => {
+    expect(fileCompletionNote(false, false, true)).toContain('install fd')
+  })
+
+  test('stays quiet for complete searches inside a project', () => {
+    expect(fileCompletionNote(true, false, false)).toBeUndefined()
+    expect(fileCompletionNote(false, true, false)).toBeUndefined()
+    expect(fileCompletionNote(true, true, false)).toBeUndefined()
   })
 })
 
@@ -60,9 +87,17 @@ describe('completeAtFile', () => {
     expect(result!.items.some(i => i.label === 'src/utils.ts')).toBe(false)
   })
 
-  test('returns null for non-matching prefix', async () => {
+  test('returns no candidates for a non-matching prefix', async () => {
     const result = await completeAtFile('@zzz_nonexistent', tmp)
-    expect(result).toBeNull()
+    // With fd there is nothing to explain and the result closes. The bounded
+    // no-fd fallback stays open only to disclose why deep files may be missing.
+    if (result) {
+      expect(result.items).toEqual([])
+      expect(result.note).toContain('no matches')
+      expect(result.note).toContain('install fd')
+    } else {
+      expect(result).toBeNull()
+    }
   })
 
   test('respects abort signal', async () => {

@@ -10,6 +10,7 @@ import {
   getEditorText,
   historyNext,
   historyPrev,
+  insertContinuationNewline,
   insertText,
   isEditorEmpty,
   moveEnd,
@@ -20,6 +21,7 @@ import {
   pushHistory,
   refreshGhostHint,
   showCompletions,
+  editorNeedsContinuation,
 } from '../src/term/input/editor.js'
 
 describe('term input editor', () => {
@@ -31,6 +33,26 @@ describe('term input editor', () => {
     expect(state.lines).toEqual(['hello', 'world'])
     expect(state.cursorLine).toBe(1)
     expect(state.cursorCol).toBe(5)
+  })
+
+  test('backslash before the cursor requests continuation', () => {
+    const state = insertText(createEditorState(), 'before\\after')
+    const atBackslash = { ...state, cursorCol: 7 }
+    expect(editorNeedsContinuation(atBackslash)).toBe(true)
+  })
+
+  test('continuation newline consumes the backslash gesture', () => {
+    const state = insertText(createEditorState(), 'before\\after')
+    const continued = insertContinuationNewline({ ...state, cursorCol: 7 })
+    expect(continued.lines).toEqual(['before', 'after'])
+    expect(continued.cursorLine).toBe(1)
+    expect(continued.cursorCol).toBe(0)
+  })
+
+  test('continuation newline acts as a plain newline without a backslash', () => {
+    const state = insertText(createEditorState(), 'beforeafter')
+    const continued = insertContinuationNewline({ ...state, cursorCol: 6 })
+    expect(continued.lines).toEqual(['before', 'after'])
   })
 
   test('backspace joins lines', () => {
@@ -88,6 +110,54 @@ describe('term input editor', () => {
 
     state = showCompletions(state, items, 0, state.cursorCol)
     expect(closeCompletion(state).completion).toBeNull()
+  })
+
+  test('stores an advisory note with the completion menu', () => {
+    const note = 'files up to 6 levels deep — install fd to search deeper'
+    const state = showCompletions(
+      insertText(createEditorState(), '@src'),
+      [{ label: 'src/', value: '@src/' }],
+      0,
+      4,
+      note,
+    )
+    expect(state.completion?.note).toBe(note)
+  })
+
+  test('keeps a note-only completion open for an empty result', () => {
+    const note = 'no matches · files up to 6 levels deep'
+    const state = showCompletions(
+      insertText(createEditorState(), '@deep'),
+      [],
+      0,
+      5,
+      note,
+    )
+    expect(state.completion?.items).toEqual([])
+    expect(state.completion?.note).toBe(note)
+    // Empty menus are safe for the same navigation functions as normal menus.
+    expect(moveCompletion(state, 1)).toBe(state)
+    expect(acceptCompletion(state)).toBe(state)
+  })
+
+  test('closes an empty completion when there is no advisory note', () => {
+    const state = showCompletions(
+      insertText(createEditorState(), '@deep'),
+      [],
+      0,
+      5,
+    )
+    expect(state.completion).toBeNull()
+  })
+
+  test('omits an empty advisory note', () => {
+    const state = showCompletions(
+      insertText(createEditorState(), '/h'),
+      [{ label: '/help', value: '/help ' }],
+      0,
+      2,
+    )
+    expect(state.completion).not.toHaveProperty('note')
   })
 
   test('editing clears an open completion menu', () => {
