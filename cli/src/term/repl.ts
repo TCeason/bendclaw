@@ -352,6 +352,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   })
   let liveContentMaxHeight = 0
   let liveContentWidth = renderer.termCols
+  /**
+   * First row of the redrawable region: everything above it is committed
+   * transcript. Recorded by `buildFrame` so a keypress can release a native
+   * terminal selection across the whole composer, not just the caret row.
+   */
+  let liveRegionStartRow = 0
 
   // Server state
   let serverState: ServerState | null = null
@@ -579,6 +585,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
 
     const contentLines = blocksToLines(blocks)
+    // Everything below the committed transcript is repaintable, whichever
+    // branch below builds it. Recorded here so overlays are covered too.
+    liveRegionStartRow = contentLines.length
     const toolCalls = assistantToolCalls(streamMachine?.appState.currentAssistantContent ?? [])
     let spinnerBlock: ViewBlock | null = null
     // pi keeps statusContainer before editorContainer, so the active-run status
@@ -1243,9 +1252,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     caretBlink.bump()
 
     // Mouse dragging creates a native terminal selection outside our editor
-    // state. Repaint only the active input row on the next frame so a following
-    // keypress releases that stale highlight without clearing scrollback.
-    if (overlay.kind === 'none') renderer.invalidateCursorRow()
+    // state. A drag covers a range of rows, so repaint the whole live region on
+    // the next frame: a following keypress then releases the entire stale
+    // highlight instead of only the row the caret happens to sit on. Committed
+    // transcript above stays untouched, so scrollback is undisturbed.
+    renderer.invalidateRowsFrom(liveRegionStartRow)
 
     if (editingQueuedPrompt) {
       if (event.type === 'escape' || (event.type === 'ctrl' && event.key === 'c')) {

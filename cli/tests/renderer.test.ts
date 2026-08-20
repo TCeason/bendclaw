@@ -107,14 +107,14 @@ describe('TermRenderer', () => {
       renderer.destroy()
     })
 
-    test('invalidated cursor row repaints without clearing viewport or scrollback', async () => {
+    test('invalidated rows repaint without clearing viewport or scrollback', async () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()
       renderer.setRenderCallback(() => ['history', `❯ hello${CURSOR_MARKER}`])
       await renderFrame(renderer)
 
       stdout.clear()
-      renderer.invalidateCursorRow()
+      renderer.invalidateRowsFrom(1)
       await renderFrame(renderer)
 
       const out = stdout.output
@@ -127,6 +127,47 @@ describe('TermRenderer', () => {
       stdout.clear()
       await renderFrame(renderer)
       expect(stdout.output).not.toContain('❯ hello')
+      renderer.destroy()
+    })
+
+    test('invalidating repaints every row of the live region, not just the caret row', async () => {
+      // A mouse drag highlights a range of rows. Rewriting the cells is the only
+      // way to release it, so one row is not enough.
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      renderer.setRenderCallback(() => [
+        'committed transcript',
+        '╭─────────╮',
+        `│ draft${CURSOR_MARKER} │`,
+        '╰─────────╯',
+        'footer',
+      ])
+      await renderFrame(renderer)
+
+      stdout.clear()
+      renderer.invalidateRowsFrom(1)
+      await renderFrame(renderer)
+
+      const out = stdout.output
+      for (const row of ['╭─────────╮', '│ draft', '╰─────────╯', 'footer']) {
+        expect(out).toContain(row)
+      }
+      // Committed transcript above the live region is left alone: repainting
+      // scrollback on every keystroke costs more than a stale highlight there.
+      expect(out).not.toContain('committed transcript')
+      renderer.destroy()
+    })
+
+    test('invalidating clamps a start row past the end of the frame', async () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      renderer.setRenderCallback(() => ['only line'])
+      await renderFrame(renderer)
+
+      stdout.clear()
+      renderer.invalidateRowsFrom(99)
+      await renderFrame(renderer)
+      expect(stdout.output).toContain('only line')
       renderer.destroy()
     })
 

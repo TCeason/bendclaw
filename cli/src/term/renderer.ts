@@ -158,13 +158,23 @@ export class TermRenderer {
   }
 
   /**
-   * Redraw the logical row containing the hardware cursor on the next frame.
-   * Repainting the active input row releases stale native terminal selections
-   * without clearing the viewport or disturbing scrollback.
+   * Force a repaint of every row from `startRow` down on the next frame.
+   *
+   * A native terminal selection is owned by the terminal, not by us: there is
+   * no escape sequence to read or clear it. Rewriting the cells under it is the
+   * only way to make it go, and a drag covers a range of rows, so repainting
+   * just the caret row would leave the rest of the highlight on screen.
+   *
+   * Callers pass the first row of the live region. Committed transcript above
+   * it is left alone: repainting scrollback on every keystroke would cost more
+   * than the stale highlight there is worth.
    */
-  invalidateCursorRow(): void {
+  invalidateRowsFrom(startRow: number): void {
     if (this.destroyed || this.previousLines.length === 0) return
-    this.invalidatedRows.add(this.hardwareCursorRow)
+    const from = Math.max(0, Math.min(startRow, this.previousLines.length - 1))
+    for (let row = from; row < this.previousLines.length; row++) {
+      this.invalidatedRows.add(row)
+    }
     this.requestRender()
   }
 

@@ -199,7 +199,10 @@ function buildInputLines(
       const chunk = chunks[chunkIndex]!
       const textChunk = text.slice(chunk.start, chunk.end)
       if (!active || chunkIndex !== cursorChunk) {
-        lines.push(line(...(textChunk ? styleInputText(textChunk) : [plain(' ')])))
+        const spans = textChunk ? styleInputText(textChunk) : [plain(' ')]
+        // An unfocused composer recedes: an overlay owns the screen, and a
+        // draft at full brightness competes with the modal for attention.
+        lines.push(line(...(input.active ? spans : spans.map(blurred))))
         continue
       }
 
@@ -291,6 +294,18 @@ function styleInputText(text: string): StyledSpan[] {
     { text: match[1]!, hex: getTheme().brandHex, bold: true },
     ...(match[2] ? [plain(match[2])] : []),
   ]
+}
+
+/**
+ * Push a span into the background for an unfocused composer.
+ *
+ * Dropping the hue as well as dimming matters: a bold brand-coloured command
+ * stays loud under `dim` alone, which is exactly the text that should recede
+ * while a modal has the screen.
+ */
+function blurred(span: StyledSpan): StyledSpan {
+  const { hex: _hex, bold: _bold, ...rest } = span
+  return { ...rest, dim: true }
 }
 
 /**

@@ -503,6 +503,38 @@ describe('prompt frame', () => {
     expect(renderPlain(defaultInput({ logMode: true }))).toContain('╭─ log ')
   })
 
+  test('pushes an unfocused draft into the background', () => {
+    const draft = { lines: ['fix the retry backoff'], cursorCol: 21, placeholder: false }
+    const focused = render(defaultInput({ ...draft, active: true }))
+    const blurred = render(defaultInput({ ...draft, active: false }))
+
+    expect(blurred).not.toBe(focused)
+    // The text survives; only its weight changes. `dim` paints as a muted hex
+    // rather than SGR 2, so the assertion follows the renderer.
+    expect(stripAnsi(blurred)).toContain('fix the retry backoff')
+    expect(blurred).toContain(chalk.hex('#777777')('fix the retry backoff'))
+    expect(focused).not.toContain(chalk.hex('#777777')('fix the retry backoff'))
+  })
+
+  test('drops hue and weight from an unfocused command, not just brightness', () => {
+    // A bold brand-coloured command stays loud under dim alone, and that is
+    // exactly the text that should recede while a modal owns the screen.
+    const { brandHex } = getTheme()
+    const command = { lines: ['/model'], cursorCol: 6, placeholder: false }
+    expect(render(defaultInput({ ...command, active: true }))).toContain(chalk.hex(brandHex)('/model'))
+
+    const blurred = render(defaultInput({ ...command, active: false }))
+    expect(blurred).not.toContain(chalk.hex(brandHex)('/model'))
+    expect(blurred).not.toContain('\x1b[1m')
+    expect(stripAnsi(blurred)).toContain('/model')
+  })
+
+  test('hides the caret entirely while unfocused', () => {
+    const draft = { lines: ['draft'], cursorCol: 5, placeholder: false }
+    expect(renderPlain(defaultInput({ ...draft, active: true }))).toContain('▍')
+    expect(renderPlain(defaultInput({ ...draft, active: false }))).not.toContain('▍')
+  })
+
   test('shares the label slot between mode and scroll overflow', () => {
     const plain = renderPlain(defaultInput({
       columns: 60,
