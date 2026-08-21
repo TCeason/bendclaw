@@ -113,11 +113,11 @@ fn context_config_uses_profile_compaction_policy() {
 
     let unknown = ModelConfig::local("http://localhost:11434/v1", "some/model");
     let context = ContextConfig::from_model(&unknown, ThinkingLevel::Off);
-    assert_eq!(context.max_context_tokens, 128_000);
+    assert_eq!(context.max_context_tokens, 1_000_000);
     assert_eq!(context.trigger_tokens, None);
     assert_eq!(
         CompactionConfig::from_context_config(&context).trigger_threshold(),
-        128_000 - DEFAULT_RESERVE_TOKENS
+        1_000_000 - DEFAULT_RESERVE_TOKENS
     );
 }
 

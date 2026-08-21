@@ -56,7 +56,9 @@ pub(super) fn normalize_model_id(model_id: &str) -> String {
 }
 
 pub(super) fn protocol_fallback(vision: bool) -> ModelCapabilities {
-    let max_input_tokens = if vision { 200_000 } else { 128_000 };
+    // Unknown/new models get the modern 1M-class default window; explicit
+    // catalog entries and user config overrides still win.
+    let max_input_tokens = 1_000_000;
     ModelCapabilities {
         max_input_tokens,
         advertised_context_window: max_input_tokens,
