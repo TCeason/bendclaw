@@ -72,8 +72,8 @@ fn openai_compatible_defaults_to_text_only() {
     // Unknown OpenAI-compatible models are conservatively text-only.
     assert!(!mc.supports_image());
     assert_eq!(mc.input(), vec![InputModality::Text]);
-    // Conservative default window when none configured.
-    assert_eq!(mc.context_window(), 128_000);
+    // Default window when none configured.
+    assert_eq!(mc.context_window(), 1_000_000);
 }
 
 #[test]
