@@ -29,11 +29,40 @@ const GLM_5_2: ModelProfile = ModelProfile {
     ..BASE
 };
 
+/// Ox Alpha — pre-release GLM-family reasoning model (OpenRouter `stealth`
+/// listing). Exposes three opencode-style efforts, low / high / max, with max
+/// as the shipped default. Reasoning is mandatory: there is no Off tier.
+const OX_ALPHA_LEVELS: &[(ThinkingLevel, Option<&str>)] = &[
+    (ThinkingLevel::Low, Some("low")),
+    (ThinkingLevel::High, Some("high")),
+    (ThinkingLevel::Max, Some("max")),
+];
+const OX_ALPHA_REASONING: ReasoningProfile = ReasoningProfile {
+    levels: OX_ALPHA_LEVELS,
+    default: ThinkingLevel::Max,
+    anthropic_wire: Some(super::super::capabilities::AnthropicThinkingWire::Enabled),
+};
+
+// Same window class as GLM-5.2: 1Mi total minus the 131_072 output budget;
+// multimodal input (text + image).
+const OX_ALPHA: ModelProfile = ModelProfile {
+    max_input_tokens: 917_504,
+    advertised_context_window: Some(1_048_576),
+    max_output_tokens: 131_072,
+    vision: true,
+    reasoning: OX_ALPHA_REASONING,
+    ..BASE
+};
+
 #[rustfmt::skip]
 const PROFILES: &[(&str, ModelProfile)] = &[
     ("glm-5.2",      GLM_5_2),
     ("glm-5.2-fast", GLM_5_2),
     ("glm-5p2",      GLM_5_2),
+    // OpenRouter serves the model as "stealth/ox-alpha"; the bare id covers
+    // direct Z.ai endpoints and vendor-prefixed specs ("zai/ox-alpha").
+    ("ox-alpha",         OX_ALPHA),
+    ("stealth/ox-alpha", OX_ALPHA),
 ];
 
 pub(super) fn resolve(id: &str) -> Option<ModelProfile> {

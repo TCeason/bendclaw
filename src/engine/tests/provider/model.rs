@@ -560,6 +560,35 @@ fn unknown_models_do_not_inherit_protocol_reasoning() {
 }
 
 #[test]
+fn ox_alpha_extends_glm_family_with_opencode_style_efforts() {
+    use evotengine::ThinkingLevel::*;
+
+    for id in ["stealth/ox-alpha", "ox-alpha", "zai/ox-alpha"] {
+        let model = ModelConfig::openai(id, "Ox Alpha");
+        assert_eq!(model.context_window(), 917_504, "{id}");
+        assert_eq!(model.advertised_context_window(), 1_048_576, "{id}");
+        assert_eq!(model.max_tokens(), 131_072, "{id}");
+        assert_eq!(
+            model.input(),
+            [InputModality::Text, InputModality::Image],
+            "{id}"
+        );
+        assert!(model.reasoning(), "{id}");
+        // Mandatory reasoning: no Off tier; the ladder mirrors OpenRouter's
+        // supported_efforts / models.dev reasoning_options (opencode variants).
+        assert!(!model.can_disable_thinking(), "{id}");
+        assert_eq!(
+            model.supported_thinking_levels(),
+            vec![Low, High, Max],
+            "{id}"
+        );
+        assert_eq!(model.default_thinking_level(), Max, "{id}");
+        // Off requests clamp up to the lowest supported effort.
+        assert_eq!(model.effective_thinking_level(Off), Low, "{id}");
+    }
+}
+
+#[test]
 fn thinking_levels_follow_model_and_route_contracts() {
     use evotengine::ThinkingLevel::*;
 

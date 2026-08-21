@@ -220,6 +220,32 @@ fn openrouter_gpt_5_6_gets_catalog_limits_without_explicit_overrides() {
 }
 
 #[test]
+fn openrouter_ox_alpha_resolves_glm_profile_with_opencode_efforts() {
+    use evot_engine::ThinkingLevel::*;
+
+    // GLM-family stealth listing: catalog metadata applies without explicit
+    // overrides, and effort selection survives the OpenRouter transport.
+    let mc = build_model_config(
+        Protocol::OpenAi,
+        "openrouter",
+        "stealth/ox-alpha",
+        Some("https://openrouter.ai/api/v1"),
+        CompatCaps::NONE,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(mc.context_window(), 917_504);
+    assert_eq!(mc.advertised_context_window(), 1_048_576);
+    assert_eq!(mc.max_tokens(), 131_072);
+    assert!(mc.supports_image());
+    assert!(mc.reasoning());
+    assert!(mc.honors_reasoning_effort());
+    assert_eq!(mc.supported_thinking_levels(), vec![Low, High, Max]);
+    assert_eq!(mc.default_thinking_level(), Max);
+}
+
+#[test]
 fn grok_provider_uses_cli_model_metadata_without_env_overrides() {
     use evot_engine::ThinkingLevel::*;
 
