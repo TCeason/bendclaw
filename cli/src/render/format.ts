@@ -4,6 +4,12 @@
 
 import stringWidth from 'string-width'
 
+export function errorText(err: unknown): string {
+  if (err instanceof Error) return err.message
+  const message = (err as { message?: unknown } | null)?.message
+  return typeof message === 'string' ? message : String(err)
+}
+
 function repeatCount(n: number): number {
   return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
 }
@@ -110,7 +116,17 @@ const COMPACTION_METHOD_LEGEND: Record<string, string> = {
  *
  * Returns `{ bar, legend }` so the caller can place them independently.
  */
-export function renderPositionBar(beforeCount: number, sortedActions: any[], _level: number): { bar: string; legend: string } {
+export interface CompactionAction {
+  index?: number
+  end_index?: number
+  method?: string
+  before_tokens?: number
+  after_tokens?: number
+  related_count?: number
+  tool_name?: string
+}
+
+export function renderPositionBar(beforeCount: number, sortedActions: CompactionAction[], _level: number): { bar: string; legend: string } {
   const WIDTH = 40
   if (beforeCount === 0) return { bar: `[${'·'.repeat(WIDTH)}]`, legend: '·=unchanged/kept' }
 
@@ -120,9 +136,9 @@ export function renderPositionBar(beforeCount: number, sortedActions: any[], _le
   if (beforeCount <= WIDTH) {
     // 1:1 mapping — each message gets its own slot
     for (const a of sortedActions) {
-      const start = (a.index as number) ?? 0
-      const end = (a.end_index as number) ?? start
-      const method = (a.method as string) ?? ''
+      const start = a.index ?? 0
+      const end = a.end_index ?? start
+      const method = a.method ?? ''
       const ch = COMPACTION_METHOD_CHARS[method] ?? '?'
       for (let i = start; i <= Math.min(end, slotCount - 1); i++) slots[i] = ch
     }
@@ -133,10 +149,10 @@ export function renderPositionBar(beforeCount: number, sortedActions: any[], _le
 
     // Sort actions by index, build segments with gaps as kept ranges
     const byIdx = [...sortedActions]
-      .map((a: any) => ({
-        s: (a.index as number) ?? 0,
-        e: (a.end_index as number) ?? (a.index as number) ?? 0,
-        ch: COMPACTION_METHOD_CHARS[(a.method as string) ?? ''] ?? '?',
+      .map(a => ({
+        s: a.index ?? 0,
+        e: a.end_index ?? a.index ?? 0,
+        ch: COMPACTION_METHOD_CHARS[a.method ?? ''] ?? '?',
       }))
       .sort((a, b) => a.s - b.s)
 

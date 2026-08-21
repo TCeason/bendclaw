@@ -61,6 +61,7 @@ setup:
 check:
 	cargo fmt --all -- --check
 	cargo clippy --all-targets -- -D warnings
+	$(NEXTEST) --workspace --exclude evot-napi --no-fail-fast
 
 build: build-napi build-cli
 
@@ -75,7 +76,7 @@ test-cli:
 	cd cli && bun test tests/ --path-ignore-patterns 'tests/tui/**'
 
 test-tui: build-cli
-	cd cli && bunx @microsoft/tui-test tests/tui
+	cd cli && bun test tests/tui/
 
 coverage: coverage-core-check
 

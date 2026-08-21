@@ -4,18 +4,38 @@
  * Used by both reducer.ts (real-time streaming) and transcript.ts (history replay)
  * to produce identical output from stats event data.
  */
-import { formatDuration, humanTokens, renderBar, renderPositionBar } from './format.js'
+import { formatDuration, humanTokens, renderBar, renderPositionBar, type CompactionAction } from './format.js'
 import { formatCacheHitPercent } from './cache.js'
 
-function msgBreakdown(ms: Record<string, any> | undefined): string {
+interface MessageStats {
+  user_count?: number
+  assistant_count?: number
+  tool_result_count?: number
+  image_count?: number
+  image_path_count?: number
+  image_base64_count?: number
+  user?: number
+  assistant?: number
+  tool?: number
+  image?: number
+  system?: number
+  system_tokens?: number
+  user_tokens?: number
+  assistant_tokens?: number
+  tool_result_tokens?: number
+  image_tokens?: number
+  tool_details?: [string, number][]
+}
+
+function msgBreakdown(ms: MessageStats | undefined): string {
   if (!ms) return ''
   const parts: string[] = []
-  if (ms.user_count > 0) parts.push(`user ${ms.user_count}`)
-  if (ms.assistant_count > 0) parts.push(`asst ${ms.assistant_count}`)
-  if (ms.tool_result_count > 0) parts.push(`tool ${ms.tool_result_count}`)
-  if ((ms.image_count as number) > 0) {
-    const pathCount = (ms.image_path_count as number) ?? 0
-    const base64Count = (ms.image_base64_count as number) ?? 0
+  if ((ms.user_count ?? 0) > 0) parts.push(`user ${ms.user_count}`)
+  if ((ms.assistant_count ?? 0) > 0) parts.push(`asst ${ms.assistant_count}`)
+  if ((ms.tool_result_count ?? 0) > 0) parts.push(`tool ${ms.tool_result_count}`)
+  if ((ms.image_count ?? 0) > 0) {
+    const pathCount = ms.image_path_count ?? 0
+    const base64Count = ms.image_base64_count ?? 0
     const imgParts: string[] = []
     if (pathCount > 0) imgParts.push(`path ${pathCount}`)
     if (base64Count > 0) imgParts.push(`b64 ${base64Count}`)
@@ -35,22 +55,26 @@ function roleTokensLine(parts: string[]): string | undefined {
   return parts.length > 0 ? `    tokens    ${parts.join(' · ')}` : undefined
 }
 
-function roleTokenParts(ms: Record<string, any>, sysTok: number, toolDefTok: number): string[] {
+function roleTokenParts(ms: MessageStats, sysTok: number, toolDefTok: number): string[] {
   const parts: string[] = []
   if (sysTok > 0) parts.push(`sys ${humanTokens(sysTok)}`)
   if (toolDefTok > 0) parts.push(`tools ${humanTokens(toolDefTok)}`)
-  if ((ms.user_tokens as number) > 0) parts.push(`user ${humanTokens(ms.user_tokens)}`)
-  if ((ms.assistant_tokens as number) > 0) parts.push(`asst ${humanTokens(ms.assistant_tokens)}`)
-  if ((ms.tool_result_tokens as number) > 0) parts.push(`tool ${humanTokens(ms.tool_result_tokens)}`)
-  const totalTokens = sysTok + toolDefTok + (ms.user_tokens ?? 0) + (ms.assistant_tokens ?? 0) + (ms.tool_result_tokens ?? 0) + (ms.image_tokens ?? 0)
-  if ((ms.image_tokens as number) > 0) {
-    const pct = totalTokens > 0 ? ` (${(((ms.image_tokens as number) / totalTokens) * 100).toFixed(0)}%)` : ''
-    parts.push(`img ${humanTokens(ms.image_tokens)}${pct}`)
+  const uTok = ms.user_tokens ?? 0
+  const aTok = ms.assistant_tokens ?? 0
+  const trTok = ms.tool_result_tokens ?? 0
+  if (uTok > 0) parts.push(`user ${humanTokens(uTok)}`)
+  if (aTok > 0) parts.push(`asst ${humanTokens(aTok)}`)
+  if (trTok > 0) parts.push(`tool ${humanTokens(trTok)}`)
+  const imgTok = ms.image_tokens ?? 0
+  const totalTokens = sysTok + toolDefTok + uTok + aTok + trTok + imgTok
+  if (imgTok > 0) {
+    const pct = totalTokens > 0 ? ` (${((imgTok / totalTokens) * 100).toFixed(0)}%)` : ''
+    parts.push(`img ${humanTokens(imgTok)}${pct}`)
   }
   return parts
 }
 
-function toolTokensLine(ms: Record<string, any>): string | undefined {
+function toolTokensLine(ms: MessageStats): string | undefined {
   const rawDetails = ms.tool_details as [string, number][] | undefined
   if (!rawDetails || rawDetails.length < 2) return undefined
 
@@ -78,12 +102,12 @@ function toolTokensLine(ms: Record<string, any>): string | undefined {
   return `    by tool   ${parts.join(' · ')}`
 }
 
-function compactRoleTokenParts(cms: Record<string, any>, sysTok: number, toolDefTok: number): string[] {
-  const uTok = ((cms.user_tokens as number) ?? (cms.user as number)) ?? 0
-  const aTok = ((cms.assistant_tokens as number) ?? (cms.assistant as number)) ?? 0
-  const trTok = ((cms.tool_result_tokens as number) ?? (cms.tool as number)) ?? 0
-  const imgTok = ((cms.image_tokens as number) ?? (cms.image as number)) ?? 0
-  const effectiveSysTok = sysTok || ((cms.system_tokens as number) ?? (cms.system as number) ?? 0)
+function compactRoleTokenParts(cms: MessageStats, sysTok: number, toolDefTok: number): string[] {
+  const uTok = cms.user_tokens ?? cms.user ?? 0
+  const aTok = cms.assistant_tokens ?? cms.assistant ?? 0
+  const trTok = cms.tool_result_tokens ?? cms.tool ?? 0
+  const imgTok = cms.image_tokens ?? cms.image ?? 0
+  const effectiveSysTok = sysTok || cms.system_tokens || cms.system || 0
   const parts: string[] = []
   if (effectiveSysTok > 0) parts.push(`sys ${humanTokens(effectiveSysTok)}`)
   if (toolDefTok > 0) parts.push(`tools ${humanTokens(toolDefTok)}`)
@@ -98,15 +122,15 @@ function compactRoleTokenParts(cms: Record<string, any>, sysTok: number, toolDef
   return parts
 }
 
-function compactMsgBreakdown(cms: Record<string, any> | undefined): string {
+function compactMsgBreakdown(cms: MessageStats | undefined): string {
   if (!cms) return ''
   const normalized = {
-    user_count: ((cms.user_count as number) ?? 0),
-    assistant_count: ((cms.assistant_count as number) ?? 0),
-    tool_result_count: ((cms.tool_result_count as number) ?? 0),
-    image_count: ((cms.image_count as number) ?? 0),
-    image_path_count: ((cms.image_path_count as number) ?? 0),
-    image_base64_count: ((cms.image_base64_count as number) ?? 0),
+    user_count: cms.user_count ?? 0,
+    assistant_count: cms.assistant_count ?? 0,
+    tool_result_count: cms.tool_result_count ?? 0,
+    image_count: cms.image_count ?? 0,
+    image_path_count: cms.image_path_count ?? 0,
+    image_base64_count: cms.image_base64_count ?? 0,
   }
   return msgBreakdown(normalized)
 }
@@ -123,16 +147,16 @@ function compactLegend(legend: string): string {
     .replace(/\s{2,}/g, '   ')
 }
 
-function formatAction(a: any, prefix: string): string {
-  const idx = (a.index as number) ?? 0
-  const endIdx = a.end_index as number | undefined
+function formatAction(a: CompactionAction, prefix: string): string {
+  const idx = a.index ?? 0
+  const endIdx = a.end_index
   const idxStr = endIdx != null ? `#${idx}..#${endIdx}` : `#${idx}`
-  const toolName = (a.tool_name as string) ?? ''
-  const method = (a.method as string) ?? 'unknown'
-  const bTok = (a.before_tokens as number) ?? 0
-  const aTok = (a.after_tokens as number) ?? 0
+  const toolName = a.tool_name ?? ''
+  const method = a.method ?? 'unknown'
+  const bTok = a.before_tokens ?? 0
+  const aTok = a.after_tokens ?? 0
   const saved = bTok - aTok
-  const name = method === 'Summarized' ? `turn(${1 + ((a.related_count as number) ?? 0)} msgs)` : toolName
+  const name = method === 'Summarized' ? `turn(${1 + (a.related_count ?? 0)} msgs)` : toolName
   return `${prefix}${idxStr.padEnd(8)} ${name.padEnd(11)} ${method.padEnd(12)} ${humanTokens(bTok).padStart(5)} → ${humanTokens(aTok).padStart(5)}   −${humanTokens(saved)}`
 }
 
@@ -151,7 +175,7 @@ export function formatLlmCallStarted(data: Record<string, unknown>): string {
   const retryStr = attempt > 0 ? ` · retry ${attempt}` : ''
   const injectedStr = injectedCount > 0 ? ` · ${injectedCount} injected` : ''
 
-  const ms = data.message_stats as Record<string, any> | undefined
+  const ms = data.message_stats as MessageStats | undefined
   const lines: string[] = [`[LLM] ● · ${model} · turn ${turn} · ${msgCount} msgs${msgBreakdown(ms)}${retryStr}${injectedStr}`]
 
   const contextWindow = (data.context_window as number) ?? 0
@@ -285,7 +309,7 @@ export function formatCompactionStarted(data: Record<string, unknown>): string {
   const contextWindow = (data.context_window as number) ?? 0
   const sysTok = (data.system_prompt_tokens as number) ?? 0
   const toolDefTok = (data.tool_definition_tokens as number) ?? 0
-  const cms = (data.message_stats as Record<string, any> | undefined) ?? (data.token_breakdown as Record<string, any> | undefined)
+  const cms = (data.message_stats as MessageStats | undefined) ?? (data.token_breakdown as MessageStats | undefined)
   const level = (data.level as string | undefined) ?? (data.level_name as string | undefined)
   const header = level ? `${level} · ${msgCount} msgs${compactMsgBreakdown(cms)}` : `${msgCount} msgs${compactMsgBreakdown(cms)}`
   const lines: string[] = [`[COMPACT] ● · ${header}`]
@@ -306,7 +330,7 @@ export function formatCompactionStarted(data: Record<string, unknown>): string {
 // ---------------------------------------------------------------------------
 
 export function formatCompactionCompleted(data: Record<string, unknown>): string {
-  const result = data.result as Record<string, any> | undefined
+  const result = data.result as Record<string, unknown> | undefined
 
   if (!result) return '[COMPACT] ✓ · done'
 
@@ -391,11 +415,11 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
       const msgsDropped = (result.messages_dropped as number) ?? 0
       const deltaMsgs = beforeMsgs - afterMsgs
 
-      const allActions = result.actions as any[] | undefined
+      const allActions = result.actions as CompactionAction[] | undefined
       const sorted = allActions
         ? [...allActions]
-            .filter((a: any) => a.method !== 'Skipped')
-            .sort((a: any, b: any) => {
+            .filter(a => a.method !== 'Skipped')
+            .sort((a, b) => {
               const sa = (a.before_tokens ?? 0) - (a.after_tokens ?? 0)
               const sb = (b.before_tokens ?? 0) - (b.after_tokens ?? 0)
               return sb - sa
@@ -408,17 +432,17 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
 
       let summary: string
       if (level === 1) {
-        const summarized = sorted.filter((a: any) => a.method === 'Summarized')
+        const summarized = sorted.filter(a => a.method === 'Summarized')
         if (summarized.length > 0) {
-          const totalMsgs = summarized.reduce((s: number, a: any) => s + 1 + ((a.related_count as number) ?? 0), 0)
+          const totalMsgs = summarized.reduce((s, a) => s + 1 + (a.related_count ?? 0), 0)
           summary = `summarized ${summarized.length} turns (${totalMsgs} msgs → ${summarized.length} summaries)`
         } else {
           const explicitSummary = result.result as string | undefined
           if (explicitSummary) {
             summary = normalizeSummary(explicitSummary)
           } else {
-            const outlineCount = sorted.filter((a: any) => a.method === 'Outline').length
-            const headtailCount = sorted.filter((a: any) => a.method === 'HeadTail').length
+            const outlineCount = sorted.filter(a => a.method === 'Outline').length
+            const headtailCount = sorted.filter(a => a.method === 'HeadTail').length
             const parts: string[] = []
             if (outlineCount > 0) parts.push(`outlined ${outlineCount}`)
             if (headtailCount > 0) parts.push(`head-tail ${headtailCount}`)
@@ -458,7 +482,7 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
         const shown = sorted.length <= TOP + TAIL ? sorted : [...sorted.slice(0, TOP), ...sorted.slice(sorted.length - TAIL)]
         const omitted = sorted.length - shown.length
         const omittedTokens = sorted.length > shown.length
-          ? sorted.slice(TOP, sorted.length - TAIL).reduce((sum: number, a: any) => sum + ((a.before_tokens ?? 0) - (a.after_tokens ?? 0)), 0)
+          ? sorted.slice(TOP, sorted.length - TAIL).reduce((sum, a) => sum + ((a.before_tokens ?? 0) - (a.after_tokens ?? 0)), 0)
           : 0
 
         for (let i = 0; i < shown.length; i++) {

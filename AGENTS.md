@@ -19,6 +19,7 @@
 - TS targeted tests: `cd cli && bun test <test-file>` for the changed area
 - Run full `cargo test` or full `cd cli && bun test` only when changes are broad or cross-cutting
 - Keep tests explicit and fast; focus on core logic
+- A change to one workspace crate can break another: before committing Rust changes, run the full suite once — `make test-rust` (or `make check`, which includes it)
 
 # Pre-commit
 

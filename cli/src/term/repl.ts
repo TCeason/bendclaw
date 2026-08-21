@@ -135,6 +135,18 @@ import { extractAtPrefix, completeAtFile } from '../commands/file-completion.js'
 import { transcriptToMessages } from '../session/transcript.js'
 import { GitInfoProvider } from './git-info.js'
 import { CaretBlink } from './caret-blink.js'
+import { errorText } from '../render/format.js'
+import { TerminalTitle } from './title.js'
+import {
+  formatLogPaths,
+  handleClipCommand,
+  handleCopyCommand,
+  handleEnvCommand,
+  handleShareCommand,
+  handleSkillCommand,
+  handleUpdateCommand,
+  type ReplCommandContext,
+} from './repl-commands.js'
 
 const SPINNER_INTERVAL_MS = 100
 
@@ -181,7 +193,19 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let compactionTask: CompactionTask | null = null
   let queuedCompactionSubmissions: QueuedCompactionSubmission[] = []
   let spinnerTimer: ReturnType<typeof setInterval> | null = null
-  let titleFrozen = false
+  const terminalTitle = new TerminalTitle(agent.cwd, () => serverState?.port ?? null)
+  const setTerminalTitle = terminalTitle.set.bind(terminalTitle)
+  const freezeTerminalTitle = terminalTitle.freeze.bind(terminalTitle)
+  const unfreezeTerminalTitle = terminalTitle.unfreeze.bind(terminalTitle)
+  const replCommands: ReplCommandContext = {
+    agent,
+    getSessionId: () => sessionId,
+    getCompactLines: () => compactLines,
+    getConfigInfo: () => configInfo ?? null,
+    commitSystem,
+    commitLines,
+    requestRender: () => renderer.requestRender(),
+  }
   let destroyed = false
   let disableRaw: (() => void) | null = null
   let enhancedKeyboard: EnhancedKeyboardSession | null = null
@@ -787,28 +811,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     renderer.requestRender()
   }
 
-  function setTerminalTitle(suffix?: string, force = false) {
-    if (titleFrozen && !force) return
-    const dirName = agent.cwd.split('/').pop() || agent.cwd
-    const base = `evot - ${dirName}`
-    const portPart = serverState ? ` · :${serverState.port}` : ''
-    const title = suffix ? `${suffix} ${base}${portPart}` : `${base}${portPart}`
-    process.stdout.write(`\x1b]0;${title}\x07`)
-  }
-
-  function freezeTerminalTitle(suffix?: string) {
-    const dirName = agent.cwd.split('/').pop() || agent.cwd
-    const base = `evot - ${dirName}`
-    const portPart = serverState ? ` · :${serverState.port}` : ''
-    const title = suffix ? `${suffix} ${base}${portPart}` : `${base}${portPart}`
-    process.stdout.write(`\x1b]0;${title}\x07`)
-    titleFrozen = true
-  }
-
-  function unfreezeTerminalTitle() {
-    titleFrozen = false
-  }
-
   let titleFrame = 0
   const TITLE_INTERVAL_FRAMES = Math.round(960 / SPINNER_INTERVAL_MS) // ~960ms like Claude Code
 
@@ -873,7 +875,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       appState = { ...appState, sessionId: session.session_id, model: agent.model }
       const { messagesToOutputLines } = await import('../render/output.js')
       const { transcriptToMessages } = await import('../session/transcript.js')
-      const messages = transcriptToMessages(transcript as any)
+      const messages = transcriptToMessages(transcript)
       // A resumed session starts with no active plan; plan mode is re-entered
       // via /plan on the live conversation.
       planModeItems = []
@@ -905,15 +907,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       if (modelRestoreNote) {
         restoreLines([{ id: 'sys-resume-model', kind: 'system', text: chalk.dim(modelRestoreNote) }])
       }
-    } catch (err: any) {
-      commitSystem('sys-err', `Failed to resume: ${err?.message ?? err}`, 'error')
+    } catch (err) {
+      commitSystem('sys-err', `Failed to resume: ${errorText(err)}`, 'error')
     }
   }
 
   async function rebuildAfterManualCompaction(outcome: Extract<ManualCompactionOutcome, { status: 'compacted' }>) {
     if (!sessionId) return
     const transcript = await agent.loadContextTranscript(sessionId)
-    const messages = transcriptToMessages(transcript as any).filter(message =>
+    const messages = transcriptToMessages(transcript).filter(message =>
       !(message.role === 'user' && message.text.startsWith(COMPACT_SUMMARY_PREFIX)),
     )
     const { shown, hidden } = selectResumeMessages(messages)
@@ -1023,8 +1025,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       } else {
         commitSystem('sys-compact-empty', '  Nothing to compact.')
       }
-    } catch (err: any) {
-      commitSystem('sys-compact-err', `Compact failed: ${err?.message ?? err}`, 'error')
+    } catch (err) {
+      commitSystem('sys-compact-err', `Compact failed: ${errorText(err)}`, 'error')
     } finally {
       compactionTask = null
       manualCompactionPhase = null
@@ -1227,13 +1229,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       reconcileQueuedUserMessages()
       restoreQueuedUserMessagesToEditor()
       completed = true
-    } catch (err: any) {
+    } catch (err) {
       if (streamMachine) {
         const final = flushStreaming(streamMachine)
         streamMachine = final.state
         commitFlushResult(final)
       }
-      commitSystem('sys-err', err?.message ?? String(err), 'error')
+      commitSystem('sys-err', errorText(err), 'error')
       reconcileQueuedUserMessages()
       restoreQueuedUserMessagesToEditor()
     } finally {
@@ -1491,11 +1493,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         : message)
       finishQueueEdit()
       commitSystem('sys-queue-edit-save', '  Queued prompt updated.')
-    } catch (err: any) {
+    } catch (err) {
       const current = managedQueueEntries().find(candidate => candidate.id === entry.id)
       if (current) editingQueuedPrompt = { ...current, text }
       else finishQueueEdit()
-      commitSystem('sys-queue-err', chalk.red(`  Queue edit failed: ${err?.message ?? err}`))
+      commitSystem('sys-queue-err', chalk.red(`  Queue edit failed: ${errorText(err)}`))
       renderer.requestRender()
     }
   }
@@ -1506,9 +1508,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       streamRef.removeQueuedPrompt(entry.queue, entry.id, entry.version)
       queuedUserMessages = queuedUserMessages.filter(message => message.id !== entry.id)
       openQueueSelector()
-    } catch (err: any) {
+    } catch (err) {
       reconcileQueuedUserMessages()
-      commitSystem('sys-queue-err', chalk.red(`  Queue remove failed: ${err?.message ?? err}`))
+      commitSystem('sys-queue-err', chalk.red(`  Queue remove failed: ${errorText(err)}`))
       openQueueSelector()
     }
   }
@@ -1539,16 +1541,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const next = mergeQueuedIntoEditorText(messages, getEditorText(editor))
     editor = insertText(clearEditor(editor), next)
     renderer.requestRender()
-  }
-
-  function formatLogPaths(
-    logPath: string | null,
-    rendererPath: string | null = null,
-  ): string | null {
-    if (!logPath) return null
-    const lines = [`  Log: ${logPath}`]
-    if (rendererPath) lines.push(`  Renderer run: ${rendererPath}`)
-    return lines.join('\n')
   }
 
   function handleLoadingEnter() {
@@ -2000,8 +1992,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (pendingCommand.kind === 'resolved' && pendingCommand.name === '/model') {
       try {
         configInfo = agent.configInfo()
-      } catch (err: any) {
-        commitSystem('sys-model-config', chalk.red(`  Failed to reload model config: ${err?.message ?? err}`))
+      } catch (err) {
+        commitSystem('sys-model-config', chalk.red(`  Failed to reload model config: ${errorText(err)}`))
         renderer.requestRender()
         return
       }
@@ -2016,8 +2008,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       preloadedSessions,
       planning,
     })
-    } catch (err: any) {
-      commitSystem('sys-command-err', chalk.red(`  Command failed: ${err?.message ?? err}`))
+    } catch (err) {
+      commitSystem('sys-command-err', chalk.red(`  Command failed: ${errorText(err)}`))
       renderer.requestRender()
       return
     }
@@ -2096,7 +2088,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (name === '/compact') {
       await runManualCompaction(args)
     } else if (name === '/env') {
-      handleEnvCommand(args)
+      handleEnvCommand(replCommands, args)
     } else if (name === '/harden') {
       const subject = buildHardenPrompt(args)
       commitLines(buildUserMessage(text.trim()))
@@ -2111,16 +2103,16 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       } else if (sub) {
         commitSystem('sys-clip-err', '  Usage: /clip [all]')
       } else {
-        await handleClipCommand()
+        await handleClipCommand(replCommands)
       }
     } else if (name === '/share') {
-      await handleShareCommand(args)
+      await handleShareCommand(replCommands, args)
     } else if (name === '/skill') {
-      await handleSkillCommand(args)
+      await handleSkillCommand(replCommands, args)
     } else if (name === '/copy') {
-      await handleCopyCommand()
+      await handleCopyCommand(replCommands)
     } else if (name === '/update') {
-      await handleUpdateCommand()
+      await handleUpdateCommand(replCommands)
     } else if (name === '/act' || name === '/done') {
       if (logMode) {
         logMode = null
@@ -2145,8 +2137,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           }))
           commitLines(lines.length > 0 ? lines : [{ id: 'sys-dump', kind: 'system', text: '  (no dump output)' }])
         }
-      } catch (err: any) {
-        commitSystem('sys-dump-err', chalk.red(`  /_dump failed: ${err?.message ?? err}`))
+      } catch (err) {
+        commitSystem('sys-dump-err', chalk.red(`  /_dump failed: ${errorText(err)}`))
       }
     } else if (name === '/log') {
       await handleLogCommand(args)
@@ -2166,8 +2158,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         } else {
           openResumeSelector(undefined)
         }
-      } catch (err: any) {
-        commitSystem('sys-r-err', chalk.red(`  Failed to list sessions: ${err?.message ?? err}`))
+      } catch (err) {
+        commitSystem('sys-r-err', chalk.red(`  Failed to list sessions: ${errorText(err)}`))
       }
     } else if (name === '/model' && !args) {
       const models = modelOptions(configInfo, agent.model)
@@ -2239,8 +2231,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         state: createSelectorState(RESUME_SELECTOR_TITLE, items, items),
       }
       renderer.requestRender()
-    } catch (err: any) {
-      commitSystem('sys-rsem-err', chalk.red(`  Semantic search failed: ${err?.message ?? err}`))
+    } catch (err) {
+      commitSystem('sys-rsem-err', chalk.red(`  Semantic search failed: ${errorText(err)}`))
       openResumeSelector(query)
     }
   }
@@ -2266,206 +2258,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         }
         renderer.requestRender()
       }).catch(() => {})
-    }).catch((err: any) => {
-      commitSystem('sys-r-err', chalk.red(`  Failed to list sessions: ${err?.message ?? err}`))
+    }).catch((err: unknown) => {
+      commitSystem('sys-r-err', chalk.red(`  Failed to list sessions: ${errorText(err)}`))
     })
-  }
-
-  function handleEnvCommand(args: string) {
-    const sub = args.trim()
-    if (!sub) {
-      const vars = agent.listVariables()
-      if (vars.length === 0) {
-        commitSystem('sys-env', '  No variables set')
-      } else {
-        for (const v of vars) {
-          commitLines([{ id: `sys-env-${v.key}`, kind: 'system', text: `  ${v.key}=${v.value}` }])
-        }
-      }
-    } else if (sub.startsWith('set ')) {
-      const eq = sub.slice(4).trim()
-      const eqIdx = eq.indexOf('=')
-      if (eqIdx <= 0) {
-        commitSystem('sys-env-err', '  Usage: /env set KEY=VALUE')
-      } else {
-        const key = eq.slice(0, eqIdx)
-        const value = eq.slice(eqIdx + 1)
-        agent.setVariable(key, value)
-        commitSystem('sys-env-set', `  ${key}=${value}`)
-      }
-    } else if (sub.startsWith('del ')) {
-      const key = sub.slice(4).trim()
-      agent.deleteVariable(key)
-      commitSystem('sys-env-del', `  deleted: ${key}`)
-    } else {
-      commitSystem('sys-env-err', '  Usage: /env [set K=V | del K]')
-    }
-  }
-
-  async function handleCopyCommand() {
-    // Last assistant raw markdown → clipboard (shared locator with plan / shot).
-    const last = findLastAssistantMarkdown(compactLines)
-    if (!last) {
-      commitSystem('sys-copy', '  No agent messages to copy yet.')
-      return
-    }
-    try {
-      const { copyToClipboard } = await import('../render/clipboard.js')
-      await copyToClipboard(last.rawMarkdown)
-      commitSystem('sys-copy', '  Copied last agent message (Markdown source) to clipboard')
-    } catch (err: any) {
-      commitSystem('sys-copy-err', chalk.red(`  Copy failed: ${err?.message ?? err}`))
-    }
-  }
-
-  async function handleClipCommand() {
-    const last = findLastAssistantTurn(compactLines)
-    if (!last) {
-      commitSystem('sys-clip', '  No agent messages to clip yet.')
-      return
-    }
-    try {
-      const { clipMarkdown } = await import('../commands/clip.js')
-      const result = clipMarkdown(last.rawMarkdown, {
-        sessionId: sessionId ?? undefined,
-        cwd: agent.cwd,
-      })
-      commitSystem('sys-clip', `  Clipped: ${result.path}`)
-    } catch (err: any) {
-      commitSystem('sys-clip-err', chalk.red(`  Clip failed: ${err?.message ?? err}`))
-    }
-  }
-
-  async function handleShareCommand(args: string) {
-    const target = args.trim()
-    const { importSharedSession, isSharedSessionUrl, shareSession } = await import('../commands/share.js')
-
-    if (target && isSharedSessionUrl(target)) {
-      commitSystem('sys-share-import', '  downloading and importing...')
-      renderer.requestRender()
-      try {
-        const result = await importSharedSession(target)
-        commitSystem('sys-share-import-ok', `  imported session: ${result.sessionId}\n  resume with: /resume ${result.sessionId.slice(0, 8)}`)
-      } catch (err: any) {
-        commitSystem('sys-share-err', chalk.red(`  Import failed: ${err?.message ?? err}`))
-      }
-      return
-    }
-
-    let resolvedSid = sessionId
-    if (target) {
-      if (!/^[0-9a-f-]{1,36}$/i.test(target)) {
-        commitSystem('sys-share-err', '  Usage: /share [session-id | url#password]')
-        return
-      }
-      try {
-        const sessions = await agent.listSessions(0)
-        const resolved = resolveSessionByPrefix(sessions, target)
-        if (resolved.kind === 'none') {
-          commitSystem('sys-share-err', `  Session not found: ${target}`)
-          return
-        }
-        if (resolved.kind === 'ambiguous') {
-          commitSystem('sys-share-err', `  Ambiguous session id: ${target} (${resolved.matches.length} matches)`)
-          return
-        }
-        resolvedSid = resolved.session.session_id
-      } catch (err: any) {
-        commitSystem('sys-share-err', chalk.red(`  Failed to list sessions: ${err?.message ?? err}`))
-        return
-      }
-    }
-
-    if (!resolvedSid) {
-      commitSystem('sys-share-err', '  No active session to share.')
-      return
-    }
-
-    commitSystem('sys-share', `  packing session ${resolvedSid.slice(0, 8)}...`)
-    renderer.requestRender()
-    try {
-      const result = await shareSession(resolvedSid)
-      commitSystem('sys-share-url', `  uploaded. share this link:\n  ${result.url}\n  ⏳ link expires in 60 minutes`)
-    } catch (err: any) {
-      commitSystem('sys-share-err', chalk.red(`  Share failed: ${err?.message ?? err}`))
-    }
-  }
-
-  async function handleSkillCommand(args: string) {
-    const sub = args.trim()
-    if (!sub || sub === 'list') {
-      try {
-        const { skillList } = await import('../commands/skill.js')
-        commitSystem('sys-skill', skillList(agent.skillsDirs()))
-      } catch {
-        commitSystem('sys-skill-err', '  skill list unavailable')
-      }
-    } else if (sub.startsWith('install ')) {
-      const source = sub.slice(8).trim()
-      if (!source) {
-        commitSystem('sys-skill-err', '  Usage: /skill install <owner/repo>')
-      } else {
-        commitSystem('sys-skill-inst', `  installing ${source}...`)
-        renderer.requestRender()
-        try {
-          const { skillInstall } = await import('../commands/skill.js')
-          const result = await skillInstall(source, (msg) => {
-            commitLines([{ id: `sys-skill-${Date.now()}`, kind: 'system', text: `  ${msg}` }])
-            renderer.requestRender()
-          })
-          commitSystem('sys-skill-done', `  ${result}`)
-        } catch (err: any) {
-          commitSystem('sys-skill-err', chalk.red(`  install failed: ${err?.message ?? err}`))
-        }
-      }
-    } else if (sub.startsWith('remove ')) {
-      const name = sub.slice(7).trim()
-      if (!name) {
-        commitSystem('sys-skill-err', '  Usage: /skill remove <name>')
-      } else {
-        try {
-          const { skillRemove } = await import('../commands/skill.js')
-          commitSystem('sys-skill-rm', skillRemove(name))
-        } catch {
-          commitSystem('sys-skill-err', '  skill remove unavailable')
-        }
-      }
-    } else {
-      commitSystem('sys-skill-err', '  Usage: /skill [list | install <source> | remove <name>]')
-    }
-    renderer.requestRender()
-  }
-
-  async function handleUpdateCommand() {
-    commitSystem('sys-upd', '  checking for updates...')
-    renderer.requestRender()
-    try {
-      const { runUpdate } = await import('../update/index.js')
-      const { version } = await import('../native/index.js')
-      const result = await runUpdate(version())
-      switch (result.kind) {
-        case 'up_to_date':
-          commitSystem('sys-upd-ok', '  ✓ evot is up to date.')
-          break
-        case 'updated': {
-          const lines: string[] = [`  ✓ updated ${result.from} → ${result.to}. restart evot to apply.`]
-          if (result.notes && result.notes.length > 0) {
-            lines.push('')
-            lines.push(`  What's new in ${result.to}:`)
-            for (const note of result.notes) {
-              lines.push(`    • ${note}`)
-            }
-          }
-          commitSystem('sys-upd-ok', lines.join('\n'))
-          break
-        }
-        case 'error':
-          commitSystem('sys-upd-err', chalk.red(`  ✗ ${result.message}`))
-          break
-      }
-    } catch (err: any) {
-      commitSystem('sys-upd-err', chalk.red(`  ✗ update failed: ${err?.message ?? err}`))
-    }
   }
 
   async function handleLogCommand(args: string) {
@@ -2522,8 +2317,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         if (result.pngPath) lines.push(`  PNG:  ${result.pngPath}`)
         else lines.push('  PNG:  (Chrome not available — HTML only)')
         commitSystem('sys-log-shot', lines.join('\n'))
-      } catch (err: any) {
-        commitSystem('sys-log-err', chalk.red(`  Shot failed: ${err?.message ?? err}`))
+      } catch (err) {
+        commitSystem('sys-log-err', chalk.red(`  Shot failed: ${errorText(err)}`))
       } finally {
         foregroundCommand = null
         isLoading = false
@@ -2564,8 +2359,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         commitSystem('sys-log-mode', `  [log mode] analyzing: ${logPath}\n  not persisted. press Esc to exit.`)
         renderer.requestRender()
         await runLogQuery(forked, query)
-      } catch (err: any) {
-        commitSystem('sys-log-err', chalk.red(`  Fork failed: ${err?.message ?? err}`))
+      } catch (err) {
+        commitSystem('sys-log-err', chalk.red(`  Fork failed: ${errorText(err)}`))
       }
     }
     renderer.requestRender()
@@ -2612,13 +2407,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       reconcileQueuedUserMessages()
       restoreQueuedUserMessagesToEditor()
-    } catch (err: any) {
+    } catch (err) {
       if (streamMachine) {
         const final = flushStreaming(streamMachine)
         streamMachine = final.state
         commitFlushResult(final)
       }
-      commitSystem('sys-log-err', chalk.red(`  Log query failed: ${err?.message ?? err}`))
+      commitSystem('sys-log-err', chalk.red(`  Log query failed: ${errorText(err)}`))
       reconcileQueuedUserMessages()
       restoreQueuedUserMessagesToEditor()
     } finally {
@@ -2658,8 +2453,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           const provider = selected?.provider ?? configInfo?.provider ?? ''
           appState = { ...appState, model }
           commitStatusLine({ id: 'sys-model', kind: 'system', text: `  Model → ${formatModelLabel(model, provider)}` })
-        } catch (err: any) {
-          commitSystem('sys-model-err', chalk.red(`  Failed to switch model: ${err?.message ?? err}`))
+        } catch (err) {
+          commitSystem('sys-model-err', chalk.red(`  Failed to switch model: ${errorText(err)}`))
         }
         renderer.requestRender()
         return

@@ -3,6 +3,7 @@
  * with ordered assistant content and completed tool results.
  */
 
+import type { TranscriptItem } from '../native/index.js'
 import type { UIAssistantBlock, UIMessage } from '../term/app/types.js'
 
 // ---------------------------------------------------------------------------
@@ -44,12 +45,13 @@ interface RawItem {
 // Main conversion
 // ---------------------------------------------------------------------------
 
-export function transcriptToMessages(items: RawItem[]): UIMessage[] {
+export function transcriptToMessages(items: TranscriptItem[]): UIMessage[] {
+  const rawItems = items as unknown as RawItem[]
   const messages: UIMessage[] = []
-  const toolResults = collectToolResults(items)
+  const toolResults = collectToolResults(rawItems)
   let idx = 0
 
-  for (const item of items) {
+  for (const item of rawItems) {
     const t = item.type
     if (t === 'user') {
       messages.push({
