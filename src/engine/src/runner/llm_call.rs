@@ -2,6 +2,15 @@
 
 use tokio::sync::mpsc;
 
+use super::config::AgentLoopConfig;
+use super::tool_exec::build_tool_definitions;
+use crate::context::now_ms;
+use crate::provider::ApiProtocol;
+use crate::provider::ProviderError;
+use crate::provider::StreamConfig;
+use crate::provider::StreamEvent;
+use crate::types::*;
+
 /// Quota recovery is controlled locally so every provider follows the same
 /// predictable, cancellable probe cadence.
 const QUOTA_PROBE_INITIAL: std::time::Duration = std::time::Duration::from_secs(5);
@@ -13,14 +22,13 @@ const QUOTA_PROBE_MAX: std::time::Duration = std::time::Duration::from_secs(60);
 /// not a reason to discard the run.
 const OUTAGE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
 
-use super::config::default_convert_to_llm;
-use super::config::AgentLoopConfig;
-use crate::provider::ApiProtocol;
-use crate::provider::ProviderError;
-use crate::provider::StreamConfig;
-use crate::provider::StreamEvent;
-use crate::provider::ToolDefinition;
-use crate::types::*;
+/// Default convert_to_llm: keep only user/assistant/toolResult messages.
+fn default_convert_to_llm(messages: &[AgentMessage]) -> Vec<Message> {
+    messages
+        .iter()
+        .filter_map(|m| m.as_llm().cloned())
+        .collect()
+}
 
 pub(super) struct AssistantStreamResult {
     pub message: Message,
@@ -86,19 +94,7 @@ pub(super) async fn stream_assistant_response(
     );
 
     // Build tool definitions
-    let tool_defs: Vec<ToolDefinition> = context
-        .tools
-        .iter()
-        .map(|t| ToolDefinition {
-            name: t.resolve_name(&config.model),
-            description: crate::tools::resolve_tool_refs(
-                t.description(),
-                &context.tools,
-                &config.model,
-            ),
-            parameters: t.parameters_schema(),
-        })
-        .collect();
+    let tool_defs = build_tool_definitions(context, &config.model);
 
     // Retry loop for transient provider errors
     let retry = &config.retry_policy;

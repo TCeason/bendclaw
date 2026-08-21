@@ -9,9 +9,12 @@ use serde::Serialize;
 
 use crate::types::AgentMessage;
 
+/// Queue delivery mode for steering and follow-up messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QueueDrainMode {
-    One,
+pub enum QueueMode {
+    /// Deliver one message per turn.
+    OneAtATime,
+    /// Deliver all queued messages at once.
     All,
 }
 
@@ -156,14 +159,14 @@ impl PromptQueue {
         entry
     }
 
-    pub fn drain_messages(&self, mode: QueueDrainMode) -> Vec<AgentMessage> {
+    pub fn drain_messages(&self, mode: QueueMode) -> Vec<AgentMessage> {
         let mut entries = self.entries.lock();
         match mode {
-            QueueDrainMode::One => entries
+            QueueMode::OneAtATime => entries
                 .pop_front()
                 .map(|entry| vec![entry.message])
                 .unwrap_or_default(),
-            QueueDrainMode::All => entries.drain(..).map(|entry| entry.message).collect(),
+            QueueMode::All => entries.drain(..).map(|entry| entry.message).collect(),
         }
     }
 }

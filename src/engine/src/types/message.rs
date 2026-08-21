@@ -1,9 +1,9 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-use super::agent_context::now_ms;
 use super::llm::StopReason;
 use super::llm::Usage;
+use crate::context::now_ms;
 
 // ---------------------------------------------------------------------------
 // Retention

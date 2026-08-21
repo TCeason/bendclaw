@@ -12,6 +12,7 @@ use tracing::debug;
 use tracing::warn;
 
 use super::types::*;
+use crate::context::now_ms;
 use crate::provider::error::classify_sse_error_event;
 use crate::provider::error::ProviderError;
 use crate::provider::stream_http;

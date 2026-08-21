@@ -21,6 +21,7 @@ use tracing::debug;
 use super::error::*;
 use super::system_prompt::without_dynamic_boundary;
 use super::traits::*;
+use crate::context::now_ms;
 use crate::types::*;
 
 pub struct BedrockProvider;

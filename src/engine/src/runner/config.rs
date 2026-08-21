@@ -79,11 +79,3 @@ pub struct AgentLoopConfig {
     /// Spill: large tool results are written to disk instead of truncated.
     pub spill: Option<Arc<FsSpill>>,
 }
-
-/// Default convert_to_llm: keep only user/assistant/toolResult messages.
-pub(super) fn default_convert_to_llm(messages: &[AgentMessage]) -> Vec<Message> {
-    messages
-        .iter()
-        .filter_map(|m| m.as_llm().cloned())
-        .collect()
-}

@@ -150,7 +150,7 @@ pub fn agent_message_from_transcript(item: &TranscriptItem) -> evot_engine::Agen
                 text: content.clone(),
             }],
             is_error: *is_error,
-            timestamp: evot_engine::types::now_ms(),
+            timestamp: evot_engine::now_ms(),
             retention: evot_engine::Retention::Normal,
         }),
         TranscriptItem::System { text } => evot_engine::AgentMessage::Extension(

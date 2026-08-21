@@ -97,7 +97,7 @@ impl CompactionConfig {
     }
 
     /// Build from a `ContextConfig`, respecting user-customized fields.
-    pub fn from_context_config(ctx: &crate::context::tracking::ContextConfig) -> Self {
+    pub fn from_context_config(ctx: &crate::context::window::ContextConfig) -> Self {
         // ContextConfig.max_context_tokens is the effective input limit.
         // Output headroom is reserved here via reserve_tokens (single source
         // of headroom), so trigger threshold = window - reserve_tokens.

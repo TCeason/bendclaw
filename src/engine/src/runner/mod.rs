@@ -1,4 +1,4 @@
-mod compaction;
+mod compaction_check;
 mod config;
 mod driver;
 

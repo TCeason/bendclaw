@@ -18,6 +18,9 @@
 //!
 //! Idempotent. Pure function of the input string.
 
+use crate::types::Content;
+use crate::types::Message;
+
 /// Strip system-reminder wrapper blocks and status-template preambles from
 /// assistant text. Returns the cleaned string.
 pub fn sanitize_assistant_text(input: &str) -> String {
@@ -145,6 +148,47 @@ fn strip_status_preamble(text: &str) -> String {
     }
 
     text.to_string()
+}
+
+/// Run the text sanitizer over every `Content::Text` block in an Assistant
+/// message. Non-assistant variants pass through unchanged.
+pub(super) fn sanitize_assistant_message(message: Message) -> Message {
+    match message {
+        Message::Assistant {
+            mut content,
+            stop_reason,
+            model,
+            provider,
+            usage,
+            timestamp,
+            error_message,
+            response_id,
+        } => {
+            for block in content.iter_mut() {
+                if let Content::Text { text } = block {
+                    let cleaned = sanitize_assistant_text(text);
+                    if cleaned != *text {
+                        *text = cleaned;
+                    }
+                }
+            }
+            // Drop text blocks that sanitized to empty — keeping them would
+            // serialize as zero-length assistant text, which some providers
+            // reject on the next turn.
+            content.retain(|c| !matches!(c, Content::Text { text } if text.trim().is_empty()));
+            Message::Assistant {
+                content,
+                stop_reason,
+                model,
+                provider,
+                usage,
+                timestamp,
+                error_message,
+                response_id,
+            }
+        }
+        other => other,
+    }
 }
 
 #[cfg(test)]

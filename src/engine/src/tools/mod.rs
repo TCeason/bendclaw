@@ -17,4 +17,6 @@ pub use file::WriteFileTool;
 pub use file::FILE_UNCHANGED_STUB;
 pub use guard::PathGuard;
 pub use naming::resolve_tool_refs;
+pub use sandbox::check_available;
+pub use sandbox::SandboxSupport;
 pub use web_fetch::WebFetchTool;

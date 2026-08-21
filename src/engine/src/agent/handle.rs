@@ -111,12 +111,3 @@ impl RunHandle {
         }
     }
 }
-
-/// Queue mode for steering and follow-up messages
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QueueMode {
-    /// Deliver one message per turn
-    OneAtATime,
-    /// Deliver all queued messages at once
-    All,
-}

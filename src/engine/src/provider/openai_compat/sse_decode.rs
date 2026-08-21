@@ -9,6 +9,7 @@ use tracing::debug;
 
 use super::request::ToolCallBuffer;
 use super::types::*;
+use crate::context::now_ms;
 use crate::provider::error::classify_stream_error;
 use crate::provider::error::ProviderError;
 use crate::provider::route::OpenAiCompat;

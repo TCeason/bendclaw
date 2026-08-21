@@ -8,6 +8,10 @@ mod dsl;
 mod executor;
 #[path = "context/history.rs"]
 mod history;
+#[path = "context/image_resize.rs"]
+mod image_resize;
+#[path = "context/limits.rs"]
+mod limits;
 #[path = "context/memory.rs"]
 mod memory;
 #[path = "context/plan.rs"]
@@ -20,9 +24,9 @@ mod summarizer;
 mod summary;
 #[path = "context/tokens.rs"]
 mod tokens;
-#[path = "context/tracking.rs"]
-mod tracking;
 #[path = "context/trigger.rs"]
 mod trigger;
+#[path = "context/window.rs"]
+mod window;
 
 mod fixtures;

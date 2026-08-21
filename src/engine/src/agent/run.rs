@@ -3,16 +3,21 @@
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use super::agent::Agent;
-use super::handle::QueueMode;
+use super::core::Agent;
 use super::handle::RunHandle;
-use super::PromptQueue;
-use super::QueueDrainMode;
+use super::queue::PromptQueue;
 use crate::context::ContextConfig;
-use crate::r#loop::agent_loop_continue_with_state;
-use crate::r#loop::agent_loop_with_state;
-use crate::r#loop::AgentLoopConfig;
+use crate::runner::agent_loop_continue_with_state;
+use crate::runner::agent_loop_with_state;
+use crate::runner::AgentLoopConfig;
 use crate::types::*;
+
+/// What the spawned loop starts from: an explicit prompt or a continue
+/// from existing context.
+enum RunKind {
+    Prompt { messages: Vec<AgentMessage> },
+    Continue,
+}
 
 impl Agent {
     // -- Submitting --
@@ -36,64 +41,7 @@ impl Agent {
             "Agent is already streaming. Use steer() or follow_up()."
         );
 
-        let cancel = CancellationToken::new();
-        self.cancel = Some(cancel.clone());
-        self.is_streaming = true;
-
-        // Share the stable queues with the run handle. Entries can now be
-        // inspected or edited while the loop is active; no drain/copy handoff.
-        let run_steering = self.steering_queue.clone();
-        let run_follow_up = self.follow_up_queue.clone();
-        let run_handle = RunHandle {
-            steering_queue: run_steering.clone(),
-            follow_up_queue: run_follow_up.clone(),
-            cancel: cancel.clone(),
-        };
-        self.last_run_handle = Some(run_handle.clone());
-
-        let (tx, rx) = mpsc::unbounded_channel();
-
-        let mut context = AgentContext {
-            system_prompt: self.system_prompt.clone(),
-            messages: self.messages.clone(),
-            tools: std::mem::take(&mut self.tools),
-            cwd: self.cwd.clone(),
-            path_guard: self.path_guard.clone(),
-            prompt_cache_key: self.prompt_cache_key.clone(),
-        };
-
-        let config = self.build_config_with_queues(run_steering, run_follow_up);
-
-        let handle = tokio::spawn(async move {
-            let mut compaction_state = config.initial_compaction_state.clone();
-            let result = std::panic::AssertUnwindSafe(async {
-                let outcome =
-                    agent_loop_with_state(messages, &mut context, &config, tx.clone(), cancel)
-                        .await;
-                compaction_state = outcome.compaction_state;
-            });
-            if let Err(e) = futures::FutureExt::catch_unwind(result).await {
-                let msg = match e.downcast_ref::<&str>() {
-                    Some(s) => s.to_string(),
-                    None => match e.downcast_ref::<String>() {
-                        Some(s) => s.clone(),
-                        None => "unknown panic".into(),
-                    },
-                };
-                tx.send(AgentEvent::Error {
-                    error: AgentErrorInfo {
-                        kind: AgentErrorKind::Runtime,
-                        message: format!("Agent loop panicked: {msg}"),
-                    },
-                })
-                .ok();
-                tx.send(AgentEvent::AgentEnd { messages: vec![] }).ok();
-            }
-            (context.tools, context.messages, compaction_state)
-        });
-
-        self.pending_completion = Some(handle);
-        (run_handle, rx)
+        self.spawn_run(RunKind::Prompt { messages }).await
     }
 
     pub async fn resume(&mut self) -> (RunHandle, mpsc::UnboundedReceiver<AgentEvent>) {
@@ -122,18 +70,49 @@ impl Agent {
             return (RunHandle::noop(), rx);
         }
 
+        self.spawn_run(RunKind::Continue).await
+    }
+
+    pub async fn finish(&mut self) {
+        if let Some(handle) = self.pending_completion.take() {
+            match handle.await {
+                Ok((tools, messages, compaction_state)) => {
+                    self.tools = tools;
+                    self.messages = messages;
+                    self.compaction_state = compaction_state;
+                }
+                Err(e) => {
+                    tracing::error!("Agent loop task failed: {}", e);
+                }
+            }
+            self.is_streaming = false;
+            self.cancel = None;
+            self.last_run_handle = None;
+        }
+    }
+
+    /// Shared run setup and spawn: cancel token, run handle, loop context,
+    /// config, and panic containment. Both `submit` and `resume` funnel here.
+    async fn spawn_run(
+        &mut self,
+        kind: RunKind,
+    ) -> (RunHandle, mpsc::UnboundedReceiver<AgentEvent>) {
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
         self.is_streaming = true;
 
-        let run_steering = self.steering_queue.clone();
-        let run_follow_up = self.follow_up_queue.clone();
+        // Share the stable queues with the run handle. Entries can now be
+        // inspected or edited while the loop is active; no drain/copy handoff.
+        let steering_queue = self.steering_queue.clone();
+        let follow_up_queue = self.follow_up_queue.clone();
         let run_handle = RunHandle {
-            steering_queue: run_steering.clone(),
-            follow_up_queue: run_follow_up.clone(),
+            steering_queue: steering_queue.clone(),
+            follow_up_queue: follow_up_queue.clone(),
             cancel: cancel.clone(),
         };
         self.last_run_handle = Some(run_handle.clone());
+
+        let (tx, rx) = mpsc::unbounded_channel();
 
         let mut context = AgentContext {
             system_prompt: self.system_prompt.clone(),
@@ -144,13 +123,21 @@ impl Agent {
             prompt_cache_key: self.prompt_cache_key.clone(),
         };
 
-        let config = self.build_config_with_queues(run_steering, run_follow_up);
+        let config = self.build_config_with_queues(steering_queue, follow_up_queue);
 
         let handle = tokio::spawn(async move {
             let mut compaction_state = config.initial_compaction_state.clone();
             let result = std::panic::AssertUnwindSafe(async {
-                let outcome =
-                    agent_loop_continue_with_state(&mut context, &config, tx.clone(), cancel).await;
+                let outcome = match kind {
+                    RunKind::Prompt { messages } => {
+                        agent_loop_with_state(messages, &mut context, &config, tx.clone(), cancel)
+                            .await
+                    }
+                    RunKind::Continue => {
+                        agent_loop_continue_with_state(&mut context, &config, tx.clone(), cancel)
+                            .await
+                    }
+                };
                 compaction_state = outcome.compaction_state;
             });
             if let Err(e) = futures::FutureExt::catch_unwind(result).await {
@@ -177,26 +164,6 @@ impl Agent {
         (run_handle, rx)
     }
 
-    pub async fn finish(&mut self) {
-        if let Some(handle) = self.pending_completion.take() {
-            match handle.await {
-                Ok((tools, messages, compaction_state)) => {
-                    self.tools = tools;
-                    self.messages = messages;
-                    self.compaction_state = compaction_state;
-                }
-                Err(e) => {
-                    tracing::error!("Agent loop task failed: {}", e);
-                }
-            }
-            self.is_streaming = false;
-            self.cancel = None;
-            self.last_run_handle = None;
-        }
-    }
-
-    // -- Internal --
-
     fn build_config_with_queues(
         &self,
         steering_queue: PromptQueue,
@@ -215,10 +182,7 @@ impl Agent {
             convert_to_llm: None,
             transform_context: None,
             get_steering_messages: Some(Box::new(move || {
-                steering_queue.drain_messages(match steering_mode {
-                    QueueMode::OneAtATime => QueueDrainMode::One,
-                    QueueMode::All => QueueDrainMode::All,
-                })
+                steering_queue.drain_messages(steering_mode)
             })),
             context_config: if self.context_management_disabled {
                 None
@@ -238,10 +202,7 @@ impl Agent {
             tool_execution: self.tool_execution.clone(),
             retry_policy: self.retry_policy.clone(),
             get_follow_up_messages: Some(Box::new(move || {
-                follow_up_queue.drain_messages(match follow_up_mode {
-                    QueueMode::OneAtATime => QueueDrainMode::One,
-                    QueueMode::All => QueueDrainMode::All,
-                })
+                follow_up_queue.drain_messages(follow_up_mode)
             })),
             before_turn: self.before_turn.clone(),
             after_turn: self.after_turn.clone(),

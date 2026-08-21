@@ -9,22 +9,23 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use super::assistant_sanitize::sanitize_assistant_text;
-use super::compaction::check_compaction;
-use super::compaction::CompactionCheckInput;
-use super::compaction::CompactionCheckPhase;
-use super::compaction::CompactionRequestShape;
+use super::assistant_sanitize::sanitize_assistant_message;
+use super::compaction_check::check_compaction;
+use super::compaction_check::CompactionCheckInput;
+use super::compaction_check::CompactionCheckPhase;
+use super::compaction_check::CompactionRequestShape;
 use super::config::AgentLoopConfig;
 use super::doom_loop::DoomLoopDetector;
 use super::llm_call::stream_assistant_response;
 use super::llm_call::AssistantStreamInput;
 use super::thinking_only_guard::ThinkingOnlyGuard;
+use super::tool_exec::build_tool_definitions;
 use super::tool_exec::execute_tool_calls;
 use super::tool_exec::skip_tool_call_doom_loop;
+use crate::context::now_ms;
 use crate::context::ContextTracker;
 use crate::context::ExecutionTracker;
 use crate::context::{self};
-use crate::provider::ToolDefinition;
 use crate::types::*;
 
 pub(crate) struct AgentLoopOutcome {
@@ -332,7 +333,7 @@ async fn run_loop(
         // preambles the model may have mimicked from reminders it saw in
         // context. Without this, the fake tags land back in the prompt next
         // turn and teach the model to keep producing them.
-        let message = sanitize_message(message);
+        let message = sanitize_assistant_message(message);
 
         let agent_msg: AgentMessage = message.clone().into();
         context.messages.push(agent_msg.clone());
@@ -614,57 +615,4 @@ async fn run_loop(
     compaction_controller
         .map(|controller| controller.state().clone())
         .or_else(|| config.initial_compaction_state.clone())
-}
-
-fn build_tool_definitions(context: &AgentContext, model: &str) -> Vec<ToolDefinition> {
-    context
-        .tools
-        .iter()
-        .map(|tool| ToolDefinition {
-            name: tool.resolve_name(model),
-            description: crate::tools::resolve_tool_refs(tool.description(), &context.tools, model),
-            parameters: tool.parameters_schema(),
-        })
-        .collect()
-}
-
-/// Run the assistant-text sanitizer over every `Content::Text` block in an
-/// Assistant message. Non-assistant variants pass through unchanged.
-fn sanitize_message(message: Message) -> Message {
-    match message {
-        Message::Assistant {
-            mut content,
-            stop_reason,
-            model,
-            provider,
-            usage,
-            timestamp,
-            error_message,
-            response_id,
-        } => {
-            for block in content.iter_mut() {
-                if let Content::Text { text } = block {
-                    let cleaned = sanitize_assistant_text(text);
-                    if cleaned != *text {
-                        *text = cleaned;
-                    }
-                }
-            }
-            // Drop text blocks that sanitized to empty — keeping them would
-            // serialize as zero-length assistant text, which some providers
-            // reject on the next turn.
-            content.retain(|c| !matches!(c, Content::Text { text } if text.trim().is_empty()));
-            Message::Assistant {
-                content,
-                stop_reason,
-                model,
-                provider,
-                usage,
-                timestamp,
-                error_message,
-                response_id,
-            }
-        }
-        other => other,
-    }
 }

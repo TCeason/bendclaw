@@ -6,9 +6,24 @@ use tokio::sync::mpsc;
 
 use super::config::GetMessagesFn;
 use crate::context;
+use crate::context::now_ms;
+use crate::provider::ToolDefinition;
 use crate::spill::FsSpill;
 use crate::tools::guard::PathGuard;
 use crate::types::*;
+
+/// Resolve per-model tool names and descriptions into provider definitions.
+pub(super) fn build_tool_definitions(context: &AgentContext, model: &str) -> Vec<ToolDefinition> {
+    context
+        .tools
+        .iter()
+        .map(|tool| ToolDefinition {
+            name: tool.resolve_name(model),
+            description: crate::tools::resolve_tool_refs(tool.description(), &context.tools, model),
+            parameters: tool.parameters_schema(),
+        })
+        .collect()
+}
 
 pub(super) struct ToolExecutionResult {
     pub tool_results: Vec<Message>,

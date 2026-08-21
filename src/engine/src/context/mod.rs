@@ -3,9 +3,10 @@
 pub mod compaction;
 pub mod history;
 pub mod image_resize;
+pub mod limits;
 pub mod sanitize;
 pub mod tokens;
-pub mod tracking;
+pub mod window;
 
 pub use compaction::plan_compaction;
 pub use compaction::plan_messages;
@@ -40,6 +41,10 @@ pub use compaction::DEFAULT_SUMMARY_RESERVE_TOKENS;
 pub use compaction::SUMMARIZER_INPUT_MAX_BYTES;
 pub use history::transform_messages_for_model;
 pub use image_resize::resize_image;
+pub use limits::ExecutionLimits;
+pub use limits::ExecutionTracker;
+pub use limits::IdleClock;
+pub use limits::IdlePause;
 pub use sanitize::sanitize_tool_pairs;
 pub use tokens::compute_call_stats;
 pub use tokens::compute_call_stats_from_agent_messages;
@@ -48,13 +53,9 @@ pub use tokens::estimate_tokens;
 pub use tokens::message_tokens;
 pub use tokens::tool_definition_tokens;
 pub use tokens::total_tokens;
-pub use tracking::ContextBudgetSnapshot;
-pub use tracking::ContextConfig;
-pub use tracking::ContextTracker;
-pub use tracking::ExecutionLimits;
-pub use tracking::ExecutionTracker;
-pub use tracking::IdleClock;
-pub use tracking::IdlePause;
+pub use window::ContextBudgetSnapshot;
+pub use window::ContextConfig;
+pub use window::ContextTracker;
 
 /// Milliseconds since UNIX epoch, or 0 if the system clock is unavailable.
 pub fn now_ms() -> u64 {
