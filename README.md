@@ -134,6 +134,12 @@ EVOT_LLM_ANTHROPIC_MODEL=claude-opus-4.8
 # EVOT_LLM_KIMI_BASE_URL=https://api.kimi.com/coding
 # EVOT_LLM_KIMI_PROTOCOL=anthropic
 # EVOT_LLM_KIMI_MODEL=kimi-for-coding
+
+# Or OpenRouter (Anthropic-compatible)
+# EVOT_LLM_OPENROUTER_API_KEY=sk-or-...
+# EVOT_LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/
+# EVOT_LLM_OPENROUTER_PROTOCOL=anthropic
+# EVOT_LLM_OPENROUTER_MODEL=stealth/ox-alpha
 ```
 
 **2. Run**
