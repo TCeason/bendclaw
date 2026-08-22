@@ -9,9 +9,9 @@
 use std::sync::Arc;
 
 use evot::agent::session::Session;
-use evot::agent::*;
 use evot::storage::MemoryStorage;
 use evot::types::ListSessions;
+use evot::types::*;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 

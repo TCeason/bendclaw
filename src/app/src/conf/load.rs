@@ -6,6 +6,7 @@ use evot_engine::provider::CompatCaps;
 use evot_engine::provider::RouteCapabilityOverrides;
 use indexmap::IndexMap;
 
+use crate::conf::channels::FeishuChannelConfig;
 use crate::conf::default_config;
 use crate::conf::infer_protocol;
 use crate::conf::parse_protocol;
@@ -17,7 +18,6 @@ use crate::conf::ProviderProfile;
 use crate::conf::StorageBackend;
 use crate::error::EvotError;
 use crate::error::Result;
-use crate::gateway::channels::feishu::FeishuChannelConfig;
 
 // ---------------------------------------------------------------------------
 // TOML source structures

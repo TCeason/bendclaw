@@ -1,9 +1,9 @@
 pub mod agent;
+pub mod command;
 pub mod compact;
 pub mod conf;
 pub mod error;
 pub mod gateway;
-pub mod log;
 pub mod search;
 pub mod storage;
 pub mod types;

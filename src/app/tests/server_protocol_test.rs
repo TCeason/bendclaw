@@ -1,4 +1,5 @@
 use evot::agent::*;
+use evot::types::*;
 
 #[test]
 fn transcript_round_trip_preserves_ordered_assistant_blocks_and_provider_metadata(
@@ -8,7 +9,7 @@ fn transcript_round_trip_preserves_ordered_assistant_blocks_and_provider_metadat
             evot_engine::Content::Thinking {
                 thinking: "plan".into(),
                 metadata: Some(evot_engine::ThinkingMetadata::OpenAiCompletions {
-                    field: evot_engine::ReasoningField::Reasoning,
+                    field: evot_engine::types::ReasoningField::Reasoning,
                 }),
             },
             evot_engine::Content::ToolCall {
@@ -50,7 +51,7 @@ fn transcript_round_trip_preserves_ordered_assistant_blocks_and_provider_metadat
                 evot_engine::Content::Text { text },
             ] if thinking == "plan"
                 && matches!(metadata, Some(evot_engine::ThinkingMetadata::OpenAiCompletions {
-                    field: evot_engine::ReasoningField::Reasoning,
+                    field: evot_engine::types::ReasoningField::Reasoning,
                 }))
                 && id == "call-1"
                 && item_id == "fc-1"

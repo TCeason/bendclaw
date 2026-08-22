@@ -130,9 +130,9 @@ fn expand_prompt_command(
     mut request: QueryRequest,
     skills_dirs: &[PathBuf],
 ) -> Result<QueryRequest> {
-    use crate::gateway::command::clip_session_prompt;
-    use crate::gateway::command::parse_command;
-    use crate::gateway::command::Command;
+    use crate::command::clip_session_prompt;
+    use crate::command::parse_command;
+    use crate::command::Command;
 
     if !matches!(
         parse_command(&request.input_text()),
@@ -641,8 +641,8 @@ impl Agent {
         // Session-independent commands are handled before resolve_session,
         // which would otherwise persist an empty session when the caller has
         // no session yet (e.g. `/resume <query>` from a fresh CLI).
-        if let Some(crate::gateway::command::Command::ResumeSearch { query }) =
-            crate::gateway::command::parse_command(&request.input_text())
+        if let Some(crate::command::Command::ResumeSearch { query }) =
+            crate::command::parse_command(&request.input_text())
         {
             let msg = self.handle_resume_search(&query).await?;
             return Ok(SubmitOutcome::Command(msg));
@@ -679,8 +679,8 @@ impl Agent {
         request: &QueryRequest,
         session: &Arc<Session>,
     ) -> Result<Option<SubmitOutcome>> {
-        use crate::gateway::command::parse_command;
-        use crate::gateway::command::Command;
+        use crate::command::parse_command;
+        use crate::command::Command;
 
         let cmd = match parse_command(&request.input_text()) {
             Some(cmd) => cmd,
@@ -1138,7 +1138,7 @@ impl Agent {
             .build_turn(mode, Arc::clone(session), &session_id, Vec::new(), None)
             .await?;
 
-        let dump = build_prompt_dump(self, mode, &turn);
+        let dump = build_prompt_dump(mode, &turn);
 
         let path = resolve_dump_path(target)?;
         if let Some(parent) = path.parent() {
@@ -1542,7 +1542,7 @@ fn prompt_mode(mode: ToolMode) -> PromptMode {
     }
 }
 
-fn build_prompt_dump(_agent: &Agent, mode: ToolMode, turn: &runtime::TurnInput) -> PromptDump {
+fn build_prompt_dump(mode: ToolMode, turn: &runtime::TurnInput) -> PromptDump {
     let opts = &turn.options;
 
     // System prompt sections — sourced from the turn (includes planning,

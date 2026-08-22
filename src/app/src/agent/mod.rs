@@ -30,7 +30,3 @@ pub use session_locator::SessionLocator;
 pub use tools::HostTools;
 pub use tools::ToolMode;
 pub use variables::Variables;
-
-// Re-export shared domain types for backward compatibility.
-#[allow(hidden_glob_reexports)]
-pub use crate::types::*;

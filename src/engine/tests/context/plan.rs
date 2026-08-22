@@ -217,8 +217,8 @@ fn detects_split_turn_when_cut_lands_mid_turn() {
 #[test]
 fn messages_no_plan_when_everything_fits_the_retention_budget() {
     let messages = vec![user("hello"), assistant("hi")];
-    assert!(evotengine::plan_messages(&messages, 100_000).is_none());
-    assert!(evotengine::plan_messages(&[], 100).is_none());
+    assert!(evotengine::context::plan_messages(&messages, 100_000).is_none());
+    assert!(evotengine::context::plan_messages(&[], 100).is_none());
 }
 
 #[test]
@@ -231,7 +231,7 @@ fn messages_plan_evicts_old_history_and_keeps_recent() {
     messages.push(user("recent question"));
     messages.push(assistant("recent answer"));
 
-    let plan = match evotengine::plan_messages(&messages, 250) {
+    let plan = match evotengine::context::plan_messages(&messages, 250) {
         Some(plan) => plan,
         None => panic!("expected planner to evict old history"),
     };
@@ -251,7 +251,7 @@ fn messages_plan_always_retains_the_newest_message() {
     }
     messages.push(user("fresh prompt must survive preflight"));
 
-    let plan = match evotengine::plan_messages(&messages, 0) {
+    let plan = match evotengine::context::plan_messages(&messages, 0) {
         Some(plan) => plan,
         None => panic!("expected planner to evict middle context"),
     };
@@ -274,7 +274,7 @@ fn messages_plan_does_not_cut_at_tool_result() {
     messages.push(user("recent"));
     messages.push(assistant("answer"));
 
-    if let Some(plan) = evotengine::plan_messages(&messages, 250) {
+    if let Some(plan) = evotengine::context::plan_messages(&messages, 250) {
         assert!(!matches!(
             &messages[plan.first_kept],
             AgentMessage::Llm(Message::ToolResult { .. })
@@ -292,15 +292,16 @@ fn messages_overflow_fallback_can_evict_the_entire_unsplittable_tail() {
 
     // The normal pi-style plan cannot cut after the final ToolResult, so it
     // retains the same oversized turn and has nothing to summarize.
-    assert!(evotengine::plan_messages(&messages, 100).is_none());
+    assert!(evotengine::context::plan_messages(&messages, 100).is_none());
 
     // Once the provider has rejected that request, overflow recovery may evict
     // the whole active turn. Keeping no verbatim suffix is preferable to
     // resending a known-bad payload; the summary preserves the turn semantics.
-    let plan = match evotengine::plan_messages_from_boundary(&messages, 100, messages.len()) {
-        Some(plan) => plan,
-        None => panic!("overflow fallback should produce an emergency plan"),
-    };
+    let plan =
+        match evotengine::context::plan_messages_from_boundary(&messages, 100, messages.len()) {
+            Some(plan) => plan,
+            None => panic!("overflow fallback should produce an emergency plan"),
+        };
     assert_eq!(plan.summarize, 0..messages.len());
     assert_eq!(plan.first_kept, messages.len());
     assert!(plan.turn_prefix.is_none());
@@ -317,7 +318,7 @@ fn messages_plan_detects_split_turn() {
     messages.push(tool_result(&big(2000)));
     messages.push(assistant(&big(100)));
 
-    let plan = match evotengine::plan_messages(&messages, 125) {
+    let plan = match evotengine::context::plan_messages(&messages, 125) {
         Some(plan) => plan,
         None => panic!("large turn should produce a plan"),
     };

@@ -247,7 +247,7 @@ pub struct WsContext<'a> {
     pub app_id: &'a str,
     pub app_secret: &'a str,
     pub token_cache: &'a TokenCache,
-    pub config: &'a super::config::FeishuChannelConfig,
+    pub config: &'a crate::conf::channels::FeishuChannelConfig,
     pub bot_open_id: &'a str,
 }
 

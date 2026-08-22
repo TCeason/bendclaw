@@ -1,5 +1,5 @@
-use evot::gateway::command::parse_command;
-use evot::gateway::command::Command;
+use evot::command::parse_command;
+use evot::command::Command;
 
 #[test]
 fn parse_clear() {
@@ -53,7 +53,7 @@ fn parse_bare_or_invalid_clip_is_usage_error() {
 
 #[test]
 fn clip_session_prompt_pre_activates_memory_workflow() {
-    use evot::gateway::command::clip_session_prompt;
+    use evot::command::clip_session_prompt;
     let prompt = clip_session_prompt("MEMORY WORKFLOW SENTINEL");
     assert!(prompt.contains("already loaded"));
     assert!(prompt.contains("MEMORY WORKFLOW SENTINEL"));

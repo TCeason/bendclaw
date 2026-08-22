@@ -343,8 +343,10 @@ async fn overflow_falls_back_to_emergency_when_summarizer_fails() {
 
     let planning_messages = messages[..messages.len() - 1].to_vec();
     let overhead = evotengine::context::estimate_tokens(&ctx.system_prompt);
-    let expected_plan =
-        evotengine::plan_messages(&planning_messages, config.retained_tail_budget(overhead));
+    let expected_plan = evotengine::context::plan_messages(
+        &planning_messages,
+        config.retained_tail_budget(overhead),
+    );
     let expected_evicted = expected_plan.map(|plan| plan.first_kept);
 
     let response = ctrl

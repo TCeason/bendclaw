@@ -213,7 +213,7 @@ impl Message {
                 stop_reason: StopReason::Error,
                 error_message: Some(msg),
                 ..
-            } => crate::provider::is_context_overflow_message(msg),
+            } => crate::provider::error::is_context_overflow_message(msg),
             _ => false,
         }
     }

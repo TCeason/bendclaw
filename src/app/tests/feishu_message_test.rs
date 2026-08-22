@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use evot::gateway::channels::feishu::config::FeishuChannelConfig;
+use evot::conf::FeishuChannelConfig;
 use evot::gateway::channels::feishu::message::parse_event;
 use evot::gateway::channels::feishu::message::MessageDedup;
 use evot::gateway::channels::feishu::message::MessagePart;

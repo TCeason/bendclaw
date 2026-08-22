@@ -1,8 +1,8 @@
 use evotengine::context::transform_messages_for_model;
 use evotengine::provider::ApiProtocol;
+use evotengine::types::ReasoningField;
 use evotengine::Content;
 use evotengine::Message;
-use evotengine::ReasoningField;
 use evotengine::StopReason;
 use evotengine::ThinkingMetadata;
 use evotengine::ToolCallMetadata;

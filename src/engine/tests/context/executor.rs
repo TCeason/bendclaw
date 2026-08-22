@@ -83,7 +83,7 @@ fn config_small() -> CompactionConfig {
 }
 
 fn planned(messages: &[AgentMessage], config: &CompactionConfig) -> CompactionPlan {
-    match evotengine::plan_messages(messages, config.keep_recent_tokens) {
+    match evotengine::context::plan_messages(messages, config.keep_recent_tokens) {
         Some(plan) => plan,
         None => panic!("expected compaction plan"),
     }

@@ -21,6 +21,7 @@ use evotengine::context::ExecutionLimits;
 use evotengine::provider::mock::*;
 use evotengine::provider::MockProvider;
 use evotengine::provider::ModelConfig;
+use evotengine::types::AgentContext;
 use evotengine::AgentLoopConfig;
 use evotengine::*;
 use tokio::sync::mpsc;

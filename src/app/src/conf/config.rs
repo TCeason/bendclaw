@@ -7,10 +7,10 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::conf::channels::FeishuChannelConfig;
 use crate::conf::paths;
 use crate::error::EvotError;
 use crate::error::Result;
-use crate::gateway::channels::feishu::FeishuChannelConfig;
 
 // ---------------------------------------------------------------------------
 // Protocol — determines which LLM provider implementation to use

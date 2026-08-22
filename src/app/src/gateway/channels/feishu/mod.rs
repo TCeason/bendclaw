@@ -6,4 +6,7 @@ pub mod token;
 pub mod ws;
 
 pub use adapter::FeishuChannel;
-pub use config::FeishuChannelConfig;
+
+// The channel configuration schema lives in `conf::channels`; re-exported here
+// for callers that address it via the channel module.
+pub use crate::conf::channels::FeishuChannelConfig;

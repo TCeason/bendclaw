@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::config::FeishuChannelConfig;
 use super::delivery::FeishuMessageSink;
 use super::token::TokenCache;
 use crate::agent::run_manager::RunManager;
@@ -14,6 +13,7 @@ use crate::agent::Agent;
 use crate::agent::QueryRequest;
 use crate::agent::SessionLocator;
 use crate::agent::ToolMode;
+use crate::conf::channels::FeishuChannelConfig;
 use crate::error::Result;
 use crate::gateway::delivery::stream as stream_delivery;
 use crate::gateway::delivery::stream::StreamDeliveryConfig;

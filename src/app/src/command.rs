@@ -1,4 +1,7 @@
-//! Gateway command parsing for `/clear`, `/compact`, etc.
+//! Slash-command parsing for `/clear`, `/compact`, etc.
+//!
+//! Commands are core domain operations executed by the agent; channels and the
+//! gateway only forward user text here.
 
 // ---------------------------------------------------------------------------
 // Command — parsed gateway commands

@@ -8,6 +8,7 @@ use evotengine::provider::StreamConfig;
 use evotengine::provider::StreamEvent;
 use evotengine::provider::StreamOutcome;
 use evotengine::provider::StreamProvider;
+use evotengine::types::AgentContext;
 use evotengine::AgentLoopConfig;
 use evotengine::*;
 use tokio::sync::mpsc;

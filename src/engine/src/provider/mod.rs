@@ -15,7 +15,7 @@ pub mod traits;
 
 pub use anthropic::AnthropicProvider;
 pub use bedrock::BedrockProvider;
-pub use error::*;
+pub use error::ProviderError;
 pub use mock::MockProvider;
 pub use mock::MockResponse;
 pub(crate) use model::thinking;

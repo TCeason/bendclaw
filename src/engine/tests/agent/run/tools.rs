@@ -4,6 +4,7 @@
 
 use evotengine::provider::mock::*;
 use evotengine::provider::MockProvider;
+use evotengine::types::AgentContext;
 use evotengine::*;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;

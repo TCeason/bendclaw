@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use regex::Regex;
 
-use super::config::FeishuChannelConfig;
+use crate::conf::channels::FeishuChannelConfig;
 
 // ── At-placeholder stripping ──
 

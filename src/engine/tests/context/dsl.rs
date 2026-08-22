@@ -41,7 +41,7 @@ async fn compact(
     config: &CompactionConfig,
     pattern: &str,
 ) -> Vec<AgentMessage> {
-    let plan = match evotengine::plan_messages(&messages, config.keep_recent_tokens) {
+    let plan = match evotengine::context::plan_messages(&messages, config.keep_recent_tokens) {
         Some(plan) => plan,
         None => panic!("expected compaction plan for pattern {pattern}"),
     };

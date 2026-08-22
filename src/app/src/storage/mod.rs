@@ -1,8 +1,8 @@
 mod factory;
 pub mod fs;
-mod memory;
+mod in_memory;
 mod storage;
 
 pub use factory::*;
-pub use memory::MemoryStorage;
+pub use in_memory::MemoryStorage;
 pub use storage::*;
