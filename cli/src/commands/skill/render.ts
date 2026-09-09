@@ -206,7 +206,7 @@ export function renderSkillList(view: SkillListView, width: number): string {
 // Install / update / remove
 // ---------------------------------------------------------------------------
 
-export type UnitOutcome = 'new' | 'updated' | 'unchanged' | 'failed' | 'skipped'
+export type UnitOutcome = 'new' | 'updated' | 'unchanged' | 'failed' | 'skipped' | 'removed'
 
 export interface UnitNote {
   /** `warn` for something the user must act on, `info` for what we did for them. */
@@ -244,6 +244,7 @@ function marker(outcome: UnitOutcome): string {
     case 'unchanged': return muted('=')
     case 'failed': return chalk.red('✗')
     case 'skipped': return muted('-')
+    case 'removed': return chalk.yellow('✕')
   }
 }
 

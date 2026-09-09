@@ -7,7 +7,7 @@ import { skillsRoot } from './paths.js'
 import { missingRequirements } from './requires.js'
 import type { SkillOutcome, UnitNote, UnitResult } from './render.js'
 import { isValidSkillName, scanSkillDir, subdirs } from './scan.js'
-import { isOfficialRepo, resolveSource, type Source, type SourceRecord } from './source.js'
+import { isOfficialRepo, OFFICIAL_PREFIX, resolveSource, type Source, type SourceRecord } from './source.js'
 import { enumerateUnits, supersededDirs, type Unit } from './units.js'
 
 export interface ManageOptions {
@@ -23,6 +23,8 @@ export interface OfficialSyncResult {
   updated: string[]
   unchanged: string[]
   skipped: string[]
+  /** Units dropped from the catalog upstream and deleted from the managed root. */
+  removed: string[]
 }
 
 interface Context {
@@ -123,11 +125,30 @@ export async function skillInstall(arg?: string, options: ManageOptions = {}): P
 let officialSyncInFlight: Promise<OfficialSyncResult> | null = null
 
 /**
+ * Units the catalog no longer ships.
+ *
+ * Only directories tracked to the official repo under its `skills/` prefix
+ * qualify: a local or third-party unit is never a candidate, whatever it is
+ * named. The caller must have a fully enumerated catalog in hand, otherwise a
+ * partial checkout would read as a mass withdrawal.
+ */
+function withdrawnUnits(ctx: Context, present: Set<string>): Installed[] {
+  return installedUnits(ctx.root).filter((unit) => {
+    const tracked = unit.record
+    if (!tracked || !isOfficialRepo(tracked.repo, ctx.env)) return false
+    if (!tracked.path.startsWith(`${OFFICIAL_PREFIX}/`)) return false
+    return !present.has(unit.name)
+  })
+}
+
+/**
  * Reconcile the managed root with the complete official catalog.
  *
- * New official units are installed and previously managed official units are
- * updated. A local or third-party unit with the same directory name is left
- * untouched, so background maintenance never replaces user-owned content.
+ * New official units are installed, previously managed official units are
+ * updated, and units withdrawn from the catalog upstream are deleted so a
+ * retired skill stops being offered. A local or third-party unit with the same
+ * directory name is left untouched, so background maintenance never replaces or
+ * removes user-owned content.
  */
 export async function syncOfficialSkills(
   options: ManageOptions = {},
@@ -135,7 +156,13 @@ export async function syncOfficialSkills(
   const ctx = context(options)
   const source = resolveSource(undefined, ctx.env)
   const checkout = await ctx.fetch(source, ctx.progress)
-  const result: OfficialSyncResult = { installed: [], updated: [], unchanged: [], skipped: [] }
+  const result: OfficialSyncResult = {
+    installed: [],
+    updated: [],
+    unchanged: [],
+    skipped: [],
+    removed: [],
+  }
 
   try {
     const units = enumerateUnits(checkout.dir, source)
@@ -156,6 +183,12 @@ export async function syncOfficialSkills(
       await applyUnit(ctx, source, unit, checkout.commit, false)
       if (previous) result.updated.push(unit.name)
       else result.installed.push(unit.name)
+    }
+
+    const withdrawn = withdrawnUnits(ctx, new Set(units.map((unit) => unit.name)))
+    if (withdrawn.length) {
+      removeDirs(withdrawn.map((unit) => unit.dir))
+      result.removed.push(...withdrawn.map((unit) => unit.name))
     }
     return result
   } finally {
@@ -209,6 +242,21 @@ function groupBySource(
   return [...groups.values()]
 }
 
+/**
+ * Whether a checkout that lacks one unit is still a trustworthy catalog.
+ *
+ * A fetch that landed a truncated or empty tree must not be read as an upstream
+ * withdrawal, so the rest of the catalog has to enumerate before we delete.
+ */
+function catalogIsIntact(checkout: Checkout, source: Source): boolean {
+  if (!source.official) return false
+  try {
+    return enumerateUnits(checkout.dir, { ...source, path: undefined }).length > 0
+  } catch {
+    return false
+  }
+}
+
 async function updateOne(
   ctx: Context,
   source: Source,
@@ -221,6 +269,16 @@ async function updateOne(
   try {
     unit = enumerateUnits(checkout.dir, unitSource)[0]!
   } catch (error) {
+    if (catalogIsIntact(checkout, source)) {
+      removeDirs([installed.dir])
+      return {
+        name: installed.name,
+        skills: 1,
+        outcome: 'removed',
+        detail: 'withdrawn from catalog',
+        notes: [],
+      }
+    }
     return {
       name: installed.name,
       skills: 1,

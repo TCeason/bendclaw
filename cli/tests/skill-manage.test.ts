@@ -78,6 +78,22 @@ function stubFetch(commit: string): { fetch: () => Promise<Checkout>; calls: num
   }
 }
 
+/** A catalog carrying only `names`, for withdrawal cases. `lark` stays a group. */
+function stubCatalog(commit: string, names: string[]): () => Promise<Checkout> {
+  return async () => {
+    const dir = workspace()
+    for (const name of names) {
+      if (name === 'lark') {
+        writeSkill(join(dir, 'skills', 'lark', 'lark-im'), 'lark-im')
+        writeSkill(join(dir, 'skills', 'lark', 'lark-shared'), 'lark-shared')
+      } else {
+        writeSkill(join(dir, 'skills', name), name)
+      }
+    }
+    return { dir, commit }
+  }
+}
+
 describe('resolveSource', () => {
   test('no argument selects the whole official repo', () => {
     expect(resolveSource(undefined, {})).toEqual({
@@ -308,6 +324,7 @@ describe('syncOfficialSkills', () => {
       updated: [],
       unchanged: [],
       skipped: [],
+      removed: [],
     })
 
     const second = await syncOfficialSkills({
@@ -341,6 +358,63 @@ describe('syncOfficialSkills', () => {
     expect(readSourceRecord(join(root, 'databend-cloud'))).toBeNull()
     expect(existsSync(join(root, 'lark-im', 'SKILL.md'))).toBe(true)
   })
+
+  test('removes units the catalog has withdrawn', async () => {
+    const root = workspace()
+    await syncOfficialSkills({ root, variablesFile: vars(root), fetch: stubFetch('abc1234').fetch, env: {} })
+    expect(existsSync(join(root, 'databend-cloud', 'SKILL.md'))).toBe(true)
+
+    const result = await syncOfficialSkills({
+      root,
+      variablesFile: vars(root),
+      fetch: stubCatalog('def5678', ['lark']),
+      env: {},
+    })
+    expect(result.removed).toEqual(['databend-cloud'])
+    expect(existsSync(join(root, 'databend-cloud'))).toBe(false)
+    expect(existsSync(join(root, 'lark', 'lark-im', 'SKILL.md'))).toBe(true)
+  })
+
+  test('withdrawal never reaches local or third-party units', async () => {
+    const root = workspace()
+    writeSkill(join(root, 'zero-tech-debt'), 'zero-tech-debt')
+    await skillInstall('acme/pack', {
+      root,
+      variablesFile: vars(root),
+      fetch: async () => {
+        const dir = workspace()
+        writeSkill(dir, 'pack')
+        return { dir, commit: 'aaa1111' }
+      },
+      env: {},
+    })
+
+    const result = await syncOfficialSkills({
+      root,
+      variablesFile: vars(root),
+      fetch: stubCatalog('def5678', ['lark']),
+      env: {},
+    })
+    expect(result.removed).toEqual([])
+    expect(existsSync(join(root, 'zero-tech-debt', 'SKILL.md'))).toBe(true)
+    expect(existsSync(join(root, 'pack', 'SKILL.md'))).toBe(true)
+  })
+
+  test('an empty checkout is refused, not read as a mass withdrawal', async () => {
+    const root = workspace()
+    await syncOfficialSkills({ root, variablesFile: vars(root), fetch: stubFetch('abc1234').fetch, env: {} })
+
+    await expect(
+      syncOfficialSkills({
+        root,
+        variablesFile: vars(root),
+        fetch: async () => ({ dir: workspace(), commit: 'def5678' }),
+        env: {},
+      }),
+    ).rejects.toThrow()
+    expect(existsSync(join(root, 'databend-cloud', 'SKILL.md'))).toBe(true)
+    expect(existsSync(join(root, 'lark', 'lark-im', 'SKILL.md'))).toBe(true)
+  })
 })
 
 describe('skillUpdate', () => {
@@ -365,6 +439,38 @@ describe('skillUpdate', () => {
     const out = await skillUpdate(undefined, { root, variablesFile: vars(root), fetch: stubFetch('abc1234').fetch, env: {} })
     expect(unit(out, 'lark').outcome).toBe('unchanged')
     expect(unit(out, 'lark').detail).toBe('abc1234')
+  })
+
+  test('a withdrawn official unit is removed instead of failing', async () => {
+    const root = workspace()
+    await skillInstall(undefined, { root, variablesFile: vars(root), fetch: stubFetch('abc1234').fetch, env: {} })
+
+    const out = await skillUpdate(undefined, {
+      root,
+      variablesFile: vars(root),
+      fetch: stubCatalog('def5678', ['lark']),
+      env: {},
+    })
+    expect(unit(out, 'databend-cloud')).toMatchObject({
+      outcome: 'removed',
+      detail: 'withdrawn from catalog',
+    })
+    expect(existsSync(join(root, 'databend-cloud'))).toBe(false)
+    expect(unit(out, 'lark').outcome).toBe('updated')
+  })
+
+  test('a truncated checkout fails the unit and keeps it on disk', async () => {
+    const root = workspace()
+    await skillInstall('databend-cloud', { root, variablesFile: vars(root), fetch: stubFetch('abc1234').fetch, env: {} })
+
+    const out = await skillUpdate(undefined, {
+      root,
+      variablesFile: vars(root),
+      fetch: async () => ({ dir: workspace(), commit: 'def5678' }),
+      env: {},
+    })
+    expect(unit(out, 'databend-cloud').outcome).toBe('failed')
+    expect(existsSync(join(root, 'databend-cloud', 'SKILL.md'))).toBe(true)
   })
 
   test('local units are skipped, not touched', async () => {

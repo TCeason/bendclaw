@@ -166,12 +166,14 @@ describe('renderOperation', () => {
         unit({ name: 'databend-cloud', skills: 1, outcome: 'unchanged', detail: '40b5130' }),
         unit({ name: 'zero-tech-debt', skills: 1, outcome: 'skipped', detail: 'local' }),
         unit({ name: 'broken', skills: 1, outcome: 'failed', detail: 'network down' }),
+        unit({ name: 'humanize', skills: 1, outcome: 'removed', detail: 'withdrawn from catalog' }),
       ],
     }))
     expect(out).toContain('  ↑ lark/           27 skills  3f9c2a1 → 40b5130')
     expect(out).toContain('  = databend-cloud             40b5130')
     expect(out).toContain('  - zero-tech-debt             local')
     expect(out).toContain('  ✗ broken                     network down')
+    expect(out).toContain('  ✕ humanize                   withdrawn from catalog')
   })
 
   test('warn notes hang under their unit with an actionable glyph', () => {
