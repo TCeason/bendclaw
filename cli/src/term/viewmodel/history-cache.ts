@@ -35,6 +35,16 @@ export class HistoryRenderCache {
   }
 
   /**
+   * Kind of the last committed line as buildOutputBlocks will see it. The live
+   * partial message must be laid out with this same context, otherwise the
+   * commit that replaces it changes its first row (block-start dot, margin) and
+   * shifts the whole message — an off-screen change for any tall reply.
+   */
+  get trailingKind(): string | undefined {
+    return this.prevKind
+  }
+
+  /**
    * Reconcile the cache against the current committed history and return the
    * flattened ANSI lines. `columns` is the terminal width; a change forces a
    * full rebuild because wrapping differs.

@@ -25,10 +25,15 @@ export interface ReplCommandContext {
   requestRender: () => void
 }
 
-export function formatLogPaths(logPath: string | null, rendererPath: string | null = null): string | null {
+export function formatLogPaths(
+  logPath: string | null,
+  rendererPath: string | null = null,
+  renderSummary: string | null = null,
+): string | null {
   if (!logPath) return null
   const lines = [`  Log: ${logPath}`]
   if (rendererPath) lines.push(`  Renderer run: ${rendererPath}`)
+  if (renderSummary) lines.push(renderSummary)
   return lines.join('\n')
 }
 

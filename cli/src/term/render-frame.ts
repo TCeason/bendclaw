@@ -14,9 +14,6 @@ export interface RenderFrame {
   /** Transient selector/ask rows can borrow space but cannot establish an
    * anchor. Closing a window must not leave a blank hole behind. */
   transientRows?: number
-  /** Stable command-window swaps can retain an anchored viewport even when
-   * offscreen history changes. Streaming frames must use normal redraw rules. */
-  stableViewport?: boolean
   overlay?: RenderOverlay
 }
 

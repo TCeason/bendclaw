@@ -1,4 +1,5 @@
 import { TermRenderer } from './renderer.js'
+import { RenderDiagnostics } from './render-diagnostics.js'
 import type { RenderFrame } from './render-frame.js'
 import { watchOutputFile } from './app/output-watch.js'
 import { readOutputTail } from './app/output-tail.js'
@@ -204,8 +205,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const rendererTrace = new RendererTrace()
   const sessionHook = new SessionHook({ cwd: agent.cwd })
   sessionHook.startProcess(agent.cwd)
+  let historyRowCount = 0
+  // Created before the renderer so render diagnostics have a sink from the very
+  // first frame; both are read only while rendering, which starts later.
+  const screenLog = new ScreenLog()
+  const renderDiagnostics = new RenderDiagnostics({
+    log: lines => screenLog.logLines(lines),
+    regions: () => ({ historyRows: historyRowCount, liveRegionStart: liveRegionStartRow }),
+  })
   const renderer = new TermRenderer({
     trace: rendererTrace.isEnabled ? entry => rendererTrace.log(entry) : undefined,
+    onDiagnostic: diagnostic => renderDiagnostics.record(diagnostic),
   })
   renderer.init()
 
@@ -928,7 +938,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const expandedLines: OutputLine[] = []
   const fileCompletion = new FileCompletion(completeAtFile)
   resources.add(() => fileCompletion.dispose())
-  const screenLog = new ScreenLog()
   const committer = new Committer({
     compactLines,
     expandedLines,
@@ -936,7 +945,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     columns: () => renderer.termCols,
     logLines: lines => screenLog.logLines(lines),
     requestRender: () => renderer.requestRender(),
-    invalidateHistory: () => resetHistoryCache(),
+    invalidateHistory: () => {
+      resetHistoryCache()
+      // An in-place edit (erasing a revealed secret) must reach scrollback too.
+      renderer.invalidateScrollback()
+    },
   })
   let liveContentMaxHeight = 0
   let liveContentWidth = renderer.termCols
@@ -1244,10 +1257,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     expanded: boolean
     streaming: boolean
     columns: number
+    prevKind: string | undefined
     blocks: ViewBlock[]
   } | null = null
 
-  function buildPartialAssistantBlocks(): ViewBlock[] {
+  function buildPartialAssistantBlocks(prevKind: string | undefined): ViewBlock[] {
     const content = streamMachine?.appState.currentAssistantContent ?? EMPTY_ASSISTANT_CONTENT
     // Only provider deltas are provisional. The entire partial message stays in
     // the dynamic zone and is reparsed on every content delta, matching pi: a
@@ -1260,18 +1274,21 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       && partialBlocksMemo.expanded === expanded
       && partialBlocksMemo.streaming === streaming
       && partialBlocksMemo.columns === columns
+      && partialBlocksMemo.prevKind === prevKind
     ) {
       return partialBlocksMemo.blocks
     }
-    // Use the exact ordered committed-output pipeline for the live partial. This
-    // keeps thinking/text/tool positions, margins, and prefixes stable through
-    // completion instead of rendering tool calls in a detached layer.
+    // Use the exact ordered committed-output pipeline for the live partial,
+    // including the committed tail's kind as layout context. This keeps
+    // thinking/text/tool positions, margins, and prefixes byte-identical through
+    // completion, so committing the message never changes any rendered row.
     const blocks = buildOutputBlocks(assistantMessageToOutputLines(content, expanded, {
       streaming,
     }), {
+      prevKind,
       columns,
     })
-    partialBlocksMemo = { content, expanded, streaming, columns, blocks }
+    partialBlocksMemo = { content, expanded, streaming, columns, prevKind, blocks }
     return blocks
   }
 
@@ -1300,6 +1317,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
     const cache = expanded ? expandedHistoryCache : compactHistoryCache
     const cachedHistoryLines = cache.sync(expanded ? expandedLines : compactLines, cols)
+    // Rows above this index are committed transcript; render diagnostics use it
+    // to attribute a repaint to history, the live partial, or the live region.
+    historyRowCount = blocksToLines(blocks).length + cachedHistoryLines.length
     if (cachedHistoryLines.length > 0) {
       blocks.push({ lines: cachedHistoryLines.map(l => ({ spans: [{ text: l }] })), marginTop: 0 })
     }
@@ -1309,7 +1329,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // becomes complete. Track history + partial as one region: when completion
     // moves the same content from partial into history its total height remains
     // continuous, and any transient parser shrink is absorbed above the footer.
-    const partialBlocks = buildPartialAssistantBlocks()
+    const partialBlocks = buildPartialAssistantBlocks(cache.trailingKind)
     blocks.push(...partialBlocks)
     const livePartialHeight = blocksToLines(partialBlocks).length
     const liveContentHeight = cachedHistoryLines.length + livePartialHeight
@@ -1558,10 +1578,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // (e.g. the tool output you just ran) sits in the viewport, the renderer
     // repaints in place from the first changed line down, so the view stays
     // put instead of clearing and re-anchoring to the bottom (which is what
-    // made the screen jump). A swap large enough to change history above the
-    // viewport still falls back to a full redraw via the renderer's own
-    // off-viewport guard. Mirrors pi, which toggles with requestRender().
-    renderer.requestRender()
+    // made the screen jump). The toggle applies to the whole transcript, so a
+    // swap that also changes history above the viewport is allowed to replay
+    // it: the user asked for a different view of that history.
+    renderer.invalidateScrollback()
   }
 
   /** Cycle the model's reasoning effort (Shift+Tab) and reflect it in the footer. */
@@ -2571,7 +2591,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       clearAll()
       const logPath = screenLog.filePath
       if (logPath) {
-        const text = formatLogPaths(logPath, rendererTrace.filePath)
+        const text = formatLogPaths(logPath, rendererTrace.filePath, renderDiagnostics.summary())
         commitSystem('sys-log', text ?? `  Log: ${logPath}`)
       }
       else commitSystem('sys-log', '  No active screen log.')
@@ -3505,7 +3525,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     } else if (!query) {
       const logPath = screenLog.filePath
       if (logPath) {
-        const text = formatLogPaths(logPath, rendererTrace.filePath)
+        const text = formatLogPaths(logPath, rendererTrace.filePath, renderDiagnostics.summary())
         commitSystem('sys-log', text ?? `  Log: ${logPath}`)
       }
       else if (sid) {

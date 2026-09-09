@@ -35,8 +35,6 @@ describe('shell composition', () => {
       const focused = buildShellFrame({ ...input, overlay: { kind: 'selector', state: selector }, commandFocused: true, prompt: { ...input.prompt, active: false } })
       expect(preview.lines.length).toBe(focused.lines.length)
       expect(preview.transientRows).toBe(focused.transientRows)
-      expect(preview.stableViewport).toBe(true)
-      expect(focused.stableViewport).toBe(true)
       expect(focused.bottomAnchorStart).toBe(1)
     }
   })
@@ -52,7 +50,6 @@ describe('shell composition', () => {
       const frame = buildShellFrame({ ...input, overlay })
       expect(frame.lines).toEqual(['history', 'status', ...lines, ...blocksToLines(buildPromptFooterBlocks(input.prompt))])
       expect(frame.transientRows).toBe(lines.length)
-      expect(frame.stableViewport).toBeUndefined()
     }
   })
 

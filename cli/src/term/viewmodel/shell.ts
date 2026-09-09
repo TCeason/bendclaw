@@ -38,7 +38,6 @@ export function buildShellFrame(input: ShellSnapshot): RenderFrame {
       ...base,
       lines: [...contentLines, ...preEditorLines, ...selectorLines, ...promptLines],
       transientRows: selectorLines.length,
-      stableViewport: true,
     }
   }
   if (overlay.kind === 'selector' || overlay.kind === 'ask-user') {
@@ -68,7 +67,6 @@ export function buildShellFrame(input: ShellSnapshot): RenderFrame {
     ...base,
     lines: [...contentLines, ...preEditorLines, ...previewLines, ...promptLines],
     transientRows: previewLines.length,
-    ...(preview?.kind === 'selector' ? { stableViewport: true } : {}),
     ...(modalLines.length > 0 ? { overlay: { lines: modalLines } } : {}),
   }
 }

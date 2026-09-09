@@ -1,7 +1,8 @@
 import { describe, test, expect, beforeEach } from 'bun:test'
 import { Writable } from 'node:stream'
 import stripAnsi from 'strip-ansi'
-import { TermRenderer } from '../src/term/renderer.js'
+import { TermRenderer, type RendererDiagnostic, type RendererTraceEntry } from '../src/term/renderer.js'
+import { ScreenHarness } from './helpers/screen.js'
 import { CURSOR_MARKER } from '../src/term/render-frame.js'
 import { renderMarkdown } from '../src/render/markdown.js'
 import { withColumns } from './helpers/stdout-columns.js'
@@ -396,194 +397,306 @@ describe('TermRenderer', () => {
 
   describe('off-viewport change (streaming markdown reflow)', () => {
     // When streaming, markdown re-renders the whole accumulated text each frame
-    // and reflows earlier lines (table realign, list renumber). When a reflowed
-    // line has scrolled above the visible viewport, no escape sequence can
-    // address it, so the renderer falls back to a full redraw (matching pi's
-    // renderer). A prior attempt to repaint in place instead desynced the
-    // on-screen window from the terminal's real scrollback and made text
-    // selections jump on scroll.
+    // and can reflow earlier lines (table realign, list renumber). A reflowed
+    // line that has scrolled above the viewport cannot be addressed. pi clears
+    // the screen and replays the frame, which drags a reader who scrolled up
+    // back to the bottom and wipes native scrollback. We instead treat
+    // scrollback as append-only: only addressable rows are patched and the
+    // stale rows above are reported, never repainted.
     const CLEAR_SCREEN = '\x1b[2J\x1b[H\x1b[3J'
 
-    test('changing a line above the viewport triggers a full redraw', async () => {
-      const { renderer, stdout } = createRenderer()
-      stdout.rows = 10
+    async function paint(renderer: TermRenderer, screen: ScreenHarness): Promise<void> {
+      renderer.requestRender()
+      await Bun.sleep(25)
+      await screen.settle()
+    }
+
+    test('changing a line above the viewport patches the viewport and keeps scrollback', async () => {
+      const screen = new ScreenHarness(80, 10)
+      const traces: RendererTraceEntry[] = []
+      const diagnostics: RendererDiagnostic[] = []
+      const renderer = new TermRenderer({
+        stdout: screen.stdout,
+        trace: entry => traces.push(entry),
+        onDiagnostic: diagnostic => diagnostics.push(diagnostic),
+      })
       renderer.init()
       const history = Array.from({ length: 30 }, (_, i) => `hist ${i}`)
-      let lines = [...history, 's0', 's1', 's2', 's3']
+      let lines = [...history, 's0', 's1', 's2', 's3', 's4', 's5']
       renderer.setRenderCallback(() => lines)
-      await renderFrame(renderer)
+      await paint(renderer, screen)
+      const baseBefore = screen.terminal.buffer.active.baseY
+      traces.length = 0
 
-      // Append more streamed lines so the viewport scrolls well past history.
-      lines = [...history, 's0', 's1', 's2', 's3', 's4', 's5']
-      await renderFrame(renderer)
-
-      // Now reflow an early line that is above the viewport, while appending one.
-      // A differential update can't address rows already in scrollback, so the
-      // renderer falls back to a full redraw (matching pi's renderer).
-      stdout.clear()
+      // Reflow an early line that is above the viewport while appending one.
       const reflowed = [...history]
       reflowed[5] = 'hist 5 REFLOWED'
       lines = [...reflowed, 's0', 's1', 's2', 's3', 's4', 's5', 's6']
-      await renderFrame(renderer)
+      await paint(renderer, screen)
 
-      const out = stdout.output
-      expect(out).toContain(CLEAR_SCREEN)
-      // pi rebuilds the full logical frame after clearing the terminal.
-      expect(out).toContain('hist 5 REFLOWED')
-      expect(out).toContain('s6')
+      expect(traces.map(t => t.branch)).toEqual(['differential_update'])
+      expect(traces[0]?.frameState.staleScrollbackRows).toBe(1)
+      const ansi = traces.flatMap(t => t.ansiWrites).join('')
+      expect(ansi).not.toContain(CLEAR_SCREEN)
+      expect(ansi).not.toContain('hist 5 REFLOWED')
+      // The frame grew by one row through a normal hardware scroll.
+      expect(screen.terminal.buffer.active.baseY).toBe(baseBefore + 1)
+      expect(screen.viewport().at(-1)).toBe('s6')
+      // Scrollback keeps the last painted content for the unaddressable row.
+      const buffer = screen.terminal.buffer.active
+      expect(buffer.getLine(5)?.translateToString(true)).toBe('hist 5')
+      expect(diagnostics).toEqual([{
+        kind: 'stale_scrollback',
+        frame: 2,
+        staleRows: 1,
+        firstChanged: 5,
+        viewportTop: 26,
+        previousLines: 36,
+        newLines: 37,
+      }])
       renderer.destroy()
     })
 
-    test('full redraw keeps the newest content visible', async () => {
-      const { renderer, stdout } = createRenderer()
-      stdout.rows = 6
+    test('a reader scrolled up keeps their position when an off-screen row reflows', async () => {
+      const screen = new ScreenHarness(80, 10)
+      const renderer = new TermRenderer({ stdout: screen.stdout })
       renderer.init()
-      const history = Array.from({ length: 20 }, (_, i) => `h${i}`)
-      let lines = [...history, 'a', 'b', 'c']
+      const history = Array.from({ length: 30 }, (_, i) => `hist ${i}`)
+      let lines = [...history, 's0', 's1', 's2']
       renderer.setRenderCallback(() => lines)
-      await renderFrame(renderer)
+      await paint(renderer, screen)
 
-      stdout.clear()
+      screen.terminal.scrollLines(-12)
+      const readingTop = screen.terminal.buffer.active.viewportY
+      const reading = screen.viewport()
+
       const reflowed = [...history]
-      reflowed[0] = 'h0-changed'
-      lines = [...reflowed, 'a', 'b', 'c', 'd']
-      await renderFrame(renderer)
+      reflowed[2] = 'hist 2 REFLOWED'
+      lines = [...reflowed, 's0', 's1', 's2', 's3']
+      await paint(renderer, screen)
 
-      const out = stdout.output
-      expect(out).toContain(CLEAR_SCREEN)
-      expect(out).toContain('h0-changed')
-      expect(out).toContain('d')
+      expect(screen.terminal.buffer.active.viewportY).toBe(readingTop)
+      expect(screen.viewport()).toEqual(reading)
+      screen.terminal.scrollToBottom()
+      expect(screen.viewport().at(-1)).toBe('s3')
       renderer.destroy()
     })
 
-    // Match pi: any changed line above the addressable viewport forces a full
-    // redraw, even when the visible suffix is unchanged.
-    test('off-viewport change with unchanged line count triggers full redraw', async () => {
-      const { renderer, stdout } = createRenderer()
-      stdout.rows = 10
+    test('off-viewport change with unchanged line count only adopts the new frame', async () => {
+      const screen = new ScreenHarness(80, 10)
+      const traces: RendererTraceEntry[] = []
+      const renderer = new TermRenderer({ stdout: screen.stdout, trace: entry => traces.push(entry) })
       renderer.init()
       let banner = 'banner: main'
       const history = Array.from({ length: 200 }, (_, i) => `hist ${i}`)
       renderer.setRenderCallback(() => [banner, ...history])
-      await renderFrame(renderer)
+      await paint(renderer, screen)
+      const before = screen.viewport()
+      traces.length = 0
 
       // The banner sits at row 0, far above the viewport. Changing it (e.g. a
       // git branch switch or update notice) must not clear the screen.
-      stdout.clear()
       banner = 'banner: feature-branch'
-      await renderFrame(renderer)
+      await paint(renderer, screen)
+      expect(traces.map(t => t.branch)).toEqual(['no_change'])
+      expect(traces[0]?.frameState.staleScrollbackRows).toBe(1)
+      expect(screen.viewport()).toEqual(before)
 
-      const out = stdout.output
-      expect(out).toContain(CLEAR_SCREEN)
-      expect(out).toContain('feature-branch')
+      // The stale row is reported once, not on every later frame.
+      traces.length = 0
+      await paint(renderer, screen)
+      expect(traces.map(t => t.frameState.staleScrollbackRows)).toEqual([0])
       renderer.destroy()
     })
 
-    test('stable viewport patches visible rows without redrawing off-screen changes', async () => {
-      const { renderer, stdout } = createRenderer()
-      stdout.rows = 10
-      renderer.init()
-      let header = 'resume header'
-      let visible = 'composer /'
-      const history = Array.from({ length: 20 }, (_, i) => `history ${i}`)
-      renderer.setRenderCallback(() => ({
-        lines: [header, ...history, visible],
-        bottomAnchor: true,
-        stableViewport: true,
-      }))
-      await renderFrame(renderer)
-
-      stdout.clear()
-      header = 'model header'
-      visible = 'composer /m'
-      await renderFrame(renderer)
-
-      expect(stdout.output).not.toContain(CLEAR_SCREEN)
-      expect(stdout.output).toContain('composer /m')
-      expect(stdout.output).not.toContain('model header')
-      renderer.destroy()
-    })
-
-    test('off-viewport early reflow (count unchanged) triggers full redraw', async () => {
-      const { renderer, stdout } = createRenderer()
-      stdout.rows = 10
-      renderer.init()
-      const history = Array.from({ length: 8 }, (_, i) => `H${i}`)
-      let pending = Array.from({ length: 12 }, (_, i) => `P${i}`)
-      renderer.setRenderCallback(() => [...history, ...pending])
-      await renderFrame(renderer)
-
-      // Reflow an early pending line that has scrolled above the viewport, with
-      // no change to the total line count (in-place table realign / renumber).
-      stdout.clear()
-      pending = [...pending]
-      pending[1] = 'P1-REFLOWED'
-      await renderFrame(renderer)
-
-      expect(stdout.output).toContain(CLEAR_SCREEN)
-      renderer.destroy()
-    })
-
-    test('off-viewport line-count GROWTH with identical viewport redraws like pi', async () => {
-      const { renderer, stdout } = createRenderer()
-      stdout.rows = 10
+    test('off-viewport line-count growth scrolls the viewport without clearing', async () => {
+      const screen = new ScreenHarness(80, 10)
+      const traces: RendererTraceEntry[] = []
+      const renderer = new TermRenderer({ stdout: screen.stdout, trace: entry => traces.push(entry) })
       renderer.init()
       let banner = ['banner']
       const history = Array.from({ length: 200 }, (_, i) => `hist ${i}`)
       renderer.setRenderCallback(() => [...banner, ...history])
-      await renderFrame(renderer)
+      await paint(renderer, screen)
+      const baseBefore = screen.terminal.buffer.active.baseY
+      traces.length = 0
 
       // Banner grows from 1 line to 2 (async update notice). Visible rows are
-      // the tail of history, unchanged.
-      stdout.clear()
+      // the tail of history; they shift down by one row.
       banner = ['banner', 'New version available']
-      await renderFrame(renderer)
-
-      const out = stdout.output
-      expect(out).toContain(CLEAR_SCREEN)
-      expect(out).toContain('New version available')
+      await paint(renderer, screen)
+      expect(traces.map(t => t.branch)).toEqual(['differential_update'])
+      expect(traces.flatMap(t => t.ansiWrites).join('')).not.toContain(CLEAR_SCREEN)
+      expect(screen.terminal.buffer.active.baseY).toBe(baseBefore + 1)
+      expect(screen.viewport().at(-1)).toBe('hist 199')
+      expect(screen.viewport()[0]).toBe('hist 190')
       renderer.destroy()
     })
 
-    test('off-viewport line-count SHRINK with identical viewport redraws like pi', async () => {
-      const { renderer, stdout } = createRenderer()
-      stdout.rows = 10
+    test('off-viewport line-count shrink clears the vacated row in place', async () => {
+      const screen = new ScreenHarness(80, 10)
+      const traces: RendererTraceEntry[] = []
+      const renderer = new TermRenderer({ stdout: screen.stdout, trace: entry => traces.push(entry) })
       renderer.init()
       let banner = ['banner', 'transient notice']
       const history = Array.from({ length: 200 }, (_, i) => `hist ${i}`)
       renderer.setRenderCallback(() => [...banner, ...history])
-      await renderFrame(renderer)
+      await paint(renderer, screen)
+      const baseBefore = screen.terminal.buffer.active.baseY
+      traces.length = 0
 
-      stdout.clear()
       banner = ['banner']
-      await renderFrame(renderer)
-
-      expect(stdout.output).toContain(CLEAR_SCREEN)
+      await paint(renderer, screen)
+      expect(traces.map(t => t.branch)).toEqual(['differential_update'])
+      expect(traces.flatMap(t => t.ansiWrites).join('')).not.toContain(CLEAR_SCREEN)
+      expect(screen.terminal.buffer.active.baseY).toBe(baseBefore)
+      // Content ends one row higher; the vacated bottom row is blank.
+      expect(screen.viewport()[8]).toBe('hist 199')
+      expect(screen.viewport()[9]).toBe('')
       renderer.destroy()
     })
 
-    test('partial-viewport reach redraws when the first change is above the viewport', async () => {
-      const { renderer, stdout } = createRenderer()
-      stdout.rows = 10
+    test('a change spanning the viewport edge patches only the visible part', async () => {
+      const screen = new ScreenHarness(80, 10)
+      const traces: RendererTraceEntry[] = []
+      const renderer = new TermRenderer({ stdout: screen.stdout, trace: entry => traces.push(entry) })
       renderer.init()
       const history = Array.from({ length: 8 }, (_, i) => `H${i}`)
       // 12 pending: with rows=10 and 20 total lines, viewportTop = 10.
       let pending = Array.from({ length: 12 }, (_, i) => `P${i}`)
       renderer.setRenderCallback(() => [...history, ...pending])
-      await renderFrame(renderer)
+      await paint(renderer, screen)
+      traces.length = 0
 
-      // Change a line that spans from above the viewport (index 9, off-screen)
-      // to inside it (index 11, visible). Count unchanged.
-      stdout.clear()
       pending = [...pending]
       pending[1] = 'P1-off'   // buffer index 9 — above viewport
       pending[3] = 'P3-vis'   // buffer index 11 — inside viewport
-      await renderFrame(renderer)
+      await paint(renderer, screen)
 
-      const out = stdout.output
-      expect(out).toContain(CLEAR_SCREEN)
-      expect(out).toContain('P1-off')
-      expect(out).toContain('P3-vis')
+      expect(traces.map(t => t.branch)).toEqual(['differential_update'])
+      expect(traces[0]?.frameState.firstChanged).toBe(11)
+      expect(traces[0]?.frameState.staleScrollbackRows).toBe(1)
+      const ansi = traces.flatMap(t => t.ansiWrites).join('')
+      expect(ansi).not.toContain(CLEAR_SCREEN)
+      expect(ansi).not.toContain('P1-off')
+      expect(screen.viewport()[1]).toBe('P3-vis')
+      renderer.destroy()
+    })
+
+    test('a shrink that ends above the viewport still needs a full redraw and reports it', async () => {
+      const screen = new ScreenHarness(80, 10)
+      const diagnostics: RendererDiagnostic[] = []
+      const renderer = new TermRenderer({ stdout: screen.stdout, onDiagnostic: d => diagnostics.push(d) })
+      renderer.init()
+      let lines = Array.from({ length: 40 }, (_, i) => `row ${i}`)
+      renderer.setRenderCallback(() => lines)
+      await paint(renderer, screen)
+
+      lines = lines.slice(0, 5)
+      await paint(renderer, screen)
+      expect(screen.viewport().slice(0, 5)).toEqual(['row 0', 'row 1', 'row 2', 'row 3', 'row 4'])
+      expect(diagnostics.map(d => d.kind)).toEqual(['stale_scrollback', 'full_redraw'])
+      const redraw = diagnostics[1]
+      if (redraw?.kind !== 'full_redraw') throw new Error('expected a full_redraw diagnostic')
+      expect(redraw.branch).toBe('deleted_lines_above_viewport')
+      expect(redraw.previousLines).toBe(40)
+      expect(redraw.newLines).toBe(5)
+      renderer.destroy()
+    })
+
+    test('invalidateScrollback replays history only when a flagged change is above the viewport', async () => {
+      const screen = new ScreenHarness(80, 10)
+      const diagnostics: RendererDiagnostic[] = []
+      const renderer = new TermRenderer({ stdout: screen.stdout, onDiagnostic: d => diagnostics.push(d) })
+      renderer.init()
+      const history = Array.from({ length: 30 }, (_, i) => `hist ${i}`)
+      let lines = [...history, 'tail']
+      renderer.setRenderCallback(() => lines)
+      await paint(renderer, screen)
+
+      // Flagged, but only the visible tail changed: no clear.
+      lines = [...history, 'tail edited']
+      renderer.invalidateScrollback()
+      await Bun.sleep(25)
+      await screen.settle()
+      expect(diagnostics).toEqual([])
+      expect(screen.viewport().at(-1)).toBe('tail edited')
+
+      // Flagged and a scrollback row changed (Ctrl+O, erased secret): replay.
+      const edited = [...history]
+      edited[3] = 'hist 3 erased'
+      lines = [...edited, 'tail edited']
+      renderer.invalidateScrollback()
+      await Bun.sleep(25)
+      await screen.settle()
+      expect(diagnostics.map(d => d.kind === 'full_redraw' && d.branch)).toEqual(['history_invalidated'])
+      const buffer = screen.terminal.buffer.active
+      const all = Array.from({ length: buffer.length }, (_, i) => buffer.getLine(i)?.translateToString(true) ?? '')
+      expect(all).toContain('hist 3 erased')
+      expect(all).not.toContain('hist 3 ')
+
+      // The flag is consumed: a later streaming reflow above the viewport is stale again.
+      diagnostics.length = 0
+      const reflowed = [...edited]
+      reflowed[4] = 'hist 4 reflowed'
+      lines = [...reflowed, 'tail edited']
+      await paint(renderer, screen)
+      expect(diagnostics.map(d => d.kind)).toEqual(['stale_scrollback'])
+
+      // That row is now part of the adopted logical frame, so it no longer
+      // appears as a diff. A later invalidation must still repair it, otherwise
+      // an erased secret or a Ctrl+O toggle leaves it wrong for the session.
+      diagnostics.length = 0
+      lines = [...reflowed, 'tail again']
+      renderer.invalidateScrollback()
+      await Bun.sleep(25)
+      await screen.settle()
+      expect(diagnostics.map(d => d.kind === 'full_redraw' && d.branch)).toEqual(['history_invalidated'])
+      const repaired = screen.terminal.buffer.active
+      const rows = Array.from({ length: repaired.length }, (_, i) => repaired.getLine(i)?.translateToString(true) ?? '')
+      expect(rows).toContain('hist 4 reflowed')
+      expect(rows).not.toContain('hist 4')
+
+      // Nothing is stale now, so a flag with no scrollback damage stays cheap.
+      diagnostics.length = 0
+      lines = [...reflowed, 'tail once more']
+      renderer.invalidateScrollback()
+      await Bun.sleep(25)
+      await screen.settle()
+      expect(diagnostics).toEqual([])
+      renderer.destroy()
+    })
+
+    test('a forced repaint reports its own cause, not a resize', async () => {
+      const screen = new ScreenHarness(80, 10)
+      const diagnostics: RendererDiagnostic[] = []
+      const renderer = new TermRenderer({ stdout: screen.stdout, onDiagnostic: d => diagnostics.push(d) })
+      renderer.init()
+      renderer.setRenderCallback(() => Array.from({ length: 30 }, (_, i) => `row ${i}`))
+      await paint(renderer, screen)
+
+      // Theme detection repaints pre-painted ANSI history through requestRender(true).
+      renderer.requestRender(true)
+      await Bun.sleep(25)
+      await screen.settle()
+      expect(diagnostics.map(d => d.kind === 'full_redraw' && d.branch)).toEqual(['forced_repaint'])
+      renderer.destroy()
+    })
+
+    test('a resize repaints history and reports the redraw', async () => {
+      const screen = new ScreenHarness(80, 10)
+      const diagnostics: RendererDiagnostic[] = []
+      const renderer = new TermRenderer({ stdout: screen.stdout, onDiagnostic: d => diagnostics.push(d) })
+      renderer.init()
+      renderer.setRenderCallback(() => Array.from({ length: 30 }, (_, i) => `row ${i}`))
+      await paint(renderer, screen)
+
+      screen.stdout.columns = 60
+      screen.terminal.resize(60, 10)
+      screen.stdout.emit('resize')
+      await paint(renderer, screen)
+      expect(diagnostics.map(d => d.kind)).toEqual(['full_redraw'])
+      expect(diagnostics[0]?.kind === 'full_redraw' && diagnostics[0].branch).toBe('width_change')
       renderer.destroy()
     })
 

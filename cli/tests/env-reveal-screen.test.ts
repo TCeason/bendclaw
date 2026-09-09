@@ -84,12 +84,15 @@ describe('a revealed secret leaves the screen', () => {
     await screen.settle()
     expect(screen.rowOf(SECRET)).toBe(-1)
 
+    // The committer flags the in-place edit; streaming changes above the
+    // viewport are otherwise left in scrollback untouched.
     revealLine = `  ${MASKED}`
+    renderer.invalidateScrollback()
     await renderFrame(renderer)
     await screen.settle()
 
-    // A change above the viewport forces a full redraw that also clears
-    // scrollback, so scrolling up cannot recover the value.
+    // The flagged change above the viewport forces a full redraw that also
+    // clears scrollback, so scrolling up cannot recover the value.
     const all = scrollback(screen)
     expect(all).not.toContain(SECRET)
     expect(all).toContain('su******ue')

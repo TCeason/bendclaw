@@ -5,9 +5,16 @@
  * redraws changed lines. Uses synchronized output (DEC mode 2026) to eliminate
  * flicker.
  *
- * The cursor/viewport state machine intentionally follows pi-tui's renderer.
- * Keep terminal behavior changes synchronized with:
- *   ~/github/pi/packages/tui/src/tui.ts
+ * The cursor/viewport state machine follows pi-tui's renderer
+ * (~/github/pi/packages/tui/src/tui.ts) with one deliberate divergence:
+ *
+ * Scrollback is append-only. pi clears the screen and replays the whole frame
+ * whenever a row above the viewport changes. That yanks a reader who scrolled
+ * up back to the bottom, destroys the terminal's native scrollback and any
+ * selection, and on terminals that ignore CSI 3J duplicates the transcript.
+ * Here only addressable rows are patched; rows already in scrollback keep
+ * their last painted content until a resize or /clear repaints history. The
+ * count of such stale rows is reported through the trace and diagnostics hooks.
  */
 
 import { CURSOR_MARKER, type RenderFrame, type RenderOverlay } from './render-frame.js'
@@ -63,15 +70,46 @@ export interface RendererTraceEntry {
     maxVisibleWidth: number
     osc133Markers: number
     overwideLines: Array<{ row: number; width: number }>
+    /** Changed rows above the viewport left unpainted in scrollback this frame. */
+    staleScrollbackRows?: number
   }
   viewportTail?: string[]
   viewportPatch?: { start: number; lines: string[] }
   ansiWrites: string[]
 }
 
+/**
+ * Always-on, cheap render events for post-hoc debugging. A full redraw is the
+ * one operation that can move a reader's viewport, so every occurrence is
+ * reported with enough state to name the cause without a full trace.
+ */
+export type RendererDiagnostic =
+  | {
+    /** The screen and scrollback were cleared and the whole frame replayed. */
+    kind: 'full_redraw'
+    frame: number
+    branch: string
+    previousLines: number
+    newLines: number
+    viewportTop: number
+    firstChanged: number | null
+    columns: number
+    rows: number
+  }
+  | {
+    kind: 'stale_scrollback'
+    frame: number
+    staleRows: number
+    firstChanged: number
+    viewportTop: number
+    previousLines: number
+    newLines: number
+  }
+
 export interface TermRendererOptions {
   stdout?: NodeJS.WriteStream
   trace?: (entry: RendererTraceEntry) => void
+  onDiagnostic?: (diagnostic: RendererDiagnostic) => void
 }
 
 // --- Renderer ---
@@ -79,6 +117,7 @@ export interface TermRendererOptions {
 export class TermRenderer {
   private stdout: NodeJS.WriteStream
   private trace: ((entry: RendererTraceEntry) => void) | null
+  private onDiagnostic: ((diagnostic: RendererDiagnostic) => void) | null
   private traceWrites: string[] | null = null
   private pendingTraceWrites: string[] = []
   private frameNumber = 0
@@ -91,6 +130,10 @@ export class TermRenderer {
   /** Logical frame length retained after a bottom-anchored tail first reaches the viewport end. */
   private trailingEdgeAnchorLength = 0
   private invalidatedRows = new Set<number>()
+  private scrollbackInvalidated = false
+  /** Lowest logical row this renderer left unpainted in scrollback, if any. */
+  private scrollbackStaleFrom: number | null = null
+  private forcedRepaint = false
 
   // Render scheduling
   private renderCallback: (() => RenderFrame | string[]) | null = null
@@ -104,6 +147,7 @@ export class TermRenderer {
   constructor(opts?: TermRendererOptions) {
     this.stdout = opts?.stdout ?? process.stdout
     this.trace = opts?.trace ?? null
+    this.onDiagnostic = opts?.onDiagnostic ?? null
   }
 
   // --- Accessors ---
@@ -171,6 +215,22 @@ export class TermRenderer {
     this.requestRender()
   }
 
+  /**
+   * Declare that committed rows above the viewport changed on purpose, so the
+   * next frame may clear and replay history to make scrollback match.
+   *
+   * This is the only way a differential frame ever repaints scrollback. It is
+   * for explicit actions whose whole point is to alter committed content — a
+   * Ctrl+O expand toggle, or erasing a revealed secret in place — where a
+   * stale copy in scrollback would defeat the action. Streaming layout changes
+   * never call this; they leave scrollback alone (see the header comment).
+   */
+  invalidateScrollback(): void {
+    if (this.destroyed) return
+    this.scrollbackInvalidated = true
+    this.requestRender()
+  }
+
   requestRender(force = false): void {
     if (this.destroyed) return
     if (force) {
@@ -182,6 +242,12 @@ export class TermRenderer {
       this.previousViewportTop = 0
       this.trailingEdgeAnchorLength = 0
       this.invalidatedRows.clear()
+      this.scrollbackInvalidated = false
+      this.scrollbackStaleFrom = null
+      // Reported as its own branch: a forced repaint reaches the same code path
+      // as a resize, and a log that called it `width_change` would send the
+      // next person debugging a jump after the wrong cause.
+      this.forcedRepaint = true
       if (this.renderTimer) {
         clearTimeout(this.renderTimer)
         this.renderTimer = undefined
@@ -211,6 +277,8 @@ export class TermRenderer {
     this.previousViewportTop = 0
     this.trailingEdgeAnchorLength = 0
     this.invalidatedRows.clear()
+    this.scrollbackInvalidated = false
+    this.scrollbackStaleFrom = null
     this.previousWidth = this.termCols
     this.previousHeight = this.termRows
   }
@@ -252,6 +320,10 @@ export class TermRenderer {
       this.pendingTraceWrites = []
     }
     const frame = ++this.frameNumber
+    const repaintHistory = this.scrollbackInvalidated
+    this.scrollbackInvalidated = false
+    const forced = this.forcedRepaint
+    this.forcedRepaint = false
     const previousLineCount = this.previousLines.length
     const maxLinesRenderedBefore = this.maxLinesRendered
     const previousViewportTopBefore = this.previousViewportTop
@@ -313,6 +385,7 @@ export class TermRenderer {
       }
     }
 
+    let staleScrollbackRows = 0
     const traceFrame = (
       branch: string,
       firstChanged: number | null = null,
@@ -371,6 +444,7 @@ export class TermRenderer {
           maxVisibleWidth,
           osc133Markers,
           overwideLines,
+          staleScrollbackRows,
         },
         ...(differential
           ? { viewportPatch: { start: patchStart, lines: newLines.slice(patchStart, patchEnd) } }
@@ -386,7 +460,18 @@ export class TermRenderer {
     }
 
     // --- Full render helper (kept in lockstep with pi-tui) ---
-    const fullRender = (clear: boolean, branch: string): void => {
+    const fullRender = (clear: boolean, branch: string, firstChanged: number | null = null): void => {
+      if (clear) this.diagnose({
+        kind: 'full_redraw',
+        frame,
+        branch,
+        previousLines: previousLineCount,
+        newLines: newLines.length,
+        viewportTop: previousViewportTopBefore,
+        firstChanged,
+        columns: width,
+        rows: height,
+      })
       let buffer = SYNC_START + HIDE_CURSOR
       if (clear) buffer += CLEAR_SCREEN_AND_SCROLLBACK
       for (let i = 0; i < newLines.length; i++) {
@@ -402,6 +487,7 @@ export class TermRenderer {
       this.previousLines = newLines
       this.previousWidth = width
       this.previousHeight = height
+      this.scrollbackStaleFrom = null
       this.positionHardwareCursor(cursorPos, newLines.length)
       traceFrame(branch)
     }
@@ -414,7 +500,7 @@ export class TermRenderer {
 
     // Width changed — wrapping changes, must full redraw
     if (widthChanged) {
-      fullRender(true, 'width_change')
+      fullRender(true, forced ? 'forced_repaint' : 'width_change')
       return
     }
 
@@ -448,19 +534,59 @@ export class TermRenderer {
     // native terminal selection covering the active input row).
     const invalidatedRows = this.invalidatedRows
 
-    // Find first and last changed lines
+    // Find first and last changed lines, tracking the addressable subrange in
+    // the same pass. Rows above the viewport sit in terminal scrollback and
+    // cannot be addressed, so their changes are counted but never painted.
     let firstChanged = -1
     let lastChanged = -1
+    let firstVisibleChanged = -1
+    let lastVisibleChanged = -1
     const maxLines = Math.max(newLines.length, this.previousLines.length)
     for (let i = 0; i < maxLines; i++) {
       const oldLine = i < this.previousLines.length ? this.previousLines[i] : ''
       const newLine = i < newLines.length ? newLines[i] : ''
-      if (oldLine !== newLine || invalidatedRows.has(i)) {
-        if (firstChanged === -1) firstChanged = i
-        lastChanged = i
+      if (oldLine === newLine && !invalidatedRows.has(i)) continue
+      if (firstChanged === -1) firstChanged = i
+      lastChanged = i
+      if (i < prevViewportTop) {
+        staleScrollbackRows++
+        continue
       }
+      if (firstVisibleChanged === -1) firstVisibleChanged = i
+      lastVisibleChanged = i
     }
     invalidatedRows.clear()
+
+    // Treat scrollback as append-only: leave unaddressable rows with their last
+    // painted content and patch only the addressable ones. A streaming table
+    // widening a column, or a finished thinking header, must never scroll a
+    // reader back to the bottom or clear the terminal's history.
+    //
+    // An explicit invalidation is the exception. It must also repair rows this
+    // renderer knowingly left behind on earlier frames: those rows have already
+    // been adopted into previousLines, so they no longer show up as a diff and
+    // would otherwise stay wrong for the rest of the session.
+    if (repaintHistory && (staleScrollbackRows > 0 || this.scrollbackStaleFrom !== null)) {
+      fullRender(true, 'history_invalidated', Math.min(
+        firstChanged === -1 ? maxLines : firstChanged,
+        this.scrollbackStaleFrom ?? maxLines,
+      ))
+      return
+    }
+    if (staleScrollbackRows > 0) {
+      this.scrollbackStaleFrom = Math.min(this.scrollbackStaleFrom ?? firstChanged, firstChanged)
+      this.diagnose({
+        kind: 'stale_scrollback',
+        frame,
+        staleRows: staleScrollbackRows,
+        firstChanged,
+        viewportTop: prevViewportTop,
+        previousLines: this.previousLines.length,
+        newLines: newLines.length,
+      })
+      firstChanged = firstVisibleChanged
+      lastChanged = lastVisibleChanged
+    }
 
     const appendedLines = newLines.length > this.previousLines.length
     if (appendedLines) {
@@ -469,9 +595,13 @@ export class TermRenderer {
     }
     const appendStart = appendedLines && firstChanged === this.previousLines.length && firstChanged > 0
 
-    // No changes
+    // No addressable changes. Adopt the new logical frame even when only
+    // scrollback rows differ, so later diffs compare against what layout
+    // currently produces rather than re-reporting the same stale rows.
     if (firstChanged === -1) {
       this.positionHardwareCursor(cursorPos, newLines.length)
+      this.previousLines = newLines
+      this.previousWidth = width
       this.previousViewportTop = prevViewportTop
       this.previousHeight = height
       traceFrame('no_change')
@@ -485,7 +615,7 @@ export class TermRenderer {
         // Move to end of new content (clamp to 0 for empty content)
         const targetRow = Math.max(0, newLines.length - 1)
         if (targetRow < prevViewportTop) {
-          fullRender(true, 'deleted_lines_above_viewport')
+          fullRender(true, 'deleted_lines_above_viewport', firstChanged)
           return
         }
         const lineDiff = computeLineDiff(targetRow)
@@ -495,7 +625,7 @@ export class TermRenderer {
         // Clear extra lines without scrolling
         const extraLines = this.previousLines.length - newLines.length
         if (extraLines > height) {
-          fullRender(true, 'deleted_lines_exceed_height')
+          fullRender(true, 'deleted_lines_exceed_height', firstChanged)
           return
         }
         const clearStartOffset = newLines.length === 0 ? 0 : 1
@@ -517,40 +647,6 @@ export class TermRenderer {
       this.previousViewportTop = prevViewportTop
       traceFrame('deleted_lines_diff', firstChanged, lastChanged)
       return
-    }
-
-    // Differential rendering normally cannot touch rows that were visible only
-    // in scrollback, so pi redraws the whole frame. A stable transient viewport
-    // is the narrow exception: its logical height and bottom anchor are fixed,
-    // and the off-screen rows are deliberately frozen for the lifetime of the
-    // surface. Recompute the diff over addressable rows and patch only those.
-    if (firstChanged < prevViewportTop) {
-      if (
-        rendered.stableViewport
-        && rendered.bottomAnchor
-        && newLines.length === this.previousLines.length
-      ) {
-        firstChanged = -1
-        lastChanged = -1
-        for (let i = prevViewportTop; i < newLines.length; i++) {
-          if (this.previousLines[i] !== newLines[i]) {
-            if (firstChanged === -1) firstChanged = i
-            lastChanged = i
-          }
-        }
-        if (firstChanged === -1) {
-          this.positionHardwareCursor(cursorPos, newLines.length)
-          this.previousLines = newLines
-          this.previousWidth = width
-          this.previousHeight = height
-          this.previousViewportTop = prevViewportTop
-          traceFrame('no_change')
-          return
-        }
-      } else {
-        fullRender(true, 'off_viewport_redraw')
-        return
-      }
     }
 
     // --- Build differential update buffer ---
@@ -709,6 +805,15 @@ export class TermRenderer {
   }
 
   // --- Private: output ---
+
+  private diagnose(diagnostic: RendererDiagnostic): void {
+    if (!this.onDiagnostic) return
+    try {
+      this.onDiagnostic(diagnostic)
+    } catch {
+      // Diagnostics must never break rendering.
+    }
+  }
 
   private write(data: string): void {
     if (this.destroyed) return

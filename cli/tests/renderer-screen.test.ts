@@ -241,7 +241,7 @@ describe('composer placement on a real screen', () => {
       const footerRow = visibleShrink ? screen.rows - 1 - thinkingRows : screen.rows - 1
       expect(screen.rowOf('footer row')).toBe(footerRow)
       expect(viewport[footerRow - 1]).toBe('\u276f')
-      expect(branches.at(-1)).toBe(visibleShrink ? 'differential_update' : 'off_viewport_redraw')
+      expect(branches.at(-1)).toBe(visibleShrink ? 'differential_update' : 'deleted_lines_above_viewport')
       // No stale thinking rows survive the interrupt.
       expect(viewport.some(line => line.startsWith('thinking '))).toBe(false)
       renderer.destroy()

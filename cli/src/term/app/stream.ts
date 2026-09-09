@@ -1,6 +1,6 @@
 import { providerFailurePresentation } from '../../provider/error-presentation.js'
 import { formatLongWaitError } from '../../render/verbose.js'
-import { buildError, buildVerboseEvent, buildEventCard, isVisibleEvent, withoutRedundantErrorTail, type OutputLine } from '../../render/output.js'
+import { buildError, buildSystem, buildVerboseEvent, buildEventCard, isVisibleEvent, withoutRedundantErrorTail, type OutputLine } from '../../render/output.js'
 import { formatDuration } from '../../render/format.js'
 import { recordStreamDelta, resetStreamStats, setLongWait, setRetryWait, setSpinnerPhase, type SpinnerState } from '../spinner.js'
 import { assistantToolCalls } from './assistant-content.js'
@@ -8,6 +8,7 @@ import { assistantMessageToOutputLines } from '../../render/assistant.js'
 import { applyEvent } from './reducer.js'
 import type { AppState } from './state.js'
 import { isKnownRunEvent, type KnownRunEvent, type RunEvent } from '../../native/contracts/query-event.js'
+import type { UIAssistantBlock } from './types.js'
 
 export interface StreamMachineState {
   appState: AppState
@@ -170,7 +171,11 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
             ...state,
             appState: { ...state.appState, currentAssistantContent: [] },
           },
-          lines: [] as OutputLine[],
+          // Text the user has already read is about to vanish from the live
+          // region. Say so in place: without it, "the reply disappeared" is
+          // indistinguishable from a rendering bug in both the terminal and
+          // the screen log.
+          lines: discardedPartialNotice(state.appState.currentAssistantContent, event.kind),
           expandedLines: undefined,
         }
       : flushStreaming(state)
@@ -490,6 +495,32 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     rerenderStatus,
     sessionRevoked,
   }
+}
+
+/**
+ * A one-line record that a partially streamed reply was thrown away. Only
+ * content the user could have seen counts: thinking or text with visible
+ * characters. Attempts that fail before streaming anything stay silent so a
+ * retry storm does not print a line per attempt.
+ */
+export function discardedPartialNotice(content: UIAssistantBlock[], cause: string): OutputLine[] {
+  let visibleChars = 0
+  let toolCalls = 0
+  for (const block of content) {
+    if (block.type === 'tool_call') toolCalls++
+    else visibleChars += block.text.trim().length
+  }
+  if (visibleChars === 0 && toolCalls === 0) return []
+  const reason = cause === 'context_compaction_started'
+    ? 'compacting context and retrying'
+    : cause === 'llm_call_started'
+      ? 'a new request replaced it'
+      : 'retrying the request'
+  const what = [
+    visibleChars > 0 ? `${visibleChars} chars` : null,
+    toolCalls > 0 ? `${toolCalls} tool call(s)` : null,
+  ].filter((part): part is string => part !== null).join(', ')
+  return buildSystem(`  ↻ Discarded an incomplete reply (${what}) — ${reason}`)
 }
 
 export function flushStreaming(state: StreamMachineState): { state: StreamMachineState; lines: OutputLine[]; expandedLines?: OutputLine[] } {
