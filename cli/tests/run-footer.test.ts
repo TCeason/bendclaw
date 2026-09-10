@@ -12,7 +12,6 @@ beforeAll(() => {
   chalk.level = 3
 })
 
-/** A fixed local wall-clock instant, so the rendered time is not machine-dependent. */
 function at(hour: number, minute: number): number {
   const date = new Date(2026, 0, 15, hour, minute, 0, 0)
   return date.getTime()

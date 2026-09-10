@@ -140,12 +140,6 @@ export function formatElapsed(ms: number): string {
   return restMinutes === 0 ? `${hours}h` : `${hours}h ${restMinutes}m`
 }
 
-/**
- * Wall-clock time of day as `08:58 AM`.
- *
- * The bare form, so a caller can bracket it for a message header or leave it
- * plain in a footer without a second copy of the 12-hour arithmetic.
- */
 export function formatWallClock(timestamp: number): string {
   const at = new Date(timestamp)
   const hours = at.getHours()

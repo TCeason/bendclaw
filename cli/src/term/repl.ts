@@ -269,11 +269,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
   const runOwnership = new RunOwnership()
-  // Wall clock of the run in flight, for the footer that closes it. Run-scoped
-  // rather than local to the query function because a run can also end by
-  // interruption, which revokes ownership and never reaches that function's
-  // finally block. Cleared as the footer is committed, so exactly one line is
-  // emitted whichever path settles the run.
   let runStartedAt: number | null = null
   const beginRun = (): number => runOwnership.begin()
   const ownsRun = (generation: number): boolean => runOwnership.owns(generation)
@@ -1519,13 +1514,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     committer.system(id, text, kind)
   }
 
-  /**
-   * Close a settled run with its total duration.
-   *
-   * Idempotent by clearing the start mark: whichever of completion, failure or
-   * interruption gets here first owns the line, and the others are no-ops.
-   * Silent for a run too short to report a meaningful duration.
-   */
   function commitRunFooter() {
     if (runStartedAt === null) return
     const line = buildRunFooterLine(runStartedAt, Date.now())
@@ -2047,9 +2035,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // newly completed background work when the engine reads the result.
     if (text || contentJson || prebuiltStream) backgroundTerminals.beginRun()
     const generation = beginRun()
-    // The whole run, from submission to settle. The spinner's clock restarts on
-    // every phase, so it cannot answer what the turn cost end to end, and it is
-    // erased when the run ends — scrollback kept no record at all.
     runStartedAt = Date.now()
     liveContentMaxHeight = 0
     isLoading = true
@@ -2189,9 +2174,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         isLoading = false
         streamMachine = null
         stopSpinner()
-        // After stopSpinner: the live clock is gone by now, so this is what the
-        // turn leaves behind. Committed for a failed run too — the time was
-        // still spent, and an error says nothing about how long it took.
         commitRunFooter()
         // Fresh ads/models belong in the background: awaiting the catalog here
         // stalled the prompt for the whole HTTP round-trip after every turn.
@@ -2459,10 +2441,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // history under the cancellation notice.
     restoreQueuedUserMessagesToEditor()
     commitLines([{ id, kind: 'cancelled', text }])
-    // An interrupted run still spent its time, and ownership was revoked above
-    // so the query function's finally block will never report it. The footer
-    // follows the cancellation notice, closing the run the same way as any
-    // other ending.
     commitRunFooter()
     backgroundTerminals.parkUntilBackground()
     sessionHook.settleRun()
@@ -3051,8 +3029,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         flushStreamContent()
         streamMachine = null
         stopSpinner()
-        // The screen is about to be cleared, so this run gets no footer. Drop
-        // its start mark or the next run would be timed from this one.
         runStartedAt = null
       }
       sessionHook.endSession('context_cleared')
@@ -3079,7 +3055,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         flushStreamContent()
         streamMachine = null
         stopSpinner()
-        // Discarded with the old session; no footer, and no stale start mark.
         runStartedAt = null
       }
       planModeItems = []
