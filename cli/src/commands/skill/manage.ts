@@ -23,7 +23,6 @@ export interface OfficialSyncResult {
   updated: string[]
   unchanged: string[]
   skipped: string[]
-  /** Units dropped from the catalog upstream and deleted from the managed root. */
   removed: string[]
 }
 
@@ -124,14 +123,6 @@ export async function skillInstall(arg?: string, options: ManageOptions = {}): P
 
 let officialSyncInFlight: Promise<OfficialSyncResult> | null = null
 
-/**
- * Units the catalog no longer ships.
- *
- * Only directories tracked to the official repo under its `skills/` prefix
- * qualify: a local or third-party unit is never a candidate, whatever it is
- * named. The caller must have a fully enumerated catalog in hand, otherwise a
- * partial checkout would read as a mass withdrawal.
- */
 function withdrawnUnits(ctx: Context, present: Set<string>): Installed[] {
   return installedUnits(ctx.root).filter((unit) => {
     const tracked = unit.record
@@ -144,11 +135,9 @@ function withdrawnUnits(ctx: Context, present: Set<string>): Installed[] {
 /**
  * Reconcile the managed root with the complete official catalog.
  *
- * New official units are installed, previously managed official units are
- * updated, and units withdrawn from the catalog upstream are deleted so a
- * retired skill stops being offered. A local or third-party unit with the same
- * directory name is left untouched, so background maintenance never replaces or
- * removes user-owned content.
+ * New official units are installed and previously managed official units are
+ * updated. A local or third-party unit with the same directory name is left
+ * untouched, so background maintenance never replaces user-owned content.
  */
 export async function syncOfficialSkills(
   options: ManageOptions = {},
@@ -242,12 +231,6 @@ function groupBySource(
   return [...groups.values()]
 }
 
-/**
- * Whether a checkout that lacks one unit is still a trustworthy catalog.
- *
- * A fetch that landed a truncated or empty tree must not be read as an upstream
- * withdrawal, so the rest of the catalog has to enumerate before we delete.
- */
 function catalogIsIntact(checkout: Checkout, source: Source): boolean {
   if (!source.official) return false
   try {

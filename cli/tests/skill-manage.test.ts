@@ -78,7 +78,6 @@ function stubFetch(commit: string): { fetch: () => Promise<Checkout>; calls: num
   }
 }
 
-/** A catalog carrying only `names`, for withdrawal cases. `lark` stays a group. */
 function stubCatalog(commit: string, names: string[]): () => Promise<Checkout> {
   return async () => {
     const dir = workspace()
