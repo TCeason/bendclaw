@@ -39,6 +39,23 @@ describe('runFooterText', () => {
     expect(runFooterText(finished - 9_000, finished)).toBe('✳ Ran for 9s · done 08:58 AM')
   })
 
+  test('counts the model round-trips a run took', () => {
+    const finished = at(8, 58)
+    expect(runFooterText(finished - 9_000, finished, 4)).toBe('✳ Ran for 9s · 4 turns · done 08:58 AM')
+  })
+
+  test('a single round-trip is not pluralised', () => {
+    const finished = at(8, 58)
+    expect(runFooterText(finished - 9_000, finished, 1)).toBe('✳ Ran for 9s · 1 turn · done 08:58 AM')
+  })
+
+  test('a run that never reached the model omits the segment entirely', () => {
+    const finished = at(8, 58)
+    expect(runFooterText(finished - 9_000, finished, 0)).toBe('✳ Ran for 9s · done 08:58 AM')
+    expect(runFooterText(finished - 9_000, finished, -3)).toBe('✳ Ran for 9s · done 08:58 AM')
+    expect(runFooterText(finished - 9_000, finished, Number.NaN)).toBe('✳ Ran for 9s · done 08:58 AM')
+  })
+
   test('long runs read in minutes, not raw seconds', () => {
     const finished = at(14, 3)
     expect(runFooterText(finished - 94_000, finished)).toBe('✳ Ran for 1m 34s · done 02:03 PM')
@@ -78,8 +95,8 @@ describe('buildRunFooterLine', () => {
 
   test('renders through the viewmodel indented like every other system row', () => {
     const finished = at(8, 58)
-    const line = buildRunFooterLine(finished - 9_000, finished)
+    const line = buildRunFooterLine(finished - 9_000, finished, 3)
     const rendered = blocksToLines(buildOutputBlocks(line ? [line] : []))
-    expect(stripAnsi(rendered.join('\n'))).toContain('  ✳ Ran for 9s · done 08:58 AM')
+    expect(stripAnsi(rendered.join('\n'))).toContain('  ✳ Ran for 9s · 3 turns · done 08:58 AM')
   })
 })

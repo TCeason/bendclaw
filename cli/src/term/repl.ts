@@ -270,6 +270,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
   const runOwnership = new RunOwnership()
   let runStartedAt: number | null = null
+  let runTurnCount = 0
   const beginRun = (): number => runOwnership.begin()
   const ownsRun = (generation: number): boolean => runOwnership.owns(generation)
   const revokeRun = (): void => runOwnership.revoke()
@@ -1516,7 +1517,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function commitRunFooter() {
     if (runStartedAt === null) return
-    const line = buildRunFooterLine(runStartedAt, Date.now())
+    const line = buildRunFooterLine(runStartedAt, Date.now(), runTurnCount)
     runStartedAt = null
     if (line) commitLines([line])
   }
@@ -2036,6 +2037,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (text || contentJson || prebuiltStream) backgroundTerminals.beginRun()
     const generation = beginRun()
     runStartedAt = Date.now()
+    runTurnCount = 0
     liveContentMaxHeight = 0
     isLoading = true
     spinnerState = createSpinnerState()
@@ -2123,7 +2125,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         // Reconcile against the native queue instead of draining the visible
         // copy wholesale: OneAtATime mode may consume only the first of several
         // queued prompts at this boundary.
-        if (event.kind === 'turn_started') reconcileQueuedUserMessages()
+        if (event.kind === 'turn_started') {
+          runTurnCount++
+          reconcileQueuedUserMessages()
+        }
 
         // writeLines are log-only: LLM/COMPACT/SPILL stats that don't render in
         // the TUI. Run them through the same formatting pipeline so screen.log
@@ -3581,6 +3586,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (queryBlockedByCloudLogin()) return
     const generation = beginRun()
     runStartedAt = Date.now()
+    runTurnCount = 0
     liveContentMaxHeight = 0
     isLoading = true
     spinnerState = createSpinnerState()
@@ -3618,7 +3624,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
         if (event.kind === 'assistant_delta') renderer.requestRender()
         if (update.commitLines.length > 0) commitLines(update.commitLines)
-        if (event.kind === 'turn_started') reconcileQueuedUserMessages()
+        if (event.kind === 'turn_started') {
+          runTurnCount++
+          reconcileQueuedUserMessages()
+        }
         if (update.rerenderStatus) renderer.requestRender()
       }
 
