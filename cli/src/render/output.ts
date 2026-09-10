@@ -11,7 +11,6 @@
 import { providerFailurePresentation } from '../provider/error-presentation.js'
 import { renderMarkdown, renderThinkingMarkdown } from './markdown.js'
 import { colorizeUnifiedDiffRows, type DiffRowKind } from './diff.js'
-import { highlightCodeLine } from '../markdown/render/ansi.js'
 import { truncate, formatDuration, formatElapsed, toolResultLines, formatBashCommandDisplay, expandLinesHint, COLLAPSE_HINT, summarizeInline } from './format.js'
 import { formatCompactionCompleted } from './verbose.js'
 import type { UICompaction, UIMessage, UIToolCall } from '../term/app/types.js'
@@ -167,48 +166,12 @@ function toolDraftText(args: Record<string, unknown>, keys: string[]): string {
   return ''
 }
 
-function lineCount(text: string): number {
-  return writePreviewLines(text).length
-}
-
-const WRITE_PREVIEW_LINES = 10
-const WRITE_PREVIEW_CACHE_LIMIT = 64
-// Skip highlighting an oversized line: deterministic across stream/cache
-// boundaries, without a full-file highlighter blocking the render loop.
-const WRITE_HIGHLIGHT_MAX_BYTES = 200 * 1024
-
-type WritePreviewCache = {
-  path: string
-  language: string | undefined
-  rawContent: string
-  displayLines: string[]
-  highlightedLines: string[]
-}
-
-const writePreviewCache = new Map<string, WritePreviewCache>()
-
-const WRITE_LANGUAGE_BY_EXTENSION: Record<string, string> = {
-  bash: 'bash', c: 'c', cc: 'cpp', cpp: 'cpp', cs: 'csharp', css: 'css',
-  go: 'go', h: 'c', hpp: 'cpp', html: 'html', java: 'java', js: 'javascript',
-  json: 'json', jsonc: 'jsonc', jsx: 'javascript', kt: 'kotlin', lua: 'lua',
-  md: 'markdown', mjs: 'javascript', php: 'php', proto: 'proto', py: 'python',
-  rb: 'ruby', rs: 'rust', scss: 'scss', sh: 'bash', sql: 'sql', swift: 'swift',
-  toml: 'toml', ts: 'typescript', tsx: 'typescript', txt: 'plaintext',
-  xml: 'xml', yaml: 'yaml', yml: 'yaml', zsh: 'bash',
-}
-
-function writeLanguage(path: string): string | undefined {
-  const filename = path.split(/[\\/]/).pop()?.toLowerCase() ?? ''
-  if (filename === 'dockerfile') return 'dockerfile'
-  if (filename === 'makefile') return 'makefile'
-  const dot = filename.lastIndexOf('.')
-  return dot >= 0 ? WRITE_LANGUAGE_BY_EXTENSION[filename.slice(dot + 1)] : undefined
-}
-
 function normalizeWritePreviewText(text: string): string {
   return text
     .replace(/\r/g, '')
-    .replace(/\t/g, '   ')
+    // Four spaces to match the split-diff renderer's own tab expansion, so the
+    // streamed body and the engine diff that replaces it indent identically.
+    .replace(/\t/g, '    ')
     // Tool arguments are untrusted model output. Never pass embedded terminal
     // controls through the preview; only line feeds are meaningful here.
     .replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '�')
@@ -221,162 +184,41 @@ function writePreviewLines(content: string): string[] {
   return lines
 }
 
-function allWritePreviewLines(content: string): string[] {
-  return content ? normalizeWritePreviewText(content).split('\n') : []
-}
-
-const WRITE_LANGUAGE_SAMPLE_LIMIT = 4096
-
-/** Bounded, provisional detection only while the target path is unavailable. */
-function sniffWriteLanguage(content: string): string | undefined {
-  const head = content.slice(0, WRITE_LANGUAGE_SAMPLE_LIMIT)
-  // Never parse an entire growing file every frame. Complete, small JSON is
-  // the only case that does not require a newline-terminated source line.
-  if (content.length <= WRITE_LANGUAGE_SAMPLE_LIMIT && /^[\s]*[\[{]/.test(head)) {
-    try {
-      JSON.parse(head)
-      return 'json'
-    } catch {
-      return undefined
-    }
-  }
-
-  // A receiving line is ambiguous: `import x` might become a JS from-import.
-  // Ignore it (and a line cut by the sample limit) until its newline arrives.
-  const lines = head.split('\n').slice(0, -1)
-  let commentEnd: string | undefined
-  for (const raw of lines) {
-    let first = raw.trim()
-    if (commentEnd) {
-      const end = first.indexOf(commentEnd)
-      if (end < 0) continue
-      first = first.slice(end + commentEnd.length).trim()
-      commentEnd = undefined
-    }
-    while (first.startsWith('/*') || first.startsWith('<!--')) {
-      commentEnd = first.startsWith('/*') ? '*/' : '-->'
-      const end = first.indexOf(commentEnd, first.startsWith('/*') ? 2 : 4)
-      if (end < 0) break
-      first = first.slice(end + commentEnd.length).trim()
-      commentEnd = undefined
-    }
-    if (commentEnd || !first || first.startsWith('//') || /^#(?:\s|$)/.test(first)) continue
-
-    // Recognize only supported interpreters, not arbitrary executable paths.
-    if (/^#!\s*\/\S*\/(?:env\s+)?(?:node|nodejs)(?:\s|$)/.test(first)) return 'javascript'
-    if (/^#!\s*\/\S*\/(?:env\s+)?python[\d.]*(?:\s|$)/.test(first)) return 'python'
-    if (/^#!\s*\/\S*\/(?:env\s+)?(?:sh|bash|zsh)(?:\s|$)/.test(first)) return 'bash'
-    if (/^<!doctype\s+html\s*>$/i.test(first)) return 'html'
-    if (/^(?:import\s+(?:.+\s+from\s+)?['"][^'"]+['"]\s*;?|(?:export\s+)?(?:const|let|var)\s+[$\w]+\s*=.+;)\s*$/.test(first)) return 'javascript'
-    if (/^(?:import\s+[\w.]+(?:\s+as\s+\w+)?|from\s+[\w.]+\s+import\s+[\w*, ]+|(?:async\s+)?def\s+\w+\([^\n]*\)\s*:|class\s+\w+(?:\([^\n]*\))?\s*:)\s*$/.test(first)) return 'python'
-    if (/^(?:pub\s+)?fn\s+\w+\([^\n]*\)(?:\s*->\s*[^{}]+)?\s*\{$/.test(first)) return 'rust'
-    if (/^package\s+\w+$/.test(first)) return 'go'
-    // Do not scan past an unknown line: prose or a code fence must not turn
-    // into code merely because a later paragraph contains a keyword.
-    return undefined
-  }
-  return undefined
-}
-
-function rebuildWritePreview(path: string, content: string, language: string | undefined): WritePreviewCache {
-  const displayLines = allWritePreviewLines(content)
-  return {
-    path,
-    language,
-    rawContent: content,
-    displayLines,
-    // Line-local coloring deliberately trades multiline syntax precision for
-    // stable scrollback bytes, including after cache eviction/session restore.
-    highlightedLines: displayLines.map(line => highlightWritePreviewLine(line, language)),
-  }
-}
-
-/** Same args produce the same language after streaming, eviction or replay.
- * Any supplied path is authoritative; unknown extensions remain plain. */
-export function resolveWritePreviewLanguage(path: string, content: string): string | undefined {
-  return path ? writeLanguage(path) : sniffWriteLanguage(content)
-}
-
-function highlightWritePreviewLine(line: string, language: string | undefined): string {
-  // A per-line cap is deterministic: crossing the total file-size threshold
-  // must not strip colors from rows that have already entered scrollback.
-  return line.length > WRITE_HIGHLIGHT_MAX_BYTES ? line : highlightCodeLine(line, language)
-}
-
-function cachedWritePreview(call: UIToolCall, path: string, content: string): WritePreviewCache {
-  let cache = writePreviewCache.get(call.id)
-  const language = resolveWritePreviewLanguage(path, content)
-  if (
-    !cache
-    || cache.path !== path
-    || cache.language !== language
-    || !content.startsWith(cache.rawContent)
-  ) {
-    cache = rebuildWritePreview(path, content, language)
-  } else if (content.length > cache.rawContent.length) {
-    // Only the receiving/new lines change. Neither argsComplete nor execution
-    // completion recolors the immutable prefix of an expanded card.
-    const delta = normalizeWritePreviewText(content.slice(cache.rawContent.length))
-    cache.rawContent = content
-    if (cache.displayLines.length === 0) {
-      cache.displayLines.push('')
-      cache.highlightedLines.push('')
-    }
-    const parts = delta.split('\n')
-    const last = cache.displayLines.length - 1
-    const { language } = cache
-    const highlightLine = (line: string): string => highlightWritePreviewLine(line, language)
-    cache.displayLines[last] += parts[0] ?? ''
-    cache.highlightedLines[last] = highlightLine(cache.displayLines[last]!)
-    for (let index = 1; index < parts.length; index++) {
-      const line = parts[index] ?? ''
-      cache.displayLines.push(line)
-      cache.highlightedLines.push(highlightLine(line))
-    }
-  }
-
-  writePreviewCache.delete(call.id)
-  writePreviewCache.set(call.id, cache)
-  while (writePreviewCache.size > WRITE_PREVIEW_CACHE_LIMIT) {
-    const oldest = writePreviewCache.keys().next().value
-    if (oldest === undefined) break
-    writePreviewCache.delete(oldest)
-  }
-  return cache
+function lineCount(text: string): number {
+  return writePreviewLines(text).length
 }
 
 /**
- * Stable write preview while arguments stream and the tool executes.
- * Successful completion replaces it with the authoritative diff when available.
+ * The streamed body of a `write` call, shaped as the all-additions patch a new
+ * file produces. It goes through [`diffOutputLines`], so the card is a diff
+ * from the first streamed line; the engine's authoritative diff then only has
+ * to extend it with context and removals for a rewrite.
  */
-function appendWriteContentPreview(lines: OutputLine[], call: UIToolCall, expanded?: boolean): void {
+function streamedWritePatch(content: string): string {
+  const body = writePreviewLines(content)
+  if (body.length === 0) return ''
+  return [`@@ -0,0 +1,${body.length} @@`, ...body.map(line => `+${line}`)].join('\n')
+}
+
+/**
+ * Fixed gutter width for every diff on a `write` card.
+ *
+ * A streamed body grows line by line, so a gutter sized to the current line
+ * count would widen at 9→10 and 99→100 and shift every row already painted.
+ * The renderer treats scrollback as append-only, so rows that already scrolled
+ * out would keep the narrow gutter and the transcript would show a permanent
+ * one-column jog. Four digits covers real writes; the engine diff that
+ * replaces the streamed body uses the same width so the swap moves nothing.
+ */
+const WRITE_DIFF_GUTTER = 4
+
+/** Live write body while arguments stream and the tool executes. */
+function appendWriteBody(lines: OutputLine[], call: UIToolCall): void {
   const name = call.name.toLowerCase()
   if (name !== 'write' && name !== 'file_write') return
-  const content = toolDraftText(call.args, ['content'])
-  if (!content) return
-
-  const path = toolDraftText(call.args, ['path', 'file', 'file_path'])
-  const cache = cachedWritePreview(call, path, content)
-  let total = cache.highlightedLines.length
-  while (total > 0 && cache.displayLines[total - 1] === '') total--
-  if (total === 0) return
-
-  const visibleLines = cache.highlightedLines.slice(0, total)
-  const shown = expanded ? visibleLines : visibleLines.slice(0, WRITE_PREVIEW_LINES)
-  lines.push({ id: genId('tool-preview-space'), kind: 'tool', text: '' })
-  for (const text of shown) {
-    lines.push({
-      id: genId('tool-preview'), kind: 'tool', text: `  ${text}`,
-      toolCodePreview: true, toolCodePreviewTruncate: !expanded,
-    })
-  }
-
-  const remaining = total - shown.length
-  if (remaining > 0) {
-    lines.push(toolHintLine(`  ... (${remaining} more ${remaining === 1 ? 'line' : 'lines'}, ${total} total, ctrl+o to expand)`))
-  } else if (expanded && total > 1) {
-    lines.push(toolHintLine(`  ${COLLAPSE_HINT}`))
-  }
+  const patch = streamedWritePatch(toolDraftText(call.args, ['content']))
+  if (!patch) return
+  lines.push(...diffOutputLines(patch, WRITE_DIFF_GUTTER))
 }
 
 function toolDraftSummary(call: UIToolCall): string {
@@ -413,12 +255,13 @@ function insertToolStatus(lines: OutputLine[], status: OutputLine): void {
 }
 
 /** Keep each patch together so responsive layout also works across history-cache slices. */
-function diffOutputLines(diff: string): OutputLine[] {
+function diffOutputLines(diff: string, gutter = 0): OutputLine[] {
   return [{
     id: genId('tool-diff'),
     kind: 'tool',
-    text: colorizeUnifiedDiffRows(diff).map(row => row.text).join('\n'),
+    text: colorizeUnifiedDiffRows(diff, true, gutter).map(row => row.text).join('\n'),
     diffText: diff,
+    diffGutter: gutter > 0 ? gutter : undefined,
   }]
 }
 
@@ -436,10 +279,6 @@ export interface OutputLine {
   /** System text that already carries its own ANSI styling (e.g. `/skill`).
    *  Rendered verbatim instead of being flattened to one dim gray. */
   preStyled?: boolean
-  /** Tool line containing pre-styled source code from a streamed write call. */
-  toolCodePreview?: boolean
-  /** Collapsed source rows truncate to the available width; expansion wraps in full. */
-  toolCodePreviewTruncate?: boolean
   /** Tool line that is one row of a rendered diff; added/removed rows get
    *  their own fill inside the card. */
   /** Width-aware compact command budget; expanded cards have no row limit. */
@@ -447,6 +286,9 @@ export interface OutputLine {
   diffRow?: DiffRowKind
   /** Original patch retained for responsive split/unified layout at render time. */
   diffText?: string
+  /** Fixed gutter width, so a patch that grows between frames never re-indents
+   *  rows already painted (and already in scrollback). See WRITE_DIFF_GUTTER. */
+  diffGutter?: number
   codeBlockId?: string
   codeLanguage?: string
   /** Visual spacer inserted between streamed markdown chunks. It creates a
@@ -661,9 +503,10 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
   const write = call.name.toLowerCase() === 'write' || call.name.toLowerCase() === 'file_write'
   const showFinalDiff = call.status === 'done' && !settledFailed && !!diff
   if (write && typeof call.args.content === 'string' && !showFinalDiff) {
-    // All mutable metadata follows the code. A long preview's headline and
-    // completed rows can then stay in native scrollback unchanged.
-    appendWriteContentPreview(lines, call, expanded)
+    // All mutable metadata follows the code, and the body's gutter is fixed, so
+    // rows already painted into native scrollback stay byte-identical as the
+    // content grows and when the engine's diff replaces it.
+    appendWriteBody(lines, call)
     if (call.status === 'queued') {
       lines.push(toolStatusLine('○', [call.argsComplete ? 'ready' : toolDraftSummary(call)]))
     } else if (call.status === 'running') {
@@ -686,13 +529,11 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
   if (call.status === 'queued') {
     const summary = call.argsComplete ? 'ready' : toolDraftSummary(call)
     insertToolStatus(lines, toolStatusLine('○', [summary]))
-    appendWriteContentPreview(lines, call, expanded)
+    appendWriteBody(lines, call)
     return stampToolCard(lines, 'pending')
   }
 
   if (call.status !== 'running') {
-    // The call has settled; its streaming preview cache is no longer needed.
-    writePreviewCache.delete(call.id)
     // buildToolResult auto-previews failed bodies itself (tail lines), so pass
     // the raw user toggle: ctrl+o still expands/collapses failed cards.
     const resultLines = buildToolResult(
@@ -711,11 +552,13 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
 
   insertToolStatus(lines, toolStatusLine('●', runningStatusParts(call.name, args)))
   if (diff) {
-    lines.push(...diffOutputLines(diff))
+    // A write card keeps the fixed gutter it streamed with, so swapping the
+    // streamed body for the engine's diff does not re-indent anything.
+    lines.push(...diffOutputLines(diff, write ? WRITE_DIFF_GUTTER : 0))
   } else {
     // Keep the streamed content visible between tool_started and the engine's
     // preview diff so the card never blanks out mid-transition (pi behavior).
-    appendWriteContentPreview(lines, call, expanded)
+    appendWriteBody(lines, call)
   }
   if (call.progress && !call.progress.startsWith('__evot_spill_event__ ')) {
     const progressLines = toolResultLines(formatToolResultContent(call.progress), false, call.name, expanded)
@@ -810,7 +653,10 @@ export function buildToolResult(
   // summarized on the headline and the error body is what matters.
   const diff = args?.diff as string | undefined
   if (!isError && diff && typeof diff === 'string' && diff.length > 0) {
-    lines.push(...diffOutputLines(diff))
+    // A write's authoritative diff replaces a streamed body that was already
+    // painted with a fixed gutter, so it has to keep that same width.
+    const writeTool = name.toLowerCase() === 'write' || name.toLowerCase() === 'file_write'
+    lines.push(...diffOutputLines(diff, writeTool ? WRITE_DIFF_GUTTER : 0))
   }
 
   // Tool result content. Success and failure both fold to a single `(+N

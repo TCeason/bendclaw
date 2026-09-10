@@ -70,6 +70,24 @@ describe('renderBanner', () => {
     expect(banner).not.toContain('/skill list')
   })
 
+  test('the running UI is announced as Dashboard', () => {
+    const { cwd, skillsDir } = createFixture(1)
+    const banner = stripAnsi(renderBanner({
+      version: 'test',
+      model: 'model',
+      cwd,
+      configInfo: { provider: 'provider', hasApiKey: true },
+      columns: 80,
+      rows: 40,
+      skillsDirs: [skillsDir],
+      serverState: { address: 'http://127.0.0.1:8082', pid: 1 },
+    }))
+
+    expect(banner).toContain('[Dashboard]')
+    expect(banner).toContain('http://127.0.0.1:8082')
+    expect(banner).not.toContain('[Server]')
+  })
+
   test('logged-out banner points at the Models page of the running UI', () => {
     const { cwd, skillsDir } = createFixture(1)
     const banner = stripAnsi(renderBanner({

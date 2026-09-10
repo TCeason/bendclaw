@@ -116,7 +116,7 @@ export async function printHelp() {
   console.log('  -f, --file <path>      Attach file/directory context (repeatable)')
   console.log('  --model <name>         Override the model')
   console.log('  --env-file <path>      Path to evot.env file')
-  console.log('  --port <number>        Server port (default: 8082)')
+  console.log('  --port <number>        Dashboard port (default: 8082)')
   console.log('  -r, --resume <id>      Resume or create a session by ID')
   console.log('  -c, --continue         Resume the latest session in the current directory')
   console.log('  --output-format <fmt>  text | stream-json (default: text)')

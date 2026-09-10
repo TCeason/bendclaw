@@ -185,23 +185,10 @@ function highlightJsonCode(text: string): string {
   return text.split(EOL).map(highlightJsonLine).join(EOL)
 }
 
-export function highlightCodeLine(line: string, lang: string | undefined): string {
-  const resolved = resolveLanguage(lang)
-  if (resolved === 'json') return highlightJsonLine(line)
-  if (!highlighter || !resolved || resolved === 'plaintext') return line
-  try {
-    if (!highlighter.supportsLanguage(resolved)) return line
-    return highlighter.highlight(line, { language: resolved })
-  } catch {
-    return line
-  }
-}
-
 /**
  * Highlight a complete source fragment while preserving cross-line grammar
  * state (block comments, template strings, heredocs, etc.). Used for complete
- * Markdown code blocks; streaming write cards use line-local coloring so later
- * tokens cannot recolor rows already in terminal scrollback.
+ * Markdown code blocks.
  */
 export function highlightCode(text: string, lang: string | undefined): string {
   const resolved = resolveLanguage(lang)

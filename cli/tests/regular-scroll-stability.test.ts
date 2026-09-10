@@ -85,7 +85,8 @@ test('ordinary terminal: write streaming preserves reading position and completi
   }
 })
 
-test('write preview is deterministic until a successful diff replaces it, including after cache reconstruction', () => {
+test('write preview is deterministic until a successful diff replaces it', () => {
+  const engineDiff = '@@ -1 +1 @@\n-old\n+new'
   for (const name of ['write', 'file_write']) {
     let call: UIToolCall = { id: `stable-${name}`, name, status: 'queued', argsComplete: false,
       args: { path: 'a.ts', content: '/* comment\nconst first = 1;\n' } }
@@ -93,15 +94,46 @@ test('write preview is deterministic until a successful diff replaces it, includ
     call = { ...call, args: { ...call.args, content: `${call.args.content}*/\nconst second = 2;\n` } }
     expect(rows(call).slice(0, prefix.length)).toEqual(prefix)
     for (const status of ['running', 'done', 'error'] as const) {
-      const completed = { ...call, status, argsComplete: true, result: status === 'error' ? 'Permission denied' : 'Wrote content', details: { diff: '@@ -1 +1 @@\n-old\n+new' } }
+      const completed = { ...call, status, argsComplete: true, result: status === 'error' ? 'Permission denied' : 'Wrote content', details: { diff: engineDiff } }
       const rendered = rows(completed)
       if (status !== 'done') expect(rendered.slice(0, prefix.length)).toEqual(prefix)
-      else expect(buildToolCard(completed).some(line => line.toolCodePreview)).toBe(false)
-      // A different id forces a fresh cache: same bytes after reload/eviction.
+      // Only a successful call swaps the streamed body for the engine's diff.
+      expect(buildToolCard(completed).some(line => line.diffText === engineDiff)).toBe(status === 'done')
+      // Same args render the same bytes on a fresh card (no hidden cache).
       expect(rows({ ...completed, id: `fresh-${name}-${status}` })).toEqual(rendered)
-      expect(buildToolCard(completed).some(line => line.diffText)).toBe(status === 'done')
       if (status === 'error') expect(rendered.join('\n')).toContain('Permission denied')
     }
+  }
+})
+
+test('a growing write body never re-indents rows it already painted', () => {
+  // The gutter is sized from the largest line number, so a body that grows past
+  // 9, 99 (and in split layout, one line earlier) would widen it and shift every
+  // row already on screen. Rows that scrolled out cannot be repainted, so the
+  // transcript would keep a permanent one-column jog.
+  const body = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n') + '\n'
+  const bodyRows = (content: string, columns: number): string[] => {
+    const card = buildToolCard({ id: 'gutter', name: 'write', status: 'queued', argsComplete: false, args: { path: 'a.ts', content } })
+    const diffRow = card.filter(l => l.diffText !== undefined)
+    expect(diffRow).toHaveLength(1)
+    return blocksToLines(buildOutputBlocks(diffRow, { columns }))
+  }
+
+  // 121 is the split-diff breakpoint: cover both layouts.
+  for (const columns of [80, 140]) {
+    for (const n of [2, 9, 10, 11, 99, 100, 101]) {
+      const grown = bodyRows(body(n), columns)
+      const before = bodyRows(body(n - 1), columns)
+      expect(grown.slice(0, before.length)).toEqual(before)
+    }
+    // The engine's authoritative diff for a new file must land on the same rows.
+    const content = body(12)
+    const streamed = bodyRows(content, columns)
+    const settled = buildToolCard({
+      id: 'gutter-done', name: 'write', status: 'done', argsComplete: true, result: 'Wrote a.ts',
+      args: { path: 'a.ts', content }, details: { created: true, diff: `@@ -0,0 +1,12 @@\n${Array.from({ length: 12 }, (_, i) => `+line ${i + 1}`).join('\n')}` },
+    }).filter(l => l.diffText !== undefined)
+    expect(blocksToLines(buildOutputBlocks(settled, { columns }))).toEqual(streamed)
   }
 })
 
@@ -109,11 +141,11 @@ test('write progress stays below the stable body and result metadata is not lost
   const base: UIToolCall = { id: 'write-progress-tail', name: 'write', status: 'running', args: { path: 'a.txt', content: 'one\ntwo' } }
   const running = buildToolCard({ ...base, progress: 'Flushing file', details: { diff: '@@ -1 +1 @@\n-old\n+new' } })
   expect(running.map(line => line.text).join('\n')).toContain('Flushing file')
-  expect(running.findIndex(line => line.text.includes('Flushing file'))).toBeGreaterThan(running.findIndex(line => line.toolCodePreview))
+  expect(running.findIndex(line => line.text.includes('Flushing file'))).toBeGreaterThan(running.findIndex(line => line.diffText !== undefined))
   const done = buildToolCard({ ...base, status: 'done', durationMs: 12, result: 'Saved', details: { created: true, bytes: 7 } })
   expect(done.map(line => line.text).join('\n')).toContain('created 7 B · 12ms')
-  expect(done.some(line => line.toolCodePreview)).toBe(true)
-  expect(done.some(line => line.diffText)).toBe(false)
+  // Without an engine diff the streamed body stays, still diff-shaped.
+  expect(done.some(line => line.diffText?.includes('+one'))).toBe(true)
   expect(done.map(line => line.text).join('\n')).toContain('Saved')
   expect(buildToolCard({ ...base, progress: '__evot_spill_event__ secret' }).some(line => line.text.includes('__evot_spill_event__'))).toBe(false)
 })

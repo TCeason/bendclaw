@@ -135,7 +135,7 @@ export function renderBanner(opts: BannerOptions, data?: BannerData): string {
   appendBlock(detailLines, renderSection('Context', snapshot.contextFiles, columns))
   appendBlock(detailLines, renderSkillSection(snapshot.skills, columns))
   if (serverState) {
-    appendBlock(detailLines, renderSection('Server', [serverState.address], columns))
+    appendBlock(detailLines, renderSection('Dashboard', [serverState.address], columns))
   }
 
   if (detailLines.length > 0) detailLines.push('')

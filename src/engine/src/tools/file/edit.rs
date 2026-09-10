@@ -96,7 +96,7 @@ impl AgentTool for EditFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path to the file to edit (relative or absolute)"
+                    "description": "Path to the file to edit (relative or absolute). Emit path first, before edits."
                 },
                 "edits": {
                     "type": "array",

@@ -963,7 +963,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
    */
   let liveRegionStartRow = 0
 
-  // Server state
+  // Dashboard state
   let serverState: ServerState | null = null
   try {
     serverState = await tryStartServer(opts.serverPort, opts.envFile)

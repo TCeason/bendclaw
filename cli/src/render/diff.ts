@@ -111,8 +111,13 @@ export interface DiffRow {
  * Colorize a unified diff one row at a time. Callers that lay rows out on a
  * filled block use `kind` to give added/removed rows their own fill, the way
  * opencode tints diff rows inside a tool block.
+ *
+ * `minGutter` floors the line-number column. A patch that grows between frames
+ * would otherwise widen its gutter on crossing 9→10→100 lines and re-indent
+ * every row already painted, including rows the renderer has left behind in
+ * native scrollback. Callers that stream a patch pass a fixed width instead.
  */
-export function colorizeUnifiedDiffRows(diff: string, showSigns = true): DiffRow[] {
+export function colorizeUnifiedDiffRows(diff: string, showSigns = true, minGutter = 0): DiffRow[] {
   const hunks = parseDiffHunks(diff)
   const output: DiffRow[] = []
   if (hunks.length === 0) {
@@ -122,7 +127,7 @@ export function colorizeUnifiedDiffRows(diff: string, showSigns = true): DiffRow
     if (hi > 0) output.push({ text: style.ellipsis('  …'), kind: 'ellipsis' })
     const hunk = hunks[hi]!
     const lines = buildDiffLines(hunk.lines.filter(line => !line.startsWith('\\')), hunk.oldStart, hunk.newStart)
-    const numW = gutterWidth(lines)
+    const numW = gutterWidth(lines, minGutter)
     for (const line of lines) output.push({ text: renderLine(line, numW, showSigns), kind: line.type })
   }
   return output
@@ -132,9 +137,9 @@ export function colorizeUnifiedDiffRows(diff: string, showSigns = true): DiffRow
 // Internals
 // ---------------------------------------------------------------------------
 
-function gutterWidth(lines: DiffLine[]): number {
+function gutterWidth(lines: DiffLine[], minGutter = 0): number {
   const maxNum = Math.max(...lines.map(l => l.lineNum), 0)
-  return Math.max(String(maxNum).length, 1)
+  return Math.max(String(maxNum).length, 1, minGutter)
 }
 
 /** Parse raw diff lines → structured DiffLines with line numbers + pairing. */

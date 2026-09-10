@@ -1056,8 +1056,8 @@ describe('term stream machine', () => {
     expect(completed[1]!.text).toBe('  ✓ · 1 line · 12ms')
   })
 
-  test('queued write streams a bounded content preview while edit stays a stable summary', () => {
-    const content = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join('\n')
+  test('queued write streams its full diff body while edit stays a stable summary', () => {
+    const content = Array.from({ length: 25 }, (_, index) => `line ${index + 1}`).join('\n')
     const writeCall = {
       id: 'call-write',
       name: 'write',
@@ -1066,17 +1066,16 @@ describe('term stream machine', () => {
       argsComplete: false,
     }
     const write = buildToolCard(writeCall)
-    const writeText = write.map(line => line.text).join('\n')
-    expect(writeText).toContain('✎ write  src/a.txt\n\n  line 1')
-    expect(write.at(-1)?.text).toBe('  ○ · generating 12 lines')
-    expect(writeText).toContain('  line 1')
-    expect(writeText).toContain('  line 10')
-    expect(writeText).not.toContain('  line 11')
-    expect(writeText).toContain('... (2 more lines, 12 total, ctrl+o to expand)')
+    const writeText = stripAnsi(write.map(line => line.text).join('\n'))
+    expect(writeText).toContain('✎ write  src/a.txt')
+    expect(write.at(-1)?.text).toBe('  ○ · generating 25 lines')
+    // The whole body is on screen from the first streamed line — never folded.
+    expect(writeText).toContain('+line 1')
+    expect(writeText).toContain('+line 25')
+    expect(writeText).not.toContain('ctrl+o to expand')
 
-    const expandedWriteText = buildToolCard(writeCall, true).map(line => line.text).join('\n')
-    expect(expandedWriteText).toContain('  line 12')
-    expect(expandedWriteText).toContain('(ctrl+o to collapse)')
+    const expandedWriteText = stripAnsi(buildToolCard(writeCall, true).map(line => line.text).join('\n'))
+    expect(expandedWriteText).toContain('+line 25')
 
     const edit = buildToolCard({
       id: 'call-edit',
@@ -1158,31 +1157,20 @@ describe('term stream machine', () => {
     expect(withDiff).toBe(noDiff)
   })
 
-  test('oversized write lines skip highlighting without recoloring the preceding lines', () => {
-    const content = `const first = 1\n${'x'.repeat(250 * 1024)}`
-    const card = buildToolCard({
-      id: 'call-write-huge',
-      name: 'write',
-      args: { path: 'src/a.ts', content },
-      status: 'queued',
-      argsComplete: false,
-    })
-    const previewLines = card.filter(line => line.toolCodePreview)
-    expect(stripAnsi(previewLines[0]?.text ?? '')).toBe('  const first = 1')
-    expect(previewLines[1]?.text.includes('\x1b[')).toBe(false)
-  })
-
   test('write preview sanitizes terminal controls from model output', () => {
-    const text = buildToolCard({
+    const card = buildToolCard({
       id: 'call-write-controls',
       name: 'write',
       args: { path: 'src/a.txt', content: 'safe\x1b]133;A\x07visible' },
       status: 'queued',
       argsComplete: false,
-    }).map(line => line.text).join('\n')
+    })
+    const text = card.map(line => line.text).join('\n') + card.map(line => line.diffText).join('\n')
 
     expect(text).toContain('safe�]133;A�visible')
-    expect(text).not.toContain('\x1b')
+    // Only the renderer's own SGR styling may survive; the injected OSC and
+    // BEL never do.
+    expect(text).not.toContain('\x1b]133')
     expect(text).not.toContain('\x07')
   })
 

@@ -11,10 +11,15 @@ export const SPLIT_DIFF_MIN_COLUMNS = 121
 
 type Cell = { number: number; code: string; kind: 'add' | 'remove' | 'context' }
 
-export function buildDiffLines(patch: string, columns?: number): StyledLine[] {
+/**
+ * `minGutter` floors the line-number column so a patch that grows between
+ * frames never re-indents rows it has already painted. See
+ * [`colorizeUnifiedDiffRows`].
+ */
+export function buildDiffLines(patch: string, columns?: number, minGutter = 0): StyledLine[] {
   if (!columns || columns < SPLIT_DIFF_MIN_COLUMNS) {
     const theme = getTheme()
-    return colorizeUnifiedDiffRows(patch, false).flatMap(row =>
+    return colorizeUnifiedDiffRows(patch, false, minGutter).flatMap(row =>
       wrapTextWithAnsi(row.text, Math.max(1, columns ?? 10000)).map(text => ({
         ...line(plain(text)),
         bg: row.kind === 'add' ? theme.diffAddedBg : row.kind === 'remove' ? theme.diffRemovedBg : undefined,
@@ -45,7 +50,7 @@ export function buildDiffLines(patch: string, columns?: number): StyledLine[] {
     if (result.length) result.push(line(dim('  …')))
     let old = hunk.oldStart
     let next = hunk.newStart
-    const gutter = String(Math.max(old + hunk.oldLines, next + hunk.newLines)).length
+    const gutter = Math.max(String(Math.max(old + hunk.oldLines, next + hunk.newLines)).length, minGutter)
     const append = (left?: Cell, right?: Cell) => {
       const a = cell(left, leftWidth, gutter)
       const b = cell(right, rightWidth, gutter)

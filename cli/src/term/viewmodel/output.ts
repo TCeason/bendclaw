@@ -3,7 +3,7 @@ import type { OutputLine, ToolCardMembership, ToolCardState } from '../../render
 import stringWidth from 'string-width'
 import { line, block, plain, dim, bold, colored, ansi, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
 import { spansWidth, wrapTextByWidth, truncateToWidth } from './width.js'
-import { truncateAnsiToWidth, wrapTextWithAnsi } from '../../render/wrap.js'
+import { wrapTextWithAnsi } from '../../render/wrap.js'
 import { formatWallClock } from '../../render/format.js'
 import { BOX_DRAWING_RE } from '../../markdown/primitives.js'
 import { getTheme } from '../../render/theme/index.js'
@@ -206,7 +206,7 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
 
       case 'tool':
         if (ol.diffText !== undefined) {
-          blocks.push(block(buildDiffLines(ol.diffText, wrapColumns)))
+          blocks.push(block(buildDiffLines(ol.diffText, wrapColumns, ol.diffGutter)))
           break
         }
         if (ol.diffRow) {
@@ -215,9 +215,7 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
           blocks.push(block(wrapToolLines(ol.text, wrapColumns).map(part => line(ansi(part)))))
           break
         }
-        blocks.push(ol.toolCodePreview
-          ? buildToolCodePreviewBlock(ol.text, wrapColumns, ol.toolCodePreviewTruncate)
-          : buildToolBlock(ol.text, wrapColumns, ol.commandMaxRows))
+        blocks.push(buildToolBlock(ol.text, wrapColumns, ol.commandMaxRows))
         break
 
       case 'tool_result':
@@ -307,25 +305,6 @@ function paintToolCard(
   }
   if (card.first) blocks[from]!.lines.unshift(panelRow([], columns, bg))
   if (card.last) blocks[blocks.length - 1]!.lines.push(panelRow([], columns, bg))
-}
-
-function buildToolCodePreviewBlock(text: string, columns?: number, truncate = false): ViewBlock {
-  if (truncate) {
-    const width = Math.max(1, columns ?? 80)
-    const clipped = truncateAnsiToWidth(text, width)
-    if (clipped !== text) {
-      const hint = ' (ctrl+o to expand)'
-      // Keep some source visible in narrow panes; an ellipsis alone still
-      // signals clipping when the full keyboard hint would consume the row.
-      const showHint = width >= hint.length + 12
-      return block([line(
-        plain(showHint ? truncateAnsiToWidth(clipped, width - hint.length) : clipped),
-        ...(showHint ? [dim(hint)] : []),
-      )])
-    }
-    return block([line(plain(text))])
-  }
-  return block(wrapToolLines(text, columns).map(part => line(plain(part))))
 }
 
 function buildToolBlock(text: string, columns?: number, maxRows?: number): ViewBlock {

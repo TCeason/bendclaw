@@ -73,7 +73,7 @@ impl AgentTool for WriteFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path to the file to write (relative or absolute)"
+                    "description": "Path to the file to write (relative or absolute). Emit path first, before content."
                 },
                 "content": {
                     "type": "string",
