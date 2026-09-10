@@ -708,6 +708,35 @@ describe.skipIf(!canRun)('evot binary smoke (PTY)', () => {
     }
   }, 60_000)
 
+  test('a multi-turn run counts every model round-trip', async () => {
+    let requests = 0
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => {
+      requests++
+      const chunk = requests === 1
+        ? { id: 'fixture', model: 'smoke-model', choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'tc-1', type: 'function', function: { name: 'bash', arguments: JSON.stringify({ command: 'echo first' }) } }] }, finish_reason: 'tool_calls' }] }
+        : { id: 'fixture', model: 'smoke-model', choices: [{ index: 0, delta: { role: 'assistant', content: 'both turns done' }, finish_reason: 'stop' }] }
+      return new Response(new ReadableStream({
+        async start(controller) {
+          if (requests > 1) await Bun.sleep(1200)
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`))
+          controller.close()
+        },
+      }), { headers: { 'content-type': 'text/event-stream' } })
+    } })
+    let session: Session | undefined
+    try {
+      session = await startEvot(false, false, false, `http://127.0.0.1:${server.port}/v1`)
+      session.write('run a command then answer\x0d')
+      await session.waitFor('both turns done')
+      const footer = await session.waitFor(/✳ Ran for \d+s · \d+ turns? · done \d{2}:\d{2} (AM|PM)/)
+      expect(footer).toMatch(/Ran for [1-9]\d*s · 2 turns ·/)
+      expect(requests).toBeGreaterThanOrEqual(2)
+    } finally {
+      if (session) await session.kill()
+      await server.stop(true)
+    }
+  }, 60_000)
+
   test('an interrupted run still reports the time it spent', async () => {
     const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () =>
       new Response(new ReadableStream({
