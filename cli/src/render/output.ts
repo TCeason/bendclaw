@@ -502,11 +502,15 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
 
   const write = call.name.toLowerCase() === 'write' || call.name.toLowerCase() === 'file_write'
   const showFinalDiff = call.status === 'done' && !settledFailed && !!diff
-  if (write && typeof call.args.content === 'string' && !showFinalDiff) {
+  if (write && typeof call.args.content === 'string') {
     // All mutable metadata follows the code, and the body's gutter is fixed, so
     // rows already painted into native scrollback stay byte-identical as the
-    // content grows and when the engine's diff replaces it.
-    appendWriteBody(lines, call)
+    // content grows and when the engine's diff replaces it. That includes the
+    // status row: inserting it under the headline once the call settles would
+    // push every body row down one line, and the rows already in native
+    // scrollback cannot follow, so the transcript would keep the jog.
+    if (showFinalDiff && diff) lines.push(...diffOutputLines(diff, WRITE_DIFF_GUTTER))
+    else appendWriteBody(lines, call)
     if (call.status === 'queued') {
       lines.push(toolStatusLine('○', [call.argsComplete ? 'ready' : toolDraftSummary(call)]))
     } else if (call.status === 'running') {
@@ -517,9 +521,9 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
         }
       }
     } else {
-      // No successful diff is available. Keep the submitted content with the
-      // outcome below it, including on failure.
-      lines.push(...buildToolResult(call.name, args, call.status,
+      // The body is already above, so the outcome rows must not repeat it:
+      // `buildToolResult` renders any `diff` it finds on `args`.
+      lines.push(...buildToolResult(call.name, call.args, call.status,
         call.result, call.durationMs, expanded, details))
     }
     return stampToolCard(lines, call.status === 'queued' || call.status === 'running'

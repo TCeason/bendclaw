@@ -620,6 +620,33 @@ describe('tool cards: lifecycle-tinted slabs', () => {
     }
   })
 
+  test('a settling write appends below its body instead of pushing it down', () => {
+    for (const name of ['write', 'file_write']) {
+      const content = 'import calc\n\ndef test_add():\n'
+      const diff = '@@ -0,0 +1,3 @@\n+import calc\n+\n+def test_add():'
+      const args = { path: 'a.py', content }
+      const frames = [
+        { id: `settle-${name}`, name, args, status: 'queued' as const, argsComplete: true },
+        { id: `settle-${name}`, name, args, status: 'running' as const },
+        {
+          id: `settle-${name}`, name, args, status: 'done' as const,
+          result: 'Wrote 28 bytes to a.py', details: { created: true, bytes: 28, diff },
+        },
+      ]
+      // The renderer only appends to native scrollback, so a row that has been
+      // painted can never move. Every frame must keep the body rows at the same
+      // index, with all mutable metadata strictly below them.
+      const bodyRows = ['1 import calc', '2', '3 def test_add():']
+      for (const frame of frames) {
+        const rows = contentRows(renderPlainWithColumns(buildToolCard(frame), 60))
+        const body = rows.map(row => row.trim()).slice(1, 1 + bodyRows.length)
+        expect(body).toEqual(bodyRows)
+        const status = rows.findIndex(row => /[○●✓✗] ·/.test(row))
+        expect(status).toBe(1 + bodyRows.length)
+      }
+    }
+  })
+
   test('diffs render in full, as the block the engine sent', () => {
     const patch = ['--- a/a.ts', '+++ b/a.ts', '@@ -0,0 +1,40 @@', ...Array.from({ length: 40 }, (_, i) => `+line ${i}`)].join('\n')
     const call = {
