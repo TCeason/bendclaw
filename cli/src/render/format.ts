@@ -140,8 +140,23 @@ export function formatElapsed(ms: number): string {
   return restMinutes === 0 ? `${hours}h` : `${hours}h ${restMinutes}m`
 }
 
-export function renderBar(value: number, max: number, width: number): string {
-  width = repeatCount(width)
+/**
+ * Wall-clock time of day as `08:58 AM`.
+ *
+ * The bare form, so a caller can bracket it for a message header or leave it
+ * plain in a footer without a second copy of the 12-hour arithmetic.
+ */
+export function formatWallClock(timestamp: number): string {
+  const at = new Date(timestamp)
+  const hours = at.getHours()
+  const suffix = hours < 12 ? 'AM' : 'PM'
+  const hour12 = hours % 12 === 0 ? 12 : hours % 12
+  const hh = String(hour12).padStart(2, '0')
+  const mm = String(at.getMinutes()).padStart(2, '0')
+  return `${hh}:${mm} ${suffix}`
+}
+
+export function renderBar(value: number, max: number, width: number): string {  width = repeatCount(width)
   if (width === 0) return ''
   if (max <= 0 || !Number.isFinite(max) || !Number.isFinite(value)) return '░'.repeat(width)
   const filled = repeatCount(Math.round((value / max) * width))

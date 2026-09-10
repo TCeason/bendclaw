@@ -4,6 +4,7 @@ import stringWidth from 'string-width'
 import { line, block, plain, dim, bold, colored, ansi, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
 import { spansWidth, wrapTextByWidth, truncateToWidth } from './width.js'
 import { truncateAnsiToWidth, wrapTextWithAnsi } from '../../render/wrap.js'
+import { formatWallClock } from '../../render/format.js'
 import { BOX_DRAWING_RE } from '../../markdown/primitives.js'
 import { getTheme } from '../../render/theme/index.js'
 import stripAnsi from 'strip-ansi'
@@ -69,13 +70,7 @@ function diffRowBg(kind: OutputLine['diffRow']): string | undefined {
  * instead of drifting to "now".
  */
 export function formatClock(timestamp: number): string {
-  const at = new Date(timestamp)
-  const hours = at.getHours()
-  const suffix = hours < 12 ? 'AM' : 'PM'
-  const hour12 = hours % 12 === 0 ? 12 : hours % 12
-  const hh = String(hour12).padStart(2, '0')
-  const mm = String(at.getMinutes()).padStart(2, '0')
-  return `[${hh}:${mm} ${suffix}]`
+  return `[${formatWallClock(timestamp)}]`
 }
 
 // OSC 133 semantic zone markers (the shell-integration protocol). Wrapping each

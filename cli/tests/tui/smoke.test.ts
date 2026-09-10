@@ -680,6 +680,66 @@ describe.skipIf(!canRun)('evot binary smoke (PTY)', () => {
     }
   }, 60_000)
 
+  test('a settled run closes with its total duration', async () => {
+    // The footer is suppressed below one second, so the reply is held past that
+    // threshold. This is the only way to prove the whole run is measured: the
+    // wait happens before any token arrives, so a footer timed from the stream
+    // instead of the submission would report far less than it took.
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => {
+      const chunk = {
+        id: 'fixture',
+        model: 'smoke-model',
+        choices: [{ index: 0, delta: { role: 'assistant', content: 'done thinking' }, finish_reason: 'stop' }],
+      }
+      return new Response(new ReadableStream({
+        async start(controller) {
+          await Bun.sleep(1500)
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`))
+          controller.close()
+        },
+      }), { headers: { 'content-type': 'text/event-stream' } })
+    } })
+    let session: Session | undefined
+    try {
+      session = await startEvot(false, false, false, `http://127.0.0.1:${server.port}/v1`)
+      session.write('how long did this take\x0d')
+      await session.waitFor('done thinking')
+      const footer = await session.waitFor(/✳ Ran for \d+s · done \d{2}:\d{2} (AM|PM)/)
+      // Measured from submission, not from the first token: a stream-scoped
+      // clock would round to 0s here and print nothing at all.
+      expect(footer).toMatch(/Ran for [1-9]\d*s/)
+    } finally {
+      if (session) await session.kill()
+      await server.stop(true)
+    }
+  }, 60_000)
+
+  test('an interrupted run still reports the time it spent', async () => {
+    // Never answers. Interruption is the only way this run ends, and it revokes
+    // ownership before the query function's finally block can report — so this
+    // is the path that would silently lose the duration.
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () =>
+      new Response(new ReadableStream({
+        start(controller) { controller.enqueue(new TextEncoder().encode(': waiting\n\n')) },
+      }), { headers: { 'content-type': 'text/event-stream' } }) })
+    let session: Session | undefined
+    try {
+      session = await startEvot(false, false, false, `http://127.0.0.1:${server.port}/v1`)
+      session.write('hang forever\x0d')
+      // Past the one-second floor, so the footer has a duration worth printing.
+      await Bun.sleep(1500)
+      session.write('\x1b')
+      await session.waitFor(/esc\s+again\s+to\s+interrupt/)
+      session.write('\x1b')
+      await session.waitFor('Interrupted.')
+      const footer = await session.waitFor(/✳ Ran for \d+s · done \d{2}:\d{2} (AM|PM)/)
+      expect(footer).toMatch(/Ran for [1-9]\d*s/)
+    } finally {
+      if (session) await session.kill()
+      await server.stop(true)
+    }
+  }, 60_000)
+
   test('ctrl+c twice exits cleanly', async () => {
     const session = await startEvot()
     try {
