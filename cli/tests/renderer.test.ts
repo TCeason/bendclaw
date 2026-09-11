@@ -758,6 +758,28 @@ describe('TermRenderer', () => {
       renderer.destroy()
     })
 
+    test('invalidating unchanged live-region rows above the viewport is not a shift', async () => {
+      const screen = new ScreenHarness(80, 10)
+      const diagnostics: RendererDiagnostic[] = []
+      const renderer = new TermRenderer({
+        stdout: screen.stdout,
+        onDiagnostic: d => diagnostics.push(d),
+      })
+      renderer.init()
+      // Live region starts at 4 and runs above the viewport, as a tall command
+      // window does. A keypress invalidates it to release a mouse selection.
+      const lines = Array.from({ length: 30 }, (_, i) => `row ${i}`)
+      renderer.setRenderCallback(() => ({ lines, committedRows: 4 }))
+      await paint(renderer, screen)
+
+      renderer.invalidateRowsFrom(4)
+      await Bun.sleep(25)
+      await screen.settle()
+
+      expect(diagnostics.map(d => d.kind)).toEqual(['stale_scrollback'])
+      renderer.destroy()
+    })
+
     test('a forced repaint reports its own cause, not a resize', async () => {
       const screen = new ScreenHarness(80, 10)
       const diagnostics: RendererDiagnostic[] = []

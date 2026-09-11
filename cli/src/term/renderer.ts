@@ -575,12 +575,14 @@ export class TermRenderer {
     for (let i = 0; i < maxLines; i++) {
       const oldLine = i < this.previousLines.length ? this.previousLines[i] : ''
       const newLine = i < newLines.length ? newLines[i] : ''
-      if (oldLine === newLine && !invalidatedRows.has(i)) continue
+      const changed = oldLine !== newLine
+      if (!changed && !invalidatedRows.has(i)) continue
       if (firstChanged === -1) firstChanged = i
       lastChanged = i
       if (i < prevViewportTop) {
         staleScrollbackRows++
-        if (i >= committedBoundary && firstShiftedChanged === -1) firstShiftedChanged = i
+        // An invalidation repaints identical bytes; only a real diff can shift.
+        if (changed && i >= committedBoundary && firstShiftedChanged === -1) firstShiftedChanged = i
         continue
       }
       if (firstVisibleChanged === -1) firstVisibleChanged = i
