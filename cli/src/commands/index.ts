@@ -10,10 +10,15 @@ export interface SlashCommand {
   handler: 'builtin'
   /** Minimum typed prefix length, including `/`, before prefix matching applies. */
   minPrefixLength?: number
+  /**
+   * Runnable while a response is streaming: reads local state only, touching
+   * neither the run nor the session. Arguments are refused separately.
+   */
+  runSafe?: boolean
 }
 
 export const COMMANDS: SlashCommand[] = [
-  { name: '/help', description: 'Show help information', usage: '/help [command]', handler: 'builtin' },
+  { name: '/help', description: 'Show help information', usage: '/help [command]', handler: 'builtin', runSafe: true },
   { name: '/resume', aliases: ['/sessions'], description: 'Resume a session', usage: '/resume [id | query]', handler: 'builtin' },
   { name: '/new', description: 'Start a new session', handler: 'builtin' },
   { name: '/model', description: 'Show or change model', usage: '/model [name]', handler: 'builtin' },
@@ -26,7 +31,7 @@ export const COMMANDS: SlashCommand[] = [
 export const HIDDEN_COMMANDS: SlashCommand[] = [
   { name: '/restart', description: 'Restart evot in place', handler: 'builtin', minPrefixLength: 5 },
   { name: '/update', description: 'Update evot to latest version', handler: 'builtin' },
-  { name: '/version', description: 'Show current version', handler: 'builtin' },
+  { name: '/version', description: 'Show current version', handler: 'builtin', runSafe: true },
   { name: '/exit', aliases: ['/quit', '/q'], description: 'Exit the REPL', handler: 'builtin' },
   { name: '/act', description: 'Return to normal action mode', handler: 'builtin' },
   { name: '/done', description: 'Exit log/plan mode', handler: 'builtin' },
@@ -101,6 +106,13 @@ export function resolveCommand(input: string): ResolvedCommand {
   }
 
   return { kind: 'unknown' }
+}
+
+/** True for a bare `runSafe` command. Arguments change what a command does, so only the audited form passes. */
+export function isRunSafeCommand(input: string): boolean {
+  const resolved = resolveCommand(input)
+  if (resolved.kind !== 'resolved' || resolved.args) return false
+  return ALL_COMMANDS.some(c => c.name === resolved.name && c.runSafe === true)
 }
 
 /**

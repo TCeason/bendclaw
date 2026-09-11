@@ -8,13 +8,16 @@
  * The cursor/viewport state machine follows pi-tui's renderer
  * (~/github/pi/packages/tui/src/tui.ts) with one deliberate divergence:
  *
- * Scrollback is append-only. pi clears the screen and replays the whole frame
- * whenever a row above the viewport changes. That yanks a reader who scrolled
- * up back to the bottom, destroys the terminal's native scrollback and any
- * selection, and on terminals that ignore CSI 3J duplicates the transcript.
- * Here only addressable rows are patched; rows already in scrollback keep
- * their last painted content until a resize or /clear repaints history. The
- * count of such stale rows is reported through the trace and diagnostics hooks.
+ * Scrollback is append-only for in-place edits. pi clears the screen and
+ * replays the whole frame whenever a row above the viewport changes, which yanks
+ * a reader who scrolled up back to the bottom and destroys native scrollback and
+ * any selection. Here an edit that leaves every row at its own index is left
+ * stale instead, reported through the trace and diagnostics hooks.
+ *
+ * A row-count change in the live region above the viewport is the exception:
+ * shifting rows leaves the transcript duplicating one row and losing another,
+ * and no escape sequence can patch scrollback, so it is repainted. `committedRows`
+ * on RenderFrame is what separates the two cases.
  */
 
 import { CURSOR_MARKER, type RenderFrame, type RenderOverlay } from './render-frame.js'
@@ -105,6 +108,16 @@ export type RendererDiagnostic =
     previousLines: number
     newLines: number
   }
+  | {
+    /** Rows above the viewport shifted index; repainted rather than corrupted. */
+    kind: 'scrollback_shift'
+    frame: number
+    shiftedFrom: number
+    delta: number
+    viewportTop: number
+    previousLines: number
+    newLines: number
+  }
 
 export interface TermRendererOptions {
   stdout?: NodeJS.WriteStream
@@ -129,6 +142,8 @@ export class TermRenderer {
   private previousViewportTop = 0
   /** Logical frame length retained after a bottom-anchored tail first reaches the viewport end. */
   private trailingEdgeAnchorLength = 0
+  /** `committedRows` of the frame currently painted. */
+  private previousCommittedRows = Number.POSITIVE_INFINITY
   private invalidatedRows = new Set<number>()
   private scrollbackInvalidated = false
   /** Lowest logical row this renderer left unpainted in scrollback, if any. */
@@ -244,6 +259,7 @@ export class TermRenderer {
       this.invalidatedRows.clear()
       this.scrollbackInvalidated = false
       this.scrollbackStaleFrom = null
+      this.previousCommittedRows = Number.POSITIVE_INFINITY
       // Reported as its own branch: a forced repaint reaches the same code path
       // as a resize, and a log that called it `width_change` would send the
       // next person debugging a jump after the wrong cause.
@@ -279,6 +295,7 @@ export class TermRenderer {
     this.invalidatedRows.clear()
     this.scrollbackInvalidated = false
     this.scrollbackStaleFrom = null
+    this.previousCommittedRows = Number.POSITIVE_INFINITY
     this.previousWidth = this.termCols
     this.previousHeight = this.termRows
   }
@@ -320,8 +337,6 @@ export class TermRenderer {
       this.pendingTraceWrites = []
     }
     const frame = ++this.frameNumber
-    const repaintHistory = this.scrollbackInvalidated
-    this.scrollbackInvalidated = false
     const forced = this.forcedRepaint
     this.forcedRepaint = false
     const previousLineCount = this.previousLines.length
@@ -332,7 +347,17 @@ export class TermRenderer {
     // Get new frame from callback
     const raw = this.renderCallback()
     const rendered = Array.isArray(raw) ? { lines: raw } : raw
+    // Read after the callback: layout may only discover mid-build that its
+    // committed prefix reshaped, and that must apply to this frame.
+    const repaintHistory = this.scrollbackInvalidated
+    this.scrollbackInvalidated = false
     let baseLines = rendered.lines
+    // Absent means the producer only appends, so the whole frame qualifies.
+    const committedRows = rendered.committedRows === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.max(0, Math.trunc(rendered.committedRows))
+    const previousCommittedRows = this.previousCommittedRows
+    this.previousCommittedRows = committedRows
     const anchorStart = rendered.bottomAnchorStart
     const hasTailAnchor = rendered.bottomAnchor
       && anchorStart !== undefined
@@ -541,6 +566,11 @@ export class TermRenderer {
     let lastChanged = -1
     let firstVisibleChanged = -1
     let lastVisibleChanged = -1
+    /** First unaddressable changed row in the live region, which may have shifted. */
+    let firstShiftedChanged = -1
+    // Safe only if the row was committed in both frames: history appending moves
+    // the boundary down, and the new frame alone would call such a row safe.
+    const committedBoundary = Math.min(committedRows, previousCommittedRows)
     const maxLines = Math.max(newLines.length, this.previousLines.length)
     for (let i = 0; i < maxLines; i++) {
       const oldLine = i < this.previousLines.length ? this.previousLines[i] : ''
@@ -550,6 +580,7 @@ export class TermRenderer {
       lastChanged = i
       if (i < prevViewportTop) {
         staleScrollbackRows++
+        if (i >= committedBoundary && firstShiftedChanged === -1) firstShiftedChanged = i
         continue
       }
       if (firstVisibleChanged === -1) firstVisibleChanged = i
@@ -571,6 +602,21 @@ export class TermRenderer {
         firstChanged === -1 ? maxLines : firstChanged,
         this.scrollbackStaleFrom ?? maxLines,
       ))
+      return
+    }
+    // A live-region row above the viewport shifted, so leaving it stale would
+    // duplicate one row and lose another. Scrollback cannot be patched.
+    if (firstShiftedChanged !== -1) {
+      this.diagnose({
+        kind: 'scrollback_shift',
+        frame,
+        shiftedFrom: firstShiftedChanged,
+        delta: newLines.length - this.previousLines.length,
+        viewportTop: prevViewportTop,
+        previousLines: this.previousLines.length,
+        newLines: newLines.length,
+      })
+      fullRender(true, 'scrollback_shift', firstShiftedChanged)
       return
     }
     if (staleScrollbackRows > 0) {

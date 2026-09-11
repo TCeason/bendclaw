@@ -21,6 +21,17 @@ test('compaction, queue editing and log routing retain priority', () => {
   expect(busySubmissionAction({ ...base, expandedText: 'hello', compacting: true, editingQueue: true })).toBe('queue_compaction')
 })
 
+test('bare read-only commands run mid-stream; arguments and mutators stay blocked', () => {
+  for (const command of ['/version', '/v', '/help']) {
+    expect(busySubmissionAction({ ...base, expandedText: command })).toBe('run_readonly_command')
+    expect(busySubmissionAction({ ...base, expandedText: command, compacting: true })).toBe('blocked_compaction_command')
+    expect(busySubmissionAction({ ...base, expandedText: command, hasRun: false })).toBe('none')
+  }
+  for (const command of ['/help compact', '/version now', '/model', '/model gpt', '/env', '/skill']) {
+    expect(busySubmissionAction({ ...base, expandedText: command })).toBe('blocked_run_command')
+  }
+})
+
 test('text and image prompts route only to an available execution owner', () => {
   for (const input of [{ ...base, expandedText: 'hello' }, { ...base, hasImages: true }]) {
     expect(busySubmissionAction(input)).toBe('steer')

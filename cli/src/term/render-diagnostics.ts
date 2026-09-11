@@ -26,6 +26,7 @@ const STALE_LOG_INTERVAL_MS = 1000
 
 export class RenderDiagnostics {
   private fullRedraws = 0
+  private shifts = 0
   private staleEvents = 0
   private staleRows = 0
   private pendingStaleRows = 0
@@ -44,6 +45,17 @@ export class RenderDiagnostics {
         + ` · viewportTop ${diagnostic.viewportTop}`
         + ` · firstChanged ${diagnostic.firstChanged ?? 'n/a'} (${region})`
         + ` · ${diagnostic.columns}x${diagnostic.rows}`,
+      ])
+      return
+    }
+    if (diagnostic.kind === 'scrollback_shift') {
+      this.shifts++
+      this.deps.log([
+        `[render] scrollback shift · frame ${diagnostic.frame}`
+        + ` · shiftedFrom ${diagnostic.shiftedFrom} (${this.regionOf(diagnostic.shiftedFrom)})`
+        + ` · delta ${diagnostic.delta >= 0 ? '+' : ''}${diagnostic.delta}`
+        + ` · viewportTop ${diagnostic.viewportTop}`
+        + ` · rows ${diagnostic.previousLines}→${diagnostic.newLines}`,
       ])
       return
     }
@@ -67,11 +79,12 @@ export class RenderDiagnostics {
 
   /** One-line session summary for `/log`; null when nothing happened. */
   summary(): string | null {
-    if (this.fullRedraws === 0 && this.staleEvents === 0) return null
+    if (this.fullRedraws === 0 && this.staleEvents === 0 && this.shifts === 0) return null
     const parts = [
       `${this.fullRedraws} full redraw(s) with scrollback cleared`,
       `${this.staleRows} stale scrollback row(s) over ${this.staleEvents} frame(s)`,
     ]
+    if (this.shifts > 0) parts.push(`${this.shifts} scrollback shift repaint(s)`)
     return `  Render: ${parts.join(' · ')}`
   }
 

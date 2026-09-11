@@ -460,9 +460,20 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   // source arrays are appended independently (expanded-only progress/thinking).
   const compactHistoryCache = new HistoryRenderCache()
   const expandedHistoryCache = new HistoryRenderCache()
+  /**
+   * Height of the committed prefix's two parts as last painted. The renderer
+   * treats that prefix as append-only by index, so a reshape must be announced.
+   * Tracked separately because only history may grow: a banner gaining a row
+   * pushes history down, which is a shift, not an append.
+   */
+  let committedBannerRows: number | null = null
+  let committedHistoryRows = 0
+  let committedPrefixMayReshape = false
   function resetHistoryCache() {
     compactHistoryCache.reset()
     expandedHistoryCache.reset()
+    // A rebuild can lay the same history out at a different height.
+    committedPrefixMayReshape = true
   }
 
   function nextCommandWindowGeneration(): number {
@@ -1320,9 +1331,21 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
     const cache = expanded ? expandedHistoryCache : compactHistoryCache
     const cachedHistoryLines = cache.sync(expanded ? expandedLines : compactLines, cols)
+    const bannerRows = blocksToLines(blocks).length
     // Rows above this index are committed transcript; render diagnostics use it
     // to attribute a repaint to history, the live partial, or the live region.
-    historyRowCount = blocksToLines(blocks).length + cachedHistoryLines.length
+    historyRowCount = bannerRows + cachedHistoryLines.length
+    // The renderer cannot patch scrollback, so a prefix that shifts instead of
+    // appending must be announced or it leaves a duplicated row and a lost one.
+    if (committedBannerRows !== null) {
+      const shifted = bannerRows !== committedBannerRows
+        || cachedHistoryLines.length < committedHistoryRows
+        || (committedPrefixMayReshape && cachedHistoryLines.length !== committedHistoryRows)
+      if (shifted) renderer.invalidateScrollback()
+    }
+    committedBannerRows = bannerRows
+    committedHistoryRows = cachedHistoryLines.length
+    committedPrefixMayReshape = false
     if (cachedHistoryLines.length > 0) {
       blocks.push({ lines: cachedHistoryLines.map(l => ({ spans: [{ text: l }] })), marginTop: 0 })
     }
@@ -1489,6 +1512,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
     return buildShellFrame({
       contentLines,
+      committedRows: historyRowCount,
       preEditorBlocks,
       prompt: getPromptVM(),
       overlay,
@@ -2613,6 +2637,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       else commitSystem('sys-log', '  No active screen log.')
       renderer.requestRender()
+      return
+    }
+
+    if (action === 'run_readonly_command') {
+      if (historyText) saveInputHistory(historyText)
+      clearAll()
+      void handleSlashInput(expandedText)
       return
     }
 

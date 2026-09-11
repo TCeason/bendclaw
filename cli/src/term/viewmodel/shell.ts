@@ -14,6 +14,8 @@ export type CommandPreview = { kind: 'help' } | { kind: 'selector'; state: Selec
 
 export interface ShellSnapshot {
   contentLines: string[]
+  /** Leading rows of `contentLines` that are append-only by index. */
+  committedRows?: number
   preEditorBlocks: ViewBlock[]
   prompt: PromptVMInput
   overlay: OverlayState
@@ -27,7 +29,11 @@ export interface ShellSnapshot {
 export function buildShellFrame(input: ShellSnapshot): RenderFrame {
   const { contentLines, prompt, overlay, preview } = input
   const preEditorLines = blocksToLines(input.preEditorBlocks)
-  const base = { bottomAnchor: true, bottomAnchorStart: contentLines.length }
+  const base = {
+    bottomAnchor: true,
+    bottomAnchorStart: contentLines.length,
+    ...(input.committedRows === undefined ? {} : { committedRows: input.committedRows }),
+  }
   if (overlay.kind === 'selector' && input.commandFocused && isCommandSelector(overlay.state)) {
     const selectorLines = buildCommandSelectorRegion(overlay.state, prompt.columns, prompt.rows, true)
     const promptLines = blocksToLines(buildPromptBlocks(prompt, {

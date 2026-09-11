@@ -667,6 +667,97 @@ describe('TermRenderer', () => {
       renderer.destroy()
     })
 
+    test('a live-region row shifting above the viewport is repainted, not left stale', async () => {
+      const screen = new ScreenHarness(80, 10)
+      const diagnostics: RendererDiagnostic[] = []
+      const renderer = new TermRenderer({
+        stdout: screen.stdout,
+        onDiagnostic: d => diagnostics.push(d),
+      })
+      renderer.init()
+      // 4 committed rows; everything after is live region.
+      let lines = Array.from({ length: 30 }, (_, i) => `row ${i}`)
+      renderer.setRenderCallback(() => ({ lines, committedRows: 4 }))
+      await paint(renderer, screen)
+
+      // A row is inserted inside the live region, above the viewport. Leaving
+      // scrollback alone would duplicate row 19 and lose INSERTED entirely.
+      lines = [...lines.slice(0, 4), 'INSERTED', ...lines.slice(4)]
+      await paint(renderer, screen)
+
+      expect(diagnostics.map(d => d.kind)).toEqual(['scrollback_shift', 'full_redraw'])
+      expect(diagnostics.map(d => d.kind === 'full_redraw' && d.branch)).toEqual([false, 'scrollback_shift'])
+      const buffer = screen.terminal.buffer.active
+      const rows: string[] = []
+      for (let i = 0; i < buffer.length; i++) {
+        rows.push((buffer.getLine(i)?.translateToString(true) ?? '').trimEnd())
+      }
+      // Every logical row exists exactly once, in order.
+      for (const line of lines) expect(rows).toContain(line)
+      expect(rows.filter(r => r === 'row 19')).toHaveLength(1)
+      renderer.destroy()
+    })
+
+    test('an in-place edit inside the committed prefix stays stale and cheap', async () => {
+      const screen = new ScreenHarness(80, 10)
+      const diagnostics: RendererDiagnostic[] = []
+      const renderer = new TermRenderer({
+        stdout: screen.stdout,
+        onDiagnostic: d => diagnostics.push(d),
+      })
+      renderer.init()
+      const lines = Array.from({ length: 30 }, (_, i) => `row ${i}`)
+      renderer.setRenderCallback(() => ({ lines, committedRows: 30 }))
+      await paint(renderer, screen)
+      screen.terminal.scrollLines(-8)
+      const readingTop = screen.terminal.buffer.active.viewportY
+
+      // Same row count, so no index shifts: outdated text costs the reader
+      // nothing and their scroll position is worth more than freshness.
+      lines[3] = 'row 3 edited'
+      await paint(renderer, screen)
+
+      expect(diagnostics.map(d => d.kind)).toEqual(['stale_scrollback'])
+      expect(screen.terminal.buffer.active.viewportY).toBe(readingTop)
+      renderer.destroy()
+    })
+
+    test('rows committed by this frame are judged against the old boundary', async () => {
+      const screen = new ScreenHarness(80, 10)
+      const diagnostics: RendererDiagnostic[] = []
+      const renderer = new TermRenderer({
+        stdout: screen.stdout,
+        onDiagnostic: d => diagnostics.push(d),
+      })
+      renderer.init()
+      // 4 history rows + a 13-row partial: the partial overhangs the viewport by 3.
+      const history = Array.from({ length: 4 }, (_, i) => `hist ${i}`)
+      const partial = Array.from({ length: 13 }, (_, i) => `partial ${i}`)
+      let lines = [...history, ...partial]
+      let committedRows = 4
+      renderer.setRenderCallback(() => ({ lines, committedRows }))
+      await paint(renderer, screen)
+
+      // A 5-row tool result commits into history, taller than the overhang, so
+      // every shifted partial row lands inside the viewport and the only rows
+      // changed above it are the new tool rows. Those are committed in the new
+      // frame; judged by the new boundary alone they would be left stale.
+      const tool = Array.from({ length: 5 }, (_, i) => `tool ${i}`)
+      lines = [...history, ...tool, ...partial]
+      committedRows = 9
+      await paint(renderer, screen)
+
+      expect(diagnostics.map(d => d.kind)).toEqual(['scrollback_shift', 'full_redraw'])
+      const buffer = screen.terminal.buffer.active
+      const rows: string[] = []
+      for (let i = 0; i < buffer.length; i++) {
+        rows.push((buffer.getLine(i)?.translateToString(true) ?? '').trimEnd())
+      }
+      for (const line of tool) expect(rows).toContain(line)
+      expect(rows.filter(r => r === 'partial 0')).toHaveLength(1)
+      renderer.destroy()
+    })
+
     test('a forced repaint reports its own cause, not a resize', async () => {
       const screen = new ScreenHarness(80, 10)
       const diagnostics: RendererDiagnostic[] = []

@@ -5,6 +5,14 @@ export interface RenderOverlay {
 
 export interface RenderFrame {
   lines: string[]
+  /**
+   * Leading rows that are append-only by index: a later frame may rewrite row
+   * `i`'s text but must never insert or delete rows before it. Reshaping this
+   * prefix requires an explicit `invalidateScrollback()`. Rows at or after this
+   * index are the live region, where a change above the viewport shifts
+   * unaddressable rows and forces a repaint. Defaults to the whole frame.
+   */
+  committedRows?: number
   /** Preserve the trailing edge only after durable content naturally reaches
    * the viewport bottom; this never initially pins a short conversation. */
   bottomAnchor?: boolean
