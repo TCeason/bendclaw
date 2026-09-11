@@ -55,6 +55,16 @@ export function darkTheme(): Theme {
     toolCardBg: '#262838',
     diffAddedBg: '#213a2f',
     diffRemovedBg: '#43262e',
+    // Zed's second layer: changed tokens get their own, stronger fill instead
+    // of inverse video (SGR 7), which on most terminals flips to the terminal's
+    // own palette and tears a bright hole through the card. Contrast against
+    // both the row tint and this fill: add 7.83 / 4.03, del 7.83 / 5.45.
+    diffAddedFg: '#8fe0a8',
+    diffRemovedFg: '#f8b3bd',
+    diffAddedWordBg: '#2f6b49',
+    diffRemovedWordBg: '#7a2b3a',
+    diffGutterFg: '#6f7488',
+    diffContextFg: '#8b90a4',
 
     text: plain,
     // Hue, not just weight: terminals whose font lacks a bold face drop SGR 1,

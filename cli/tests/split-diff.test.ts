@@ -57,3 +57,47 @@ test('live and settled cards share responsive layout', () => {
     expect(blocksToLines(buildOutputBlocks(lines, { columns: 80 })).map(stripAnsi).join('\n')).not.toContain('│')
   }
 })
+
+/** Two hunks far enough apart that the patch keeps them separate. */
+const twoHunkPatch = () => {
+  const base = Array.from({ length: 40 }, (_, index) => `line ${index}`)
+  const next = [...base]
+  next[2] = 'changed early'
+  next[33] = 'changed late'
+  return createPatch('a.ts', base.join('\n') + '\n', next.join('\n') + '\n')
+}
+
+test('skipped regions read as a rule, in both unified and split layouts', () => {
+  for (const width of [80, 140]) {
+    const rows = buildDiffLines(twoHunkPatch(), width).map(row => stripAnsi(row.spans.map(s => s.text).join('')))
+    const rule = rows.find(row => row.includes('┄'))
+    expect(rule).toBeDefined()
+    // Indented like the rest of the body, and never wider than the pane.
+    expect(rule!.startsWith('  ')).toBe(true)
+    expect(stringWidth(rule!)).toBe(width)
+    expect(rows.some(row => row.trim() === '…')).toBe(false)
+  }
+})
+
+test('an unknown width falls back to the ellipsis, which needs no measure', () => {
+  const rows = buildDiffLines(twoHunkPatch()).map(row => stripAnsi(row.spans.map(s => s.text).join('')))
+  expect(rows.some(row => row.includes('┄'))).toBe(false)
+  expect(rows.some(row => row.trim() === '…')).toBe(true)
+})
+
+test('one gutter width spans every hunk in split layout', () => {
+  const rows = buildDiffLines(twoHunkPatch(), 140)
+    .map(row => stripAnsi(row.spans.map(s => s.text).join('')))
+    .filter(row => row.includes('│'))
+  const widths = new Set(rows.map(row => row.match(/^(\s*\d+) /)?.[1]?.length))
+  expect(widths.size).toBe(1)
+  expect([...widths][0]).toBe(2)
+})
+
+test('diff chrome shares one recessed hue across gutter, rule, and divider', () => {
+  const theme = getTheme()
+  const rows = buildDiffLines(twoHunkPatch(), 140)
+  const hues = rows.flatMap(row => row.spans.filter(s => s.text.includes('│') || s.text.includes('┄')).map(s => s.hex))
+  expect(hues.length).toBeGreaterThan(0)
+  expect(new Set(hues)).toEqual(new Set([theme.diffGutterFg]))
+})

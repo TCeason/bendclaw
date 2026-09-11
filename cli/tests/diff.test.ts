@@ -1,6 +1,11 @@
-import { describe, test, expect } from 'bun:test'
-import { formatDiff, colorizeUnifiedDiff } from '../src/render/diff.js'
+import { beforeAll, describe, test, expect } from 'bun:test'
+import chalk from 'chalk'
+import { formatDiff, colorizeUnifiedDiff, colorizeUnifiedDiffRows } from '../src/render/diff.js'
+import { getTheme } from '../src/render/theme/index.js'
 import stripAnsi from 'strip-ansi'
+
+// Colour assertions below need truecolor SGR; bun test has no TTY.
+beforeAll(() => { chalk.level = 3 })
 
 describe('formatDiff', () => {
   test('detects added lines', () => {
@@ -105,3 +110,81 @@ describe('word-level diff', () => {
     expect(result.linesRemoved).toBe(1)
   })
 })
+
+/** Truecolor background SGR chalk emits for a theme hex, at level 3. */
+function bgSgr(hex: string): string {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16))
+  return `\x1b[48;2;${r};${g};${b}m`
+}
+
+describe('diff row styling', () => {
+  test('changed tokens carry their own fill instead of inverse video', () => {
+    const theme = getTheme()
+    const result = formatDiff('function oldName(param) {\n', 'function newName(param) {\n')
+
+    // Inverse (SGR 7) flips to the terminal's own palette and tears a bright
+    // hole through the card fill. Zed gives changed tokens a fill instead.
+    expect(result.text).not.toContain('\x1b[7m')
+    expect(result.text).toContain(bgSgr(theme.diffAddedWordBg))
+    expect(result.text).toContain(bgSgr(theme.diffRemovedWordBg))
+  })
+
+  test('a whole-line change gets row ink but no word fill', () => {
+    const theme = getTheme()
+    // Past WORD_DIFF_THRESHOLD, so there is nothing meaningful to fill.
+    const result = formatDiff('completely different here\n', 'nothing similar at all\n')
+    expect(result.text).not.toContain(bgSgr(theme.diffAddedWordBg))
+    expect(result.text).not.toContain(bgSgr(theme.diffRemovedWordBg))
+  })
+
+  test('the sigil stays contiguous with its code under strip-ansi', () => {
+    // Card rendering asserts on the diff body as plain text, so escapes must not
+    // land between the marker and the line it marks.
+    const rows = colorizeUnifiedDiffRows('@@ -1,2 +1,2 @@\n line1\n-removed line\n+added line')
+    const plain = rows.map(row => stripAnsi(row.text)).join('\n')
+    expect(plain).toContain('-removed line')
+    expect(plain).toContain('+added line')
+  })
+})
+
+describe('gutter width', () => {
+  // Two hunks straddling a digit boundary: hunk 1 needs one column, hunk 2 needs
+  // two. Sizing per hunk jogs the columns mid-patch (`3 ` then `30 `).
+  const twoHunks = [
+    '@@ -1,4 +1,4 @@', ' line1', '-old2', '+new2', ' line3', ' line4',
+    '@@ -30,3 +30,3 @@', ' line30', '-old31', '+new31', ' line32',
+  ].join('\n')
+
+  test('one patch keeps one gutter width across every hunk', () => {
+    const widths = new Set(
+      colorizeUnifiedDiffRows(twoHunks)
+        .filter(row => row.kind !== 'ellipsis')
+        .map(row => stripAnsi(row.text).match(/^(\s*\d+) /)?.[1]?.length),
+    )
+    expect(widths.size).toBe(1)
+    expect([...widths][0]).toBe(2)
+  })
+
+  test('minGutter floors the width without shrinking a wider patch', () => {
+    const wide = colorizeUnifiedDiffRows(twoHunks, true, 4)
+      .filter(row => row.kind !== 'ellipsis')
+      .map(row => stripAnsi(row.text).match(/^(\s*\d+) /)?.[1]?.length)
+    expect(new Set(wide).size).toBe(1)
+    expect(wide[0]).toBe(4)
+  })
+
+  test('formatDiff sizes its gutter across the whole patch too', () => {
+    const base = Array.from({ length: 40 }, (_, index) => `line ${index}`)
+    const next = [...base]
+    next[2] = 'changed early'
+    next[33] = 'changed late'
+    const plain = stripAnsi(formatDiff(base.join('\n') + '\n', next.join('\n') + '\n').text)
+    const widths = new Set(
+      plain.split('\n')
+        .map(row => row.match(/^(\s*\d+) /)?.[1]?.length)
+        .filter((width): width is number => width !== undefined),
+    )
+    expect(widths.size).toBe(1)
+  })
+})
+

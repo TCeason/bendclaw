@@ -48,6 +48,24 @@ export interface Theme {
   toolCardBg: string
   diffAddedBg: string
   diffRemovedBg: string
+  /**
+   * Diff foregrounds and word-level fills, following Zed's version-control
+   * layering: the row tint says *which side* a line is on, a stronger fill
+   * marks the *changed tokens* inside it, and the ink stays bright enough to
+   * read on both. Zed uses `version_control_word_added/deleted` for exactly
+   * this second layer; we cannot reuse its alphas (they are composited over a
+   * neutral editor background, and over our periwinkle card fill the red one
+   * lands on purple), so these are recomputed against `toolCardBg` and checked
+   * for WCAG AA against both the row tint and the word fill.
+   */
+  diffAddedFg: string
+  diffRemovedFg: string
+  diffAddedWordBg: string
+  diffRemovedWordBg: string
+  /** Line-number column: present but recessed, so the code reads first. */
+  diffGutterFg: string
+  /** Unchanged context rows inside a diff. */
+  diffContextFg: string
 
   // Inline
   text: Style

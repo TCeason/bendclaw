@@ -40,6 +40,14 @@ export function lightTheme(): Theme {
     toolCardBg: '#eceef5',
     diffAddedBg: '#d3ecdc',
     diffRemovedBg: '#f6d8dc',
+    // See dark.ts: changed tokens get a stronger fill instead of inverse video.
+    // Contrast against row tint / word fill: add 6.49 / 5.16, del 6.88 / 5.08.
+    diffAddedFg: '#0f5c2c',
+    diffRemovedFg: '#8f1424',
+    diffAddedWordBg: '#a9d9bd',
+    diffRemovedWordBg: '#f0b0bc',
+    diffGutterFg: '#7a8092',
+    diffContextFg: '#5b6070',
 
     text: plain,
     // See darkTheme: emphasis needs a hue, darker gold to hold contrast on white.
