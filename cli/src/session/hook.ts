@@ -57,6 +57,12 @@ function defaultSpawn(command: string, cwd?: string): HookProcess {
     stdin: 'pipe',
     stdout: 'ignore',
     stderr: 'ignore',
+    // New session, so the adapter cannot reach evot's controlling terminal and
+    // take the foreground — that stops evot with SIGTTIN, which the shell
+    // reports as `suspended (tty input)`. Costs the SIGHUP an adapter would
+    // otherwise get when the terminal closes; shutdown already relies on stdin
+    // EOF, and an adapter ignoring that would have outlived `/exit` regardless.
+    detached: true,
   }) as unknown as HookProcess
 }
 

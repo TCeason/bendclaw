@@ -14,7 +14,7 @@ use evotengine::types::Content;
 use evotengine::types::ToolContext;
 use tokio_util::sync::CancellationToken;
 
-fn context(name: &str, output_dir: &std::path::Path) -> ToolContext {
+pub fn context(name: &str, output_dir: &std::path::Path) -> ToolContext {
     ToolContext {
         tool_call_id: format!("{}-call", name),
         tool_name: name.to_string(),
@@ -30,13 +30,13 @@ fn context(name: &str, output_dir: &std::path::Path) -> ToolContext {
     }
 }
 
-fn task_id(result: &evotengine::ToolResult) -> Result<&str, Box<dyn Error>> {
+pub fn task_id(result: &evotengine::ToolResult) -> Result<&str, Box<dyn Error>> {
     result.details["task_id"]
         .as_str()
         .ok_or_else(|| "missing task_id".into())
 }
 
-fn text(result: &evotengine::ToolResult) -> String {
+pub fn text(result: &evotengine::ToolResult) -> String {
     result
         .content
         .iter()

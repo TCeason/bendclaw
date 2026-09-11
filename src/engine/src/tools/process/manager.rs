@@ -12,7 +12,6 @@ use std::sync::LazyLock;
 use std::time::Duration;
 use std::time::Instant;
 
-use command_group::AsyncCommandGroup;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use tokio::io::AsyncRead;
@@ -22,6 +21,8 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use super::spawn::kill_process_group;
+use super::spawn::SpawnedChild;
 use super::types::BackgroundReason;
 use super::types::ProcessSnapshot;
 use super::types::ProcessStatus;
@@ -303,7 +304,7 @@ impl ProcessManager {
         request.command.stdin(std::process::Stdio::null());
         request.command.stdout(std::process::Stdio::piped());
         request.command.stderr(std::process::Stdio::piped());
-        let mut child = match request.command.group_spawn() {
+        let mut child = match SpawnedChild::spawn(&mut request.command) {
             Ok(child) => child,
             Err(error) => {
                 if let Err(remove_error) = std::fs::remove_file(&output_path) {
@@ -314,11 +315,11 @@ impl ProcessManager {
                 return Err(ToolError::Failed(format!("Failed to execute: {error}")));
             }
         };
-        let stdout = child.inner().stdout.take();
-        let stderr = child.inner().stderr.take();
-        // `group_spawn` puts the child in its own process group whose id equals
-        // the leader pid, so this is also the pgid to signal on exit paths.
-        let pgid = child.id();
+        let stdout = child.stdout();
+        let stderr = child.stderr();
+        // A spawned child leads its own session, so the leader pid is also the
+        // pgid to signal on exit paths.
+        let pgid = child.pgid();
 
         let task = Arc::new(ProcessTask {
             id: task_id.clone(),
@@ -989,25 +990,6 @@ fn remove_output_file(path: &std::path::Path) {
             tracing::warn!(%error, path = %path.display(), "background process output cleanup failed");
         }
     }
-}
-
-/// Send `SIGKILL` to a whole process group, synchronously.
-///
-/// Returns whether the signal was delivered. A group that has already exited
-/// reports `false`, which is expected and not an error.
-#[cfg(unix)]
-fn kill_process_group(pgid: u32) -> bool {
-    let Ok(pgid) = i32::try_from(pgid) else {
-        return false;
-    };
-    // SAFETY: `killpg` takes a process-group id and a signal number, and has no
-    // memory-safety contract. An invalid or already-reaped group returns -1.
-    unsafe { libc::killpg(pgid, libc::SIGKILL) == 0 }
-}
-
-#[cfg(not(unix))]
-fn kill_process_group(_pgid: u32) -> bool {
-    false
 }
 
 fn format_notification(snapshot: &ProcessSnapshot) -> String {

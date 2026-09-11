@@ -1,4 +1,5 @@
 mod manager;
+mod spawn;
 mod task_output;
 mod task_stop;
 mod types;
