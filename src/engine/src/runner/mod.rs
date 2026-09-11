@@ -3,7 +3,6 @@ mod config;
 mod driver;
 pub(crate) mod event_sink;
 
-pub(crate) mod assistant_sanitize;
 pub(crate) mod doom_loop;
 mod llm_call;
 mod thinking_only_guard;

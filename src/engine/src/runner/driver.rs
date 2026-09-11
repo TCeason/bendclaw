@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use super::assistant_sanitize::sanitize_assistant_message;
 use super::compaction_check::check_compaction;
 use super::compaction_check::CompactionCheckInput;
 use super::compaction_check::CompactionCheckPhase;
@@ -340,12 +339,7 @@ async fn run_loop(
             .await;
         let message = assistant_result.message;
 
-        // Strip any `<system-reminder>` / `<system>` tags or status-template
-        // preambles the model may have mimicked from reminders it saw in
-        // context. Without this, the fake tags land back in the prompt next
-        // turn and teach the model to keep producing them.
-        let message = sanitize_assistant_message(message);
-
+        // Preserve provider text so finalization cannot erase streamed content.
         let agent_msg: AgentMessage = message.clone().into();
         context.messages.push(agent_msg.clone());
         new_messages.push(agent_msg.clone());

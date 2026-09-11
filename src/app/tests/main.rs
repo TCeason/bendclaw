@@ -4,6 +4,7 @@ mod agent_prompt_test;
 mod agent_thinking_test;
 #[path = "agent_variable_test.rs"]
 mod agent_variable_test;
+mod assistant_content_preservation_test;
 mod auth_recovery_test;
 #[path = "auth_test.rs"]
 mod auth_test;

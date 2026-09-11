@@ -6,6 +6,8 @@ mod callbacks;
 mod common;
 #[path = "run/compaction.rs"]
 mod compaction;
+#[path = "run/content_preservation.rs"]
+mod content_preservation;
 #[path = "run/core.rs"]
 mod core;
 #[path = "run/retry.rs"]
