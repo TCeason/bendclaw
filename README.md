@@ -12,10 +12,8 @@
 
 ## 📢 News
 
+- **2026-09-11** `GPT-5.6 Luna` is free through Sep 18 🎉 — just `evot login`.
 - **2026-09-02** `ctrl+b` backgrounds a long-running command so you can keep talking.
-- **2026-09-01** `GPT-5.6 Luna` is free through Sep 3 🎉.
-- **2026-08-31** [herdr](https://herdr.dev) works with evot 🐑 — point `EVOT_SESSION_HOOK` at an adapter and your panes show `working` / `blocked` / `idle` live.
-- **2026-08-27** `GPT-5.6 Luna` is free through Aug 31 🎉 — just `evot login`.
 - **2026-08-24** Free model of the week: [`stealth/ox-alpha`](https://openrouter.ai/stealth/ox-alpha) — free on OpenRouter for a week.
 
 ## Less harness. More model.
@@ -35,6 +33,19 @@ Same task and environment, three agents × three models. Cost and tool calls—n
 > Task: fix a real bug in serde_json ([issue #979](https://github.com/serde-rs/json/issues/979)) end to end.
 
 All nine runs pass. In this eval, evot costs **72–78% less** than Claude Code, with **fewer tool calls** on every model.
+
+Latest models on the same task — [full eval list](https://trace.evot.ai/#comparisons) on **trace.evot.ai**:
+
+| Model | Eval |
+| --- | --- |
+| DeepSeek V4.1 Flash | [run-210](https://trace.evot.ai/#comparisons/run-210) |
+| GPT-6 Astra | [run-205](https://trace.evot.ai/#comparisons/run-205) |
+| Claude Fable 5.1 | [run-202](https://trace.evot.ai/#comparisons/run-202) |
+| GLM-5.3 Flash | [run-199](https://trace.evot.ai/#comparisons/run-199) |
+| stealth/ox-alpha | [run-194](https://trace.evot.ai/#comparisons/run-194) |
+| DeepSeek V4 Pro | [run-192](https://trace.evot.ai/#comparisons/run-192) |
+| GLM-5.3 | [run-187](https://trace.evot.ai/#comparisons/run-187) |
+| Grok 4.6 | [run-183](https://trace.evot.ai/#comparisons/run-183) |
 
 ## Installation
 
@@ -58,31 +69,6 @@ make setup && make install
 ```bash
 evot login     # follow the prompts; you land straight in the TUI after login
 ```
-
-```bash
-evot           # interactive TUI
-evot -c        # continue the latest session in this directory
-```
-
-> In the TUI: `/help` lists all commands.
-
-## Session names
-
-Open `/sessions` (or `/resume`), select a session, and press `ctrl+r` to rename it.
-Use `enter` to save or `esc` to cancel. Names are searchable and stay unchanged as
-the conversation continues. Renaming does not change session activity order.
-
-## External session hooks
-
-Evot can emit generic session lifecycle events to an external executable without embedding integration-specific code:
-
-```bash
-EVOT_SESSION_HOOK=/path/to/session-adapter evot
-```
-
-The adapter receives one versioned NDJSON object per line on stdin. Events include `session_started`, `run_started`, `run_finished`, `run_failed`, `state_changed`, and `session_ended`; `state_changed.state` is `working`, `blocked`, or `idle`. Session identity is available as `session_id`, and run identity as `run_id`.
-
-The hook is best-effort: a missing or failing adapter never changes evot's main execution path. The same protocol is used by the interactive TUI and one-shot `evot -p` mode, so adapters can remain independent of the UI.
 
 <details>
 <summary>Custom configuration (bring your own models via <code>~/.evotai/evot.env</code>)</summary>
