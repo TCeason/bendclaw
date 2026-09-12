@@ -145,7 +145,7 @@ describe('renderSelector via viewmodel', () => {
     expect(lines[5]).toBe('models.')
     expect(lines[7]).toStartWith('>  ')
     expect(lines[9]).toBe('  openai')
-    expect(lines[10]).toBe('❯ grok-4.5 ✓')
+    expect(lines[10]).toBe('· grok-4.5 ✓')
     expect(lines[11]).toBe('')
     expect(lines[12]).toBe('  droid')
     // Idle model rows carry a `·` gutter; only group headings keep two spaces.
@@ -189,7 +189,7 @@ describe('renderSelector via viewmodel', () => {
     // Typing keeps focus in the search input, but the current row retains the
     // same complete visual state used by every selector. The match still sits
     // under its own provider heading, named once.
-    expect(text).toContain('  droid\n❯ gpt-5.6-sol')
+    expect(text).toContain('  droid\n· gpt-5.6-sol')
     expect(text).not.toContain('[droid]')
   })
 
@@ -212,7 +212,7 @@ describe('renderSelector via viewmodel', () => {
 
     expect(lines.slice(listStart, listStart + 8)).toEqual([
       '  openai',
-      '❯ gpt-5.6-sol ✓',
+      '· gpt-5.6-sol ✓',
       '· grok-4.5',
       '',
       '  anthropic',
@@ -299,7 +299,7 @@ describe('renderSelector via viewmodel', () => {
     const state = createSelectorState('T', items)
     const lines = blocksToLines(buildOverlayBlocks({ kind: 'selector', state }, 80))
     const text = lines.map(l => stripAnsi(l)).join('\n')
-    expect(text).toContain('❯ claude-opus')
+    expect(text).toContain('· claude-opus')
   })
 
   test('shows navigation hint', () => {
@@ -360,9 +360,9 @@ describe('renderSelector via viewmodel', () => {
     ])
     const lines = blocksToLines(buildOverlayBlocks({ kind: 'selector', state }, 80))
     const text = lines.map(l => stripAnsi(l)).join('\n')
-    expect(text).toContain('── anthropic ──\n❯ claude-opus\n\n── openai ──')
+    expect(text).toContain('── anthropic ──\n· claude-opus\n\n── openai ──')
     expect(text).toContain('── openai ──')
-    expect(text).toContain('❯ claude-opus')
+    expect(text).toContain('· claude-opus')
     // Headers and spacing rows do not count as selectable items in the title tally.
     expect(text).toContain('Models  2')
   })
@@ -392,7 +392,7 @@ describe('renderSelector via viewmodel', () => {
       .map(part => Number.parseInt(part, 16))
 
     expect(preview).toContain(`\x1b[48;2;${red};${green};${blue}m`)
-    expect(stripAnsi(preview)).toContain('❯ gpt-4o ✓')
+    expect(stripAnsi(preview)).toContain('· gpt-4o ✓')
   })
 
   test('model preview omits the selector cursor while the composer is focused', () => {
@@ -452,8 +452,8 @@ describe('renderSelector via viewmodel', () => {
 
     expect(preview).toContain(background)
     expect(focused).toContain(background)
-    expect(stripAnsi(preview)).toContain('❯ 01a06b6f  repl  current session')
-    expect(stripAnsi(focused)).toContain('❯ 01a06b6f  repl  current session')
+    expect(stripAnsi(preview)).toContain('· 01a06b6f  repl  current session')
+    expect(stripAnsi(focused)).toContain('· 01a06b6f  repl  current session')
   })
 })
 

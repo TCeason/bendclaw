@@ -110,7 +110,7 @@ describe('background panel rendering', () => {
 
   test('the focused row is marked and rows carry a parenthesised status', () => {
     const lines = render([proc({ command: 'bun run dev' })])
-    expect(lines.some(l => l.startsWith('❯ bun run dev'))).toBe(true)
+    expect(lines.some(l => l.startsWith('· bun run dev'))).toBe(true)
     expect(lines.find(l => l.includes('bun run dev'))).toContain('(running · 2s)')
   })
 

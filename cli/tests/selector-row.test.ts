@@ -15,10 +15,10 @@ describe('buildSelectorRow', () => {
 
     expect(row.bg).toBe(getTheme().selectionBgHex)
     expect(row.spans.every(span => span.bg === getTheme().selectionBgHex)).toBe(true)
-    expect(row.spans[0]?.text).toBe('❯ ')
+    expect(row.spans[0]?.text).toBe('· ')
     expect(row.spans[0]?.hex).toBe(getTheme().brandHex)
     expect(row.spans[1]?.hex).toBe(getTheme().brandHex)
-    expect(styledLineToAnsi(row)).toContain('❯')
+    expect(styledLineToAnsi(row)).toContain('·')
   })
 
   test('uses the same palette for model and generic rows', () => {
@@ -51,10 +51,18 @@ describe('buildSelectorRow', () => {
     expect(row.spans.every(span => span.bg === undefined)).toBe(true)
   })
 
-  test('a list that does not opt in keeps its blank gutter', () => {
-    const row = buildSelectorRow({ label: '01a06b6f', detail: 'repl' }, { highlighted: false })
+  test('every row carries the same gutter marker, current or not', () => {
+    // The marker no longer signals selection: one glyph on every row, so the
+    // gutter column cannot differ in width between a row and its neighbours.
+    const idle = buildSelectorRow({ label: '01a06b6f', detail: 'repl' }, { highlighted: false })
+    const current = buildSelectorRow({ label: '01a06b6f', detail: 'repl' }, { highlighted: true })
 
-    expect(row.spans[0]?.text).toBe('  ')
-    expect(row.bg).toBeUndefined()
+    expect(idle.spans[0]?.text).toBe('· ')
+    expect(current.spans[0]?.text).toBe('· ')
+    expect(idle.bg).toBeUndefined()
+    // Only colour, weight and band mark the current row.
+    expect(current.bg).toBe(getTheme().selectionBgHex)
+    expect(current.spans[0]?.hex).toBe(getTheme().brandHex)
+    expect(idle.spans[0]?.hex).toBe(getTheme().mutedHex)
   })
 })

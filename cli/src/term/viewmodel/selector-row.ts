@@ -2,15 +2,15 @@ import { getTheme } from '../../render/theme/index.js'
 import type { SelectorItem } from '../selector.js'
 import { colored, dim, line, plain, type StyledLine, type StyledSpan } from './types.js'
 
+/** Gutter glyph on every selectable row, current or not. Shared so `/model`,
+ *  `/skill`, `/resume` and the queue cannot drift into separate markers. */
+export const ROW_MARKER = '·'
+
 export interface SelectorRowOptions {
   /** The row represented by `focusIndex`, even while the composer/filter owns input. */
   highlighted: boolean
   /** Optional filter text. Matches are emphasized only on non-highlighted rows. */
   query?: string
-  /** Mark idle rows with a leading `·` instead of blank space, so every row in
-   *  the list reads as a choice rather than only the current one. Opt-in: lists
-   *  that predate it keep their blank gutter. */
-  idleMarker?: boolean
   /** Models use a compact detail/tag gap; generic selectors use two cells. */
   detailGap?: string
 }
@@ -18,25 +18,26 @@ export interface SelectorRowOptions {
 /**
  * Render one selectable row with the shared selection treatment.
  *
- * A current row is one indivisible visual state: pointer, brand foreground,
- * weight, and background always travel together. Keyboard ownership belongs to
- * the selector controller and must not make `/mo`, `/resume`, or a submitted
- * selector draw the same current item differently.
+ * A current row is one indivisible visual state: brand foreground, weight, and
+ * background always travel together. Keyboard ownership belongs to the selector
+ * controller and must not make `/mo`, `/resume`, or a submitted selector draw
+ * the same current item differently.
  */
 export function buildSelectorRow(item: SelectorItem, options: SelectorRowOptions): StyledLine {
   const {
     highlighted,
     query = '',
-    idleMarker = false,
     detailGap = '  ',
   } = options
   const { brandHex, mutedHex, selectionBgHex, selectionMutedHex } = getTheme()
   const bg = highlighted ? selectionBgHex : undefined
+  // One gutter glyph for every row: the current row is marked by colour, weight
+  // and band, never by a different shape. A pointer that only the current row
+  // carried made its gutter a different width from its neighbours' on terminals
+  // that draw `·` wide, which is the column this list is aligned against.
   const prefix: StyledSpan = highlighted
-    ? { text: '❯ ', hex: brandHex, bold: true, bg }
-    : idleMarker
-      ? { text: '· ', hex: mutedHex }
-      : plain('  ')
+    ? { text: `${ROW_MARKER} `, hex: brandHex, bold: true, bg }
+    : { text: `${ROW_MARKER} `, hex: mutedHex }
 
   const label = highlighted
     ? [{ text: item.label, hex: brandHex, bold: true, bg }]

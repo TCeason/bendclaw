@@ -155,11 +155,6 @@ function buildModelSelectorRegionLines(state: SelectorState, width: number, acti
     const row = buildSelectorRow(item, {
       highlighted,
       query: state.query,
-      // Devin marks every idle row with a `·` gutter and leaves its label at
-      // full strength, so the list reads as a set of choices and the accent
-      // alone says which one is current (measured from the binary's palette:
-      // idle label `--text-primary`, idle gutter `--text-muted`).
-      idleMarker: true,
       detailGap: ' ',
     })
     rowRefs.push({ item, width: spansWidth(row.spans), at: pageLines.length, focused: highlighted })

@@ -381,7 +381,7 @@ describe('renderAsk via viewmodel', () => {
 
   test('shows focus indicator', () => {
     const state = createAskState(singleQuestion)
-    expect(renderAskVM(state)).toContain('❯')
+    expect(renderAskVM(state)).toContain('·')
   })
 
   test('multi question shows tab bar', () => {

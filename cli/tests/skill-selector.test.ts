@@ -107,7 +107,7 @@ describe('skill browser', () => {
     const focused = selectorFocusOn(selectorType(state, 'member-9'), item => item.id === 'lark-member-9')
     const text = render(focused).join('\n')
     expect(text).toContain('lark/')
-    expect(text).toContain('❯     member-9')
+    expect(text).toContain('·     member-9')
     expect(text).toContain('Official')
     expect(text).not.toContain('[official]')
     expect(text).toContain('lark-member-9')

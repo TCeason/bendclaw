@@ -2,12 +2,13 @@ import { wrapTextWithAnsi } from '../../render/wrap.js'
 import { blocksToLines, styledLineToAnsi } from './types.js'
 import type { AskState } from '../ask.js'
 import { CURSOR_MARKER } from '../render-frame.js'
+import { ROW_MARKER } from './selector-row.js'
 import { line, block, plain, dim, bold, colored, inverse, type ViewBlock, type StyledSpan, type StyledLine } from './types.js'
 
 const CHECKBOX_ON = '☒'
 const CHECKBOX_OFF = '☐'
 const TICK = '✓'
-const POINTER = '❯'
+const POINTER = ROW_MARKER
 const BULLET = '•'
 const ARROW_RIGHT = '→'
 
