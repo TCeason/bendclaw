@@ -321,7 +321,7 @@ describe.skipIf(!canRun)('evot binary smoke (PTY)', () => {
       expect(preview).toContain('/m')
       const activeModel = preview.match(/Model Name: ([^\r\n]+)/)?.[1]?.trim()
       expect(activeModel).toBeTruthy()
-      expect(preview).toContain(`❯ ${activeModel}`)
+      expect(preview).toContain(`· ${activeModel}`)
       expect(session.outputSince()).toContain(selectionBackgroundAnsi())
 
       // Continued typing still belongs to the composer, not the model filter.
@@ -465,7 +465,7 @@ describe.skipIf(!canRun)('evot binary smoke (PTY)', () => {
       // the complete shared current-row treatment before keyboard promotion.
       const populated = await session.waitFor(createdSessionId!)
       expect(populated).toContain('Resume session')
-      expect(populated).toMatch(new RegExp(`❯\\s+${createdSessionId}`))
+      expect(populated).toMatch(new RegExp(`·\\s+${createdSessionId}`))
       expect(session.outputSince()).toContain(selectionBackgroundAnsi())
 
       // An ambiguous bare slash is a bridge between command windows. Keep the
