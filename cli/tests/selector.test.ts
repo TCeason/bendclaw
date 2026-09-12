@@ -922,34 +922,31 @@ describe('searchText field', () => {
   })
 
   test('snippets are built for rows that are read, not for every match', () => {
-    // A one-letter query matches thousands of rows while only ~10 are drawn.
-    // Cutting a snippet out of every matched transcript up front is what made
-    // the first keystroke stall, so `detail` resolves on access instead.
-    const bulk = Array.from({ length: 3000 }, (_, index) => ({
+    const prefixReads = Array<number>(12).fill(0)
+    const bulk = prefixReads.map((_, index) => ({
       label: `session-${index}`,
       detail: 'title',
-      searchText: `session-${index} ${'Payment timeout on checkout '.repeat(300)}`,
+      searchText: `session-${index} Payment timeout on checkout`,
+      get contextPrefix() {
+        prefixReads[index] = prefixReads[index]! + 1
+        return 'Resume: '
+      },
     }))
-    let state = createSelectorState('Resume session', bulk)
-    // Warm the lowercase cache so this measures snippet work alone.
-    const cancel = warmSearchableText(bulk)
-    for (const item of bulk) void item.searchText.toLowerCase()
-    cancel()
+    const state = selectorType(createSelectorState('Resume session', bulk), 'p')
 
-    const started = performance.now()
-    state = selectorType(state, 'p')
-    const elapsed = performance.now() - started
+    expect(state.items).toHaveLength(bulk.length)
+    // Copying each row reads its prefix once; resolving a snippet reads it again.
+    expect(prefixReads).toEqual(Array(12).fill(1))
 
-    expect(state.items.length).toBe(3000)
-    expect(elapsed).toBeLessThan(60)
-
-    // Reading a row still yields its snippet, in the original casing, and
-    // reading is idempotent.
     const first = state.items[0]!
+    expect(first.detail).toContain('Resume: ')
     expect(first.detail).toContain('Payment')
-    expect(first.detail).toBe(first.detail)
-    // Snippets are enumerable properties, so spreading a row keeps its detail.
+    expect(prefixReads).toEqual([2, ...Array(11).fill(1)])
     expect({ ...first }.detail).toBe(first.detail)
+    expect(prefixReads).toEqual([2, ...Array(11).fill(1)])
+
+    expect(state.items[1]!.detail).toContain('Payment')
+    expect(prefixReads).toEqual([2, 2, ...Array(10).fill(1)])
   })
 
   test('warmSearchableText yields between slices and is cancellable', async () => {
