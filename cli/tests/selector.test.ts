@@ -350,7 +350,7 @@ describe('renderSelector via viewmodel', () => {
     expect(text).toContain('gpt-5.6-sol@cursor')
   })
 
-  test('renders provider group headers as dividers', () => {
+  test('renders provider group headers the same way every list does', () => {
     const state = createSelectorState('Models', [
       { label: 'anthropic', header: true, focusable: false },
       { label: 'claude-opus' },
@@ -360,8 +360,10 @@ describe('renderSelector via viewmodel', () => {
     ])
     const lines = blocksToLines(buildOverlayBlocks({ kind: 'selector', state }, 80))
     const text = lines.map(l => stripAnsi(l)).join('\n')
-    expect(text).toContain('── anthropic ──\n· claude-opus\n\n── openai ──')
-    expect(text).toContain('── openai ──')
+    // One heading treatment across /model, /skill and /resume: indented accent
+    // label, blank line between groups. No per-list divider rule.
+    expect(text).toContain('  anthropic\n· claude-opus\n\n  openai')
+    expect(text).not.toContain('── ')
     expect(text).toContain('· claude-opus')
     // Headers and spacing rows do not count as selectable items in the title tally.
     expect(text).toContain('Models  2')

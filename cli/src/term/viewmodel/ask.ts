@@ -2,13 +2,13 @@ import { wrapTextWithAnsi } from '../../render/wrap.js'
 import { blocksToLines, styledLineToAnsi } from './types.js'
 import type { AskState } from '../ask.js'
 import { CURSOR_MARKER } from '../render-frame.js'
-import { ROW_MARKER } from './selector-row.js'
+import { getTheme } from '../../render/theme/index.js'
+import { rowMarker } from './selector-row.js'
 import { line, block, plain, dim, bold, colored, inverse, type ViewBlock, type StyledSpan, type StyledLine } from './types.js'
 
 const CHECKBOX_ON = '☒'
 const CHECKBOX_OFF = '☐'
 const TICK = '✓'
-const POINTER = ROW_MARKER
 const BULLET = '•'
 const ARROW_RIGHT = '→'
 
@@ -68,11 +68,11 @@ export function buildAskBlocks(state: AskState, _columns: number): ViewBlock[] {
     const submitFocused = state.submitFocus === 0
     const cancelFocused = state.submitFocus === 1
     result.push(line(
-      submitFocused ? colored(`${POINTER} `, 'cyan') : plain('  '),
+      submitFocused ? rowMarker(true) : plain('  '),
       submitFocused ? bold('Submit answers') : plain('Submit answers'),
     ))
     result.push(line(
-      cancelFocused ? colored(`${POINTER} `, 'cyan') : plain('  '),
+      cancelFocused ? rowMarker(true) : plain('  '),
       cancelFocused ? bold('Cancel') : plain('Cancel'),
     ))
     result.push(line(plain('')), line(dim('↑↓ navigate · enter select · ← back · esc cancel')))
@@ -94,9 +94,9 @@ export function buildAskBlocks(state: AskState, _columns: number): ViewBlock[] {
     const focused = !ui.inOtherMode && i === state.focusIndex
     const selected = selectedIndex === i
     const spans: StyledSpan[] = [
-      focused ? colored(`${POINTER} `, 'cyan') : plain('  '),
+      focused ? rowMarker(true) : plain('  '),
       dim(optionIndex(i + 1)),
-      selected ? colored(opt.label, 'green') : focused ? colored(opt.label, 'cyan') : plain(opt.label),
+      selected ? colored(opt.label, 'green') : focused ? { text: opt.label, hex: getTheme().brandHex } : plain(opt.label),
     ]
     if (opt.description) spans.push(dim(` — ${opt.description}`))
     result.push(line(...(selected ? appendTick(spans) : spans)))
@@ -105,7 +105,7 @@ export function buildAskBlocks(state: AskState, _columns: number): ViewBlock[] {
   const otherFocused = ui.inOtherMode
   const otherText = otherFocused ? ui.otherText : otherSelected ? selectedAnswerText(state, state.currentTab) ?? '' : ui.otherText
   const otherSpans: StyledSpan[] = [
-    otherFocused ? colored(`${POINTER} `, 'cyan') : plain('  '),
+    otherFocused ? rowMarker(true) : plain('  '),
     dim(optionIndex(q.options.length + 1)),
   ]
   if (otherFocused) {

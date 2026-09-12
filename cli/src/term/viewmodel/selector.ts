@@ -12,7 +12,7 @@ import { PREVIEW_SECTION_PREFIX, SELECTOR_VIEWPORT, selectorEffortLevel, type Se
 import { HINT_SEPARATOR, formatChord, type Hint } from '../design/key-hints.js'
 import { getTheme } from '../../render/theme/index.js'
 import { buildSkillSelectorLines } from './skill-selector.js'
-import { buildSelectorRow } from './selector-row.js'
+import { buildSelectorHeader, buildSelectorRow } from './selector-row.js'
 import { buildEffortCell, effortLabel, planEffortLayout } from './model-effort.js'
 
 /** Render a selector in pi's editorContainer position, never as a modal. */
@@ -146,7 +146,7 @@ function buildModelSelectorRegionLines(state: SelectorState, width: number, acti
       // The viewport can begin halfway through a large group, with its header
       // scrolled offscreen. Still separate the next group from those rows.
       if (visibleListRowSeen) pageLines.push(line(plain('')))
-      pageLines.push(line(plain('  '), { text: item.label, hex: accentHex, bold: true }))
+      pageLines.push(buildSelectorHeader(item.label))
       visibleListRowSeen = true
       continue
     }
@@ -409,25 +409,26 @@ function buildSelectorListLines(state: SelectorState): StyledLine[] {
   if (start > 0) {
     lines.push(line(dim(`  ↑ ${start} above`)))
   }
+  // Groups after the first are separated by one blank line, whether the list
+  // supplies its own spacer header or not. Keyed off what is on screen, since
+  // the viewport can start mid-list.
   let seenRow = false
+  let blankPending = false
   for (let i = start; i < end; i++) {
     const item = state.items[i]!
     if (item.header) {
       if (!item.label) {
-        lines.push(line(plain('')))
-      } else if (item.headerCount !== undefined) {
-        // A counted group reads as a heading over its rows, so the label is bold
-        // and the tally dim rather than wrapped in a divider rule. Groups after
-        // the first are separated by a blank line; the viewport can start
-        // mid-list, so this keys off what is actually on screen.
-        if (seenRow) lines.push(line(plain('')))
-        lines.push(line(bold(`  ${item.label}`), dim(` (${item.headerCount})`)))
-        seenRow = true
-      } else {
-        lines.push(line(dim(`── ${item.label} ──`)))
+        blankPending = seenRow
+        continue
       }
+      if (seenRow) lines.push(line(plain('')))
+      lines.push(buildSelectorHeader(item.label, item.headerCount))
+      seenRow = true
+      blankPending = false
       continue
     }
+    if (blankPending) lines.push(line(plain('')))
+    blankPending = false
     seenRow = true
     const highlighted = i === state.focusIndex
     lines.push(buildSelectorRow(item, {

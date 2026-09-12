@@ -2,9 +2,32 @@ import { getTheme } from '../../render/theme/index.js'
 import type { SelectorItem } from '../selector.js'
 import { colored, dim, line, plain, type StyledLine, type StyledSpan } from './types.js'
 
-/** Gutter glyph on every selectable row, current or not. Shared so `/model`,
- *  `/skill`, `/resume` and the queue cannot drift into separate markers. */
-export const ROW_MARKER = '·'
+const ROW_MARKER = '·'
+
+/**
+ * The gutter cell every selectable row starts with: same glyph whether current
+ * or not, so the current row is marked by colour, weight and band, never by a
+ * different shape. One definition serves `/model`, `/skill`, `/resume`, the
+ * completion menu and the ask overlay, so they cannot drift apart.
+ */
+export function rowMarker(highlighted: boolean, bg?: string): StyledSpan {
+  const { brandHex, mutedHex } = getTheme()
+  return highlighted
+    ? { text: `${ROW_MARKER} `, hex: brandHex, bold: true, ...(bg ? { bg } : {}) }
+    : { text: `${ROW_MARKER} `, hex: mutedHex }
+}
+
+/** A group heading over its rows: same treatment on every list, so `/model`,
+ *  `/skill` and `/resume` cannot each invent their own. A count, when present,
+ *  is the dim tally after the label. */
+export function buildSelectorHeader(label: string, count?: number): StyledLine {
+  const { accentHex } = getTheme()
+  return line(
+    plain('  '),
+    { text: label, hex: accentHex, bold: true },
+    ...(count === undefined ? [] : [dim(` (${count})`)]),
+  )
+}
 
 export interface SelectorRowOptions {
   /** The row represented by `focusIndex`, even while the composer/filter owns input. */
@@ -29,15 +52,9 @@ export function buildSelectorRow(item: SelectorItem, options: SelectorRowOptions
     query = '',
     detailGap = '  ',
   } = options
-  const { brandHex, mutedHex, selectionBgHex, selectionMutedHex } = getTheme()
+  const { brandHex, selectionBgHex, selectionMutedHex } = getTheme()
   const bg = highlighted ? selectionBgHex : undefined
-  // One gutter glyph for every row: the current row is marked by colour, weight
-  // and band, never by a different shape. A pointer that only the current row
-  // carried made its gutter a different width from its neighbours' on terminals
-  // that draw `·` wide, which is the column this list is aligned against.
-  const prefix: StyledSpan = highlighted
-    ? { text: `${ROW_MARKER} `, hex: brandHex, bold: true, bg }
-    : { text: `${ROW_MARKER} `, hex: mutedHex }
+  const prefix = rowMarker(highlighted, bg)
 
   const label = highlighted
     ? [{ text: item.label, hex: brandHex, bold: true, bg }]

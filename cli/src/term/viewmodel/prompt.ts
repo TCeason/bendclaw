@@ -17,7 +17,7 @@ import { atLeastHeight, atLeastWidth, heightTier, widthTier } from './breakpoint
 import { createFrame } from './frame.js'
 import { promptMode, promptModeLabels, promptModeStyle, type PromptModeStyle } from './prompt-mode.js'
 import { buildPromptFooterBlocks, type PromptFooterVM } from './prompt-footer.js'
-import { ROW_MARKER } from './selector-row.js'
+import { rowMarker } from './selector-row.js'
 import { line, block, plain, dim, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
 import { finiteSize, truncateToWidth, truncateTailToWidth, wrapTextByWidth } from './width.js'
 
@@ -241,7 +241,7 @@ function buildCompletionLines(
       ? [line(dim(truncateToWidth(`  ${menu.note}`, contentWidth)))]
       : []
   }
-  const { brandHex, mutedHex, selectionBgHex, selectionMutedHex } = getTheme()
+  const { brandHex, selectionBgHex, selectionMutedHex } = getTheme()
   const showNote = Boolean(menu.note) && lineBudget >= 2
   const available = Math.max(1, lineBudget - (showNote ? 1 : 0))
   let visible = Math.min(completionRows(rows), menu.items.length, available)
@@ -265,9 +265,7 @@ function buildCompletionLines(
     const label = truncateTailToWidth(item.label, labelWidth)
     const padding = ' '.repeat(Math.max(0, labelWidth - stringWidth(label)))
     const bg = selected ? selectionBgHex : undefined
-    const prefix = selected
-      ? { text: `${ROW_MARKER} `, hex: brandHex, bold: true, bg }
-      : { text: `${ROW_MARKER} `, hex: mutedHex }
+    const prefix = rowMarker(selected, bg)
     const labelSpan = selected ? { text: label, hex: brandHex, bold: true, bg } : plain(label)
     const descriptionWidth = Math.max(0, contentWidth - 2 - labelWidth - 2)
     const description = item.description && descriptionWidth > 0
