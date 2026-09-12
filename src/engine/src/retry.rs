@@ -78,7 +78,7 @@ impl RetryPolicy {
 /// `provider::error::classify_stream_error`), which yields semantic variants.
 /// Retryable: rate limits (429), network/transient errors, overloaded (529).
 /// Not retryable: auth (401/403), context overflow, cancellation,
-/// client errors (4xx), quota exhaustion.
+/// client errors (4xx), quota exhaustion, proxy configuration errors.
 ///
 /// Bare [`ProviderError::Api`] errors from paths without status/type context
 /// fall back to keyword matching as a last resort.
@@ -89,6 +89,10 @@ pub fn should_retry(error: &ProviderError) -> bool {
         | ProviderError::ProtocolIncomplete(_)
         | ProviderError::Overloaded(_)
         | ProviderError::Transient { .. } => true,
+        // No channel/version configuration can serve this request, so the
+        // identical retry is guaranteed to fail and the UI must surface the
+        // operator action instead of a retry countdown.
+        ProviderError::Configuration(_) => false,
         // A bare Api error that is really a context overflow must never retry,
         // even if its wording also contains a transient phrase like "try again".
         // Overflow is handled by compaction, not retry.

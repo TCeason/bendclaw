@@ -36,6 +36,37 @@ test('input validation numbers are not mistaken for HTTP status codes', () => {
   expect(providerFailurePresentation({ error: 'HTTP 502: invalid_request_error' }).kind).toBe('busy')
 })
 
+test('proxy configuration faults do not read as an outage', () => {
+  // llmproxy answers 503 when no channel is entitled to the selected model and
+  // when the model backend requires a newer client version than the proxy
+  // provides. Both are operator action, not outages: the label must name the
+  // real gap and the guidance must not invite a retry that cannot succeed.
+  const unconfigured = providerFailurePresentation({
+    error: 'Configuration error: HTTP 503: api_error: No permitted model backend is configured.',
+  })
+  expect(unconfigured.kind).toBe('configuration')
+  expect(unconfigured.label).toBe('Model not configured')
+  expect(unconfigured.guidance).toContain('Retrying unchanged will not help')
+
+  const outdated = providerFailurePresentation({
+    error: 'HTTP 503: api_error: The model backend requires a supported client version. Contact the proxy administrator.',
+  })
+  expect(outdated.kind).toBe('backend-version')
+  expect(outdated.label).toBe('Backend version unsupported')
+  expect(outdated.guidance).toContain('proxy administrator')
+
+  // The backend's own wording resolves to the same vocabulary.
+  const windsurf = providerFailurePresentation({
+    error: 'Your Windsurf version is out of date. Please update to the latest version to continue.',
+  })
+  expect(windsurf.kind).toBe('backend-version')
+
+  // Genuine upstream failures keep the busy vocabulary and its retry path.
+  for (const message of ['HTTP 503: upstream temporarily unavailable', 'HTTP 503: api_error: Internal server error']) {
+    expect(providerFailurePresentation({ error: message }).kind).toBe('busy')
+  }
+})
+
 test('TLS retries keep cumulative elapsed time across the long-wait transition', () => {
   let state = setRetryWait(createSpinnerState(), 2000, 1, 10, 1000, 'tls handshake eof')
   expect(stripAnsi(formatSpinnerLine(state, 1000))).toContain('Connection interrupted · retrying in 2s')

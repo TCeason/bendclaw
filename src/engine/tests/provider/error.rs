@@ -148,6 +148,51 @@ fn classify_overloaded_message_without_status() {
 }
 
 #[test]
+fn classify_proxy_configuration_gap_is_not_retryable() {
+    // llmproxy reports a routing gap (no channel entitled to the selected
+    // model) as HTTP 503. It is not an outage: the same request keeps failing
+    // until an operator configures a channel, so it must fail fast with the
+    // actionable message instead of showing "Service busy" for ten retries.
+    let message = "HTTP 503: api_error: No permitted model backend is configured.";
+    let err = ProviderError::classify_with_hints(503, message, Some(true));
+    assert!(matches!(err, ProviderError::Configuration(_)));
+    assert!(!evotengine::retry::should_retry(&err));
+    assert!(err
+        .to_string()
+        .contains("No permitted model backend is configured."));
+}
+
+#[test]
+fn classify_outdated_client_version_is_not_retryable() {
+    // The backend refuses this client version until the proxy is updated; a
+    // retry cannot change either side of that negotiation.
+    let message = "HTTP 503: api_error: The model backend requires a supported \
+        client version. Contact the proxy administrator.";
+    let err = ProviderError::classify_with_hints(503, message, Some(true));
+    assert!(matches!(err, ProviderError::Configuration(_)));
+    assert!(!evotengine::retry::should_retry(&err));
+}
+
+#[test]
+fn configuration_gap_stream_error_is_not_retryable() {
+    // Same semantics when the proxy surfaces the gap inside an accepted (2xx)
+    // stream instead of a non-2xx response.
+    let payload = r#"{"type":"error","error":{"type":"api_error","message":"No permitted model backend is configured."}}"#;
+    let err = classify_sse_error_event(payload);
+    assert!(matches!(err, ProviderError::Configuration(_)));
+    assert!(!evotengine::retry::should_retry(&err));
+}
+
+#[test]
+fn unrelated_503_stays_retryable() {
+    // Carving configuration errors out of 5xx must not swallow genuine
+    // upstream outages, which still recover through the retry budget.
+    let err = ProviderError::classify(503, "upstream temporarily unavailable");
+    assert!(matches!(err, ProviderError::Transient { .. }));
+    assert!(evotengine::retry::should_retry(&err));
+}
+
+#[test]
 fn empty_response_api_error_is_retryable() {
     // Both SSE decoders surface an empty 200 (no content, no usage) as an Api
     // error. It is a transient provider/proxy defect and must retry, matching

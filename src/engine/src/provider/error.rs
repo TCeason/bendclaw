@@ -32,6 +32,14 @@ pub enum ProviderError {
     QuotaLimited { message: String },
     #[error("Context overflow: {message}")]
     ContextOverflow { message: String },
+    /// The proxy serving this provider cannot answer the request because of
+    /// its own configuration — no channel is entitled to the selected model,
+    /// or the proxy's client version is older than the backend accepts. The
+    /// identical request cannot succeed on retry and the fix belongs to an
+    /// operator, so this fails fast with the provider's own explanation
+    /// instead of entering the retry/outage loop.
+    #[error("Configuration error: {0}")]
+    Configuration(String),
     #[error("Cancelled")]
     Cancelled,
     #[error("{0}")]
@@ -51,10 +59,10 @@ impl ProviderError {
     /// Classify an HTTP error response into the appropriate variant.
     ///
     /// The status code is the primary signal: 5xx (and 408/425) are server-side
-    /// failures that are safe to retry regardless of body wording, while the
-    /// remaining 4xx are client errors that cannot succeed on retry. Message
-    /// text refines the decision only for stable semantics (context overflow,
-    /// quota exhaustion, overload).
+    /// failures that are safe to retry, while the remaining 4xx are client
+    /// errors that cannot succeed on retry. Message text refines the decision
+    /// only for stable semantics (context overflow, quota exhaustion,
+    /// overload, proxy configuration gaps).
     pub fn classify(status: u16, message: &str) -> Self {
         Self::classify_with_display(status, message, message)
     }
@@ -63,6 +71,8 @@ impl ProviderError {
         let display = display.to_string();
         if is_context_overflow(status, evidence) {
             Self::ContextOverflow { message: display }
+        } else if is_configuration_error_message(evidence) {
+            Self::Configuration(display)
         } else if is_fatal_quota_exhaustion(evidence) {
             Self::Other(display)
         } else if is_waitable_quota_limit(evidence) {
@@ -145,6 +155,11 @@ pub(crate) fn classify_stream_error(
     message: &str,
     value: Option<&serde_json::Value>,
 ) -> ProviderError {
+    // A configuration gap is never a transient outage, even when it arrives
+    // after the request was accepted.
+    if is_configuration_error_message(message) {
+        return ProviderError::Configuration(message.to_string());
+    }
     if is_context_overflow_message(message) {
         return ProviderError::ContextOverflow {
             message: message.to_string(),
@@ -293,6 +308,20 @@ fn is_context_overflow(status: u16, message: &str) -> bool {
 
 pub(crate) fn is_overloaded_message(message: &str) -> bool {
     message.to_lowercase().contains("overloaded")
+}
+
+/// Proxy-side configuration errors: the request cannot be served until an
+/// operator changes the routing or version configuration, so an identical
+/// retry is guaranteed to fail. The wording is owned by llmproxy (the proxy in
+/// front of this provider fleet); the status code alone (503) would otherwise
+/// classify these as transient outages and burn the retry budget while the UI
+/// reports "Service busy".
+///
+/// Keep this list in sync with llmproxy's client-facing messages.
+fn is_configuration_error_message(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    lower.contains("no permitted model backend")
+        || lower.contains("model backend requires a supported client version")
 }
 
 fn is_waitable_quota_limit(message: &str) -> bool {
