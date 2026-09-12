@@ -2,7 +2,7 @@ import { describe, test, expect } from 'bun:test'
 import { buildOverlayBlocks } from '../src/term/viewmodel/overlays.js'
 import { buildSelectorRegionLines } from '../src/term/viewmodel/selector.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
-import { createBackgroundOutputState, createBackgroundPanelState } from '../src/term/app/background-panel.js'
+import { backgroundOutputRows, createBackgroundOutputState, createBackgroundPanelState } from '../src/term/app/background-panel.js'
 import { selectorDown } from '../src/term/selector.js'
 import type { BackgroundProcess } from '../src/native/index.js'
 
@@ -138,12 +138,30 @@ describe('background panel rendering', () => {
     expect(short.some(line => line.trim() === 'line 30')).toBe(true)
   })
 
-  test('live output emphasizes activity without repeating the command', () => {
+  test('output footer only shows navigation and available stop action', () => {
+    for (const status of ['running', 'completed'] as const) {
+      const state = createBackgroundOutputState(proc({ status }), 'hello')
+      const lines = buildSelectorRegionLines(state, 120, 30).map(stripAnsi)
+      const footer = lines.find(line => line.includes('Esc to back'))
+      expect(footer).toBeDefined()
+      expect(footer).toContain('scroll')
+      expect(footer).not.toContain('follow')
+      expect(footer).not.toContain('command')
+      if (status === 'running') expect(footer).toContain('x to stop')
+      else expect(footer).not.toContain('stop')
+    }
+  })
+
+  test('live output includes the complete script before output', () => {
     const process = proc({ command: 'printf hello\nprintf world' })
     const state = createBackgroundOutputState(process, 'hello\nworld')
     const rendered = buildSelectorRegionLines(state, 80, 30)
     const plain = rendered.map(stripAnsi)
     expect(plain.filter(text => text.includes('running ·'))).toHaveLength(1)
+    expect(plain).toContain('  Command')
+    expect(plain).toContain('  printf hello')
+    expect(plain).toContain('  printf world')
+    expect(plain).toContain('  Output')
     expect(plain).toContain('  hello')
     expect(plain).toContain('  world')
     expect(plain.join('\n')).not.toContain('Output:')
@@ -159,8 +177,23 @@ describe('background panel rendering', () => {
       expect(lines.every(text => text.length <= 60)).toBe(true)
       expect(lines).toContain('  latest output')
       expect(lines.join('\n')).toContain('Esc')
-      const commandView = { ...state, outputView: { showCommand: true } }
+      const commandView = { ...state, outputView: { scrollOffset: 1 } }
       expect(buildSelectorRegionLines(commandView, 60, rows).length).toBeLessThanOrEqual(rows)
+    }
+  })
+
+  test('scrolling reaches every wrapped command row including later commands', () => {
+    const command = "python3 - <<'PY'\nprint('fixture')\n\nPY\nchrome --screenshot=" + 'x'.repeat(160)
+    const state = createBackgroundOutputState(proc({ command }), 'fixture created')
+    const rows = backgroundOutputRows(state, 40)
+    expect(rows).toContain('chrome')
+    expect(rows.join('\n')).toContain('--screenshot=')
+    for (let offset = 1; offset <= rows.length; offset++) {
+      const view = { ...state, outputView: { scrollOffset: offset } }
+      const lines = buildSelectorRegionLines(view, 40, 12).map(stripAnsi)
+      expect(lines).toContain(`  ${rows[offset - 1]}`)
+      expect(lines.length).toBeLessThanOrEqual(12)
+      expect(lines.join('\n')).toContain('script (5 lines)')
     }
   })
 
@@ -175,8 +208,9 @@ describe('background panel rendering', () => {
 
   test('a multi-line command stays on one row', () => {
     const lines = render([proc({ command: 'tail -f log\n| grep err' })])
-    const row = lines.find(l => l.includes('tail -f log'))
-    expect(row).toContain('(+1 line)')
+    const row = lines.find(l => l.includes('script (2 lines)'))
+    expect(row).toBeDefined()
+    expect(lines.join('\n')).not.toContain('tail -f log')
     expect(lines.some(l => l.includes('grep err'))).toBe(false)
   })
 })

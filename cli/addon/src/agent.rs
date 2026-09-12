@@ -500,6 +500,7 @@ impl NapiAgent {
                         "model": model,
                         "spec": format!("{provider}:{model}"),
                     });
+                    Self::attach_thinking_levels(&mut entry, config, provider, model);
                     if let Some((label, order)) = cloud_groups.get(provider) {
                         entry["group_label"] = serde_json::json!(label);
                         entry["group_order"] = serde_json::json!(order);
@@ -535,14 +536,39 @@ impl NapiAgent {
             && !current_is_listed
             && config.providers.contains_key(&llm.provider)
         {
-            models.push(serde_json::json!({
+            let mut entry = serde_json::json!({
                 "provider": llm.provider,
                 "protocol": llm.protocol.to_string(),
                 "model": llm.model,
                 "spec": format!("{}:{}", llm.provider, llm.model),
-            }));
+            });
+            Self::attach_thinking_levels(&mut entry, config, &llm.provider, &llm.model);
+            models.push(entry);
         }
         models
+    }
+
+    /// Attach the effort ladder this model actually supports, plus the level it
+    /// would start on. The picker needs per-model levels: offering `max` on a
+    /// model whose metadata stops at `high` would be a lie the transport then
+    /// silently clamps. Models with no selectable reasoning get no fields at
+    /// all, so a legacy reader sees exactly what it saw before.
+    fn attach_thinking_levels(
+        entry: &mut serde_json::Value,
+        config: &evot::conf::Config,
+        provider: &str,
+        model: &str,
+    ) {
+        let Ok(llm) = config.build_llm(provider, Some(model.to_string())) else {
+            return;
+        };
+        let levels = ModelSelection::supported_thinking_levels_for(&llm);
+        if levels.is_empty() {
+            return;
+        }
+        entry["thinking_levels"] =
+            serde_json::json!(levels.iter().map(|l| l.as_str()).collect::<Vec<_>>());
+        entry["thinking_level"] = serde_json::json!(llm.thinking_level.as_str());
     }
 
     /// Switch the active provider by model spec.
@@ -588,6 +614,30 @@ impl NapiAgent {
         if let Ok(mut config) = self.load_config() {
             let provider = self.agent.llm().provider.clone();
             let _ = evot::conf::persist_default_thinking_level(&mut config, &provider, level);
+        }
+        Some(ModelSelection::display_thinking_level_for(
+            &self.agent.llm(),
+        ))
+    }
+
+    /// Apply a named thinking level and persist it as the default, the same
+    /// double write `cycle_thinking_level` performs. Unlike `cycle`, the caller
+    /// names the tier, so the model picker can commit a model and its effort in
+    /// one gesture. Returns the new display label, or `null` when the level is
+    /// unknown or the active model does not offer it — the caller then leaves
+    /// the live selection untouched rather than silently clamping.
+    #[napi]
+    pub fn set_thinking_level(&self, level: String) -> Option<String> {
+        let parsed = evot::conf::thinking_level_from_str(&level).ok()?;
+        if !self.agent.supported_thinking_levels().contains(&parsed) {
+            return None;
+        }
+        self.agent.set_thinking_level(parsed);
+        // Best-effort: the live session keeps the new level even when the
+        // config write fails; the default then falls back on next start.
+        if let Ok(mut config) = self.load_config() {
+            let provider = self.agent.llm().provider.clone();
+            let _ = evot::conf::persist_default_thinking_level(&mut config, &provider, parsed);
         }
         Some(ModelSelection::display_thinking_level_for(
             &self.agent.llm(),

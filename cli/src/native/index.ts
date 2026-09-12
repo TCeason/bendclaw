@@ -293,6 +293,15 @@ export class Agent {
     this.raw.restoreThinkingLevel(level)
   }
 
+  /**
+   * Apply a named thinking level and persist it as the default. Returns the new
+   * display label, or null when the active model does not offer that tier — the
+   * live selection is then left untouched rather than clamped to a neighbour.
+   */
+  setThinkingLevel(level: string): string | null {
+    return this.raw.setThinkingLevel(level)
+  }
+
   setLimits(maxTurns?: number, maxTokens?: number, maxDurationSecs?: number): void {
     this.raw.setLimits(maxTurns ?? null, maxTokens ?? null, maxDurationSecs ?? null)
   }

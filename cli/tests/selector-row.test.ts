@@ -24,7 +24,7 @@ describe('buildSelectorRow', () => {
   test('uses the same palette for model and generic rows', () => {
     const model = buildSelectorRow(
       { label: 'GPT 5.6 Sol', selected: true },
-      { highlighted: true, dimIdleLabel: true, detailGap: ' ' },
+      { highlighted: true, idleMarker: true, detailGap: ' ' },
     )
     const generic = buildSelectorRow(
       { label: '01a06b6f', detail: 'repl' },
@@ -41,11 +41,20 @@ describe('buildSelectorRow', () => {
   test('keeps idle rows free of selection styling', () => {
     const row = buildSelectorRow(
       { label: 'Claude Opus 5', detail: 'Premium' },
-      { highlighted: false, dimIdleLabel: true, detailGap: ' ' },
+      { highlighted: false, idleMarker: true, detailGap: ' ' },
     )
 
     expect(row.bg).toBeUndefined()
-    expect(row.spans[0]?.text).toBe('  ')
+    // The `·` gutter marks it as a choice; the selection band and pointer stay
+    // exclusive to the current row.
+    expect(row.spans[0]?.text).toBe('· ')
     expect(row.spans.every(span => span.bg === undefined)).toBe(true)
+  })
+
+  test('a list that does not opt in keeps its blank gutter', () => {
+    const row = buildSelectorRow({ label: '01a06b6f', detail: 'repl' }, { highlighted: false })
+
+    expect(row.spans[0]?.text).toBe('  ')
+    expect(row.bg).toBeUndefined()
   })
 })

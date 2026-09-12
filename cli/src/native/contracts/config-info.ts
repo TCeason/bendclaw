@@ -8,6 +8,11 @@ export interface ModelOption {
   group_label?: string
   group_order?: number
   sort_order?: number
+  /** Effort tiers this model actually supports, ascending. Absent when the
+   *  model has no selectable reasoning, so absence means "no effort control". */
+  thinking_levels?: string[]
+  /** The tier this model starts on, always a member of `thinking_levels`. */
+  thinking_level?: string
   free?: {
     display_name?: string
     tagline?: string
@@ -63,6 +68,13 @@ function validateConfigInfo(value: unknown): asserts value is ConfigInfo {
     optional(entry, 'group_label', 'string', path)
     optional(entry, 'group_order', 'number', path)
     optional(entry, 'sort_order', 'number', path)
+    optional(entry, 'thinking_level', 'string', path)
+    if (entry.thinking_levels !== undefined) {
+      if (!Array.isArray(entry.thinking_levels)) invalid(`${path}.thinking_levels`)
+      entry.thinking_levels.forEach((level: unknown, at: number) => {
+        field(level, 'string', `${path}.thinking_levels[${at}]`)
+      })
+    }
     if (entry.free !== undefined) {
       object(entry.free, `${path}.free`)
       for (const key of ['display_name', 'tagline', 'tier']) optional(entry.free, key, 'string', `${path}.free`)

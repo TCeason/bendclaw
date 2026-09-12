@@ -164,12 +164,58 @@ const SUB_COMMANDS: Record<string, string[]> = {
 // Slash command completion
 // ---------------------------------------------------------------------------
 
+/**
+ * A sub-command entry that is a literal token, not a prompt.
+ *
+ * `SUB_COMMANDS` mixes both: `/harden` offers real words (`plan`, `changes`)
+ * alongside `<subject>`, which describes what to type rather than something to
+ * type. Completing a placeholder would insert the angle brackets verbatim.
+ */
+function isLiteralSubCommand(entry: string): boolean {
+  return !entry.startsWith('<')
+}
+
+/**
+ * Complete the sub-command under the cursor, e.g. `/harden chan` → `changes`.
+ *
+ * Driven by the same `SUB_COMMANDS` table `getSubCommandHint` reads, so the
+ * ghost hint and Tab can never disagree: anything the hint advertises as a
+ * literal completion is something Tab can actually apply.
+ */
+function completeSubCommand(cmd: string, partial: string, wordStart: number): CompletionResult | null {
+  const candidates = commandCandidates()
+  const resolved = (candidates.find(c => c.label === cmd)
+    ?? candidates.find(c => c.label.startsWith(cmd)))?.command
+  if (!resolved) return null
+
+  const subcmds = (SUB_COMMANDS[resolved.name] ?? []).filter(isLiteralSubCommand)
+  if (subcmds.length === 0) return null
+
+  const matches = subcmds.filter(sub => sub.startsWith(partial))
+  if (matches.length === 0) return null
+  if (matches.length === 1) {
+    return { replacement: matches[0]! + ' ', candidates: matches, wordStart }
+  }
+
+  // Multiple matches: advance to the common prefix only. With nothing typed yet
+  // the prefix is usually empty, so there is nothing to apply — report no
+  // completion rather than an empty replacement that would still consume Tab.
+  const common = commonPrefix(matches)
+  if (common.length <= partial.length) return null
+  return { replacement: common, candidates: matches, wordStart }
+}
+
 function completeSlashCommand(input: string): CompletionResult | null {
   const parts = input.split(/\s+/)
   const cmd = parts[0]!.toLowerCase()
 
-  // Only complete the command name itself (first word)
-  if (parts.length > 1) return null
+  // Past the command name, complete its sub-command instead. Only the first
+  // argument: deeper words are free-form prompt text with nothing to match.
+  if (parts.length === 2) {
+    const partial = parts[1]!
+    return completeSubCommand(cmd, partial, input.length - partial.length)
+  }
+  if (parts.length > 2) return null
 
   const matches = commandCandidates()
     .filter(candidate => prefixMatches(candidate, cmd))

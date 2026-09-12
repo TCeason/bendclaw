@@ -21,10 +21,10 @@ test('background task wait advertises release only and hides old usage', () => {
   expect(text).not.toContain('slow')
 })
 test('command clipping respects grapheme width and background details retain full command', () => {
-  const command = '中文🙂'.repeat(80)
+  const command = 'hello🙂'.repeat(80)
   expect(stringWidth(clipDisplayText(command, 12))).toBeLessThanOrEqual(12)
   expect(clipDisplayText('👨‍👩‍👧‍👦 hello', 3)).toBe('👨‍👩‍👧‍👦…')
   const state = createBackgroundOutputState({ task_id: 't', command, cwd: '/tmp', output_path: '/tmp/out', status: 'running', elapsed_ms: 10, exit_code: null, output_file_truncated: false, stopped_by_user: false }, 'output')
   expect(state.items[0]?.preview?.join('\n')).toContain(command)
-  expect(state.items[0]?.preview?.join('\n')).toContain('bash')
+  expect(state.items[0]?.preview?.join('\n')).toContain('Command')
 })

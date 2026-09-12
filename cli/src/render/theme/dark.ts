@@ -30,6 +30,9 @@ export function darkTheme(): Theme {
     // Desaturated periwinkle: reads as "same family as the frame" while staying
     // dark enough that brand-hued text on top keeps its contrast.
     mutedHex: '#777777',
+    // Devin's `--border-default` (#444444) for a gauge's unfilled cells: dark
+    // enough to read as an empty slot, light enough to still show the ladder.
+    subtleHex: '#4a4a4a',
     selectionBgHex: '#2c2f4a',
     selectionMutedHex: '#9aa0b4',
 

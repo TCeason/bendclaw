@@ -14,7 +14,7 @@ import { TerminalInputBuffer } from './input/buffer.js'
 import { schemeFromRgbColor } from './terminal-colors.js'
 import { getTheme, setDetectedThemeScheme } from '../render/theme/index.js'
 import { createSpinnerState, advanceSpinner, formatSpinnerLine, setSpinnerPhase, spinnerStatsFromLastUsage } from './spinner.js'
-import { createModelWindow, createResumeWindow } from './app/selector-windows.js'
+import { carryModelEfforts, createModelWindow, createResumeWindow } from './app/selector-windows.js'
 import { buildShellFrame } from './viewmodel/shell.js'
 import { promptFromSnapshot } from './viewmodel/prompt-snapshot.js'
 import { createAppSelectorState, isCommandSelector, isBackgroundSelector, SELECTOR_OWNER } from './app/selector-identity.js'
@@ -1840,6 +1840,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   const backgroundTerminals = new BackgroundTerminals({
+    columns: () => renderer.termCols,
     client: agent,
     sessionId: () => sessionId,
     commit: commitBackgroundLine,
@@ -3407,21 +3408,29 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   /** Swap the open or previewed /model list in place after a catalog refresh.
-   *  Keeps the current query and focused row so typing isn't yanked around. */
+   *  Keeps the current query, focused row, and any adjusted effort tier so
+   *  neither typing nor a ←/→ adjustment is yanked around by a background sync. */
   function refreshOpenModelSelector(): boolean {
     const models = modelOptions(configInfo, agent.model)
     const activeSpec = currentModelSpec(configInfo, agent.model)
+    const rebuilt = () => modelSelectorItems(models, activeSpec, configInfo?.thinkingLevel)
     if (overlay.kind === 'selector' && overlay.state.owner === SELECTOR_OWNER.model) {
       overlay = {
         kind: 'selector',
-        state: selectorExpandItems(overlay.state, modelSelectorItems(models, activeSpec)),
+        state: selectorExpandItems(
+          overlay.state,
+          carryModelEfforts(overlay.state.allItems, rebuilt()),
+        ),
       }
       return true
     }
     if (commandWindowPreview?.kind === 'selector' && commandWindowPreview.trigger === 'model') {
       commandWindowPreview = {
         ...commandWindowPreview,
-        state: selectorExpandItems(commandWindowPreview.state, modelSelectorItems(models, activeSpec)),
+        state: selectorExpandItems(
+          commandWindowPreview.state,
+          carryModelEfforts(commandWindowPreview.state.allItems, rebuilt()),
+        ),
       }
       return true
     }
@@ -3739,11 +3748,31 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         try {
           agent.setProvider(action.spec)
           refreshConfigInfo()
+          // The picker commits a model and its effort as one gesture. The tier
+          // is applied after the switch, since it is the new model's ladder
+          // that decides whether the tier exists at all; a rejected tier leaves
+          // the model's own resolved level in place rather than failing the
+          // switch the user actually asked for.
+          let effort = configInfo?.thinkingLevel ?? ''
+          if (action.thinkingLevel !== undefined && action.thinkingLevel !== effort) {
+            const applied = agent.setThinkingLevel(action.thinkingLevel)
+            if (applied !== null) {
+              refreshConfigInfo()
+              effort = applied
+            }
+          }
           const selected = selectModelOption(configInfo, action.spec)
           const model = selected?.model ?? agent.model
           const provider = selected?.provider ?? configInfo?.provider ?? ''
           appState = { ...appState, model }
-          commitStatusLine({ id: 'sys-model', kind: 'system', text: `  Model → ${formatModelLabel(model, provider, selected?.group_label)}` })
+          const label = formatModelLabel(model, provider, selected?.group_label)
+          // Effort shares the model's status slot: they were chosen together, so
+          // reporting them apart would read as two unrelated switches.
+          commitStatusLine({
+            id: 'sys-model',
+            kind: 'system',
+            text: `  Model → ${label}${effort ? ` · thinking ${effort}` : ''}`,
+          })
         } catch (err) {
           commitSystem('sys-model-err', chalk.red(`  Failed to switch model: ${errorText(err)}`))
         }

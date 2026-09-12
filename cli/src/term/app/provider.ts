@@ -1,5 +1,5 @@
 import type { ConfigInfo, ModelOption } from '../../native/contracts/config-info.js'
-import type { SelectorItem } from '../selector.js'
+import type { SelectorEffort, SelectorItem } from '../selector.js'
 
 /** Return configured provider/model pairs, preserving duplicate model ids. */
 export function modelOptions(configInfo: ConfigInfo | undefined, fallbackModel: string): ModelOption[] {
@@ -120,8 +120,32 @@ export function selectModelOption(configInfo: ConfigInfo | undefined, spec: stri
   return configInfo?.availableModels.find(option => option.spec === spec)
 }
 
+/**
+ * The effort ladder for one model row, or undefined when it has none.
+ *
+ * The ladder is whatever the addon published for that model, so a model whose
+ * metadata stops at `high` can never be pushed to `max` from the picker. The
+ * starting tier is the model's own resolved level, except on the active row
+ * where the live session level wins: that is the one the user may have just
+ * moved with shift+tab, and the picker must not appear to contradict it.
+ */
+export function modelEffort(option: ModelOption, liveLevel?: string): SelectorEffort | undefined {
+  const levels = option.thinking_levels
+  if (!levels || levels.length === 0) return undefined
+  const preferred = liveLevel ?? option.thinking_level
+  const found = preferred === undefined ? -1 : levels.indexOf(preferred)
+  // An unknown or absent tier is not invented: fall back to the model's own
+  // resolved level, then to the bottom of the ladder.
+  const fallback = option.thinking_level === undefined ? -1 : levels.indexOf(option.thinking_level)
+  return { levels, index: found >= 0 ? found : fallback >= 0 ? fallback : 0 }
+}
+
 /** Rows for the /model overlay: one heading per group, then each model. */
-export function modelSelectorItems(options: ModelOption[], activeSpec: string): SelectorItem[] {
+export function modelSelectorItems(
+  options: ModelOption[],
+  activeSpec: string,
+  activeLevel?: string,
+): SelectorItem[] {
   const items: SelectorItem[] = []
   let lastGroup: string | undefined
   for (const option of sortModelOptionsForSelector(options, activeSpec)) {
@@ -132,12 +156,15 @@ export function modelSelectorItems(options: ModelOption[], activeSpec: string): 
     }
     const detail = formatModelOptionDetail(option)
     const label = formatModelOptionLabel(option)
+    const active = option.spec === activeSpec
+    const effort = modelEffort(option, active ? activeLevel || undefined : undefined)
     items.push({
       label,
       ...(detail ? { detail } : {}),
       id: option.spec,
       group,
-      selected: option.spec === activeSpec,
+      selected: active,
+      ...(effort ? { effort } : {}),
       searchText: `${label} ${option.model} ${option.free?.tagline ?? ''} ${detail} ${option.protocol ?? ''}`,
     })
   }

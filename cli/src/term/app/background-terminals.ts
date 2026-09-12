@@ -15,6 +15,7 @@ import {
   stopOneMessage,
 } from './background-processes.js'
 import {
+  backgroundOutputRows,
   createBackgroundOutputState,
   createBackgroundPanelState,
   decideBackgroundPanelAction,
@@ -55,6 +56,7 @@ export interface BackgroundTerminalsDeps {
    * disk, and so the caller decides how much of a large file to pull in.
    */
   readOutput: (path: string) => string
+  columns?: () => number
   /** Output-file notifications, independent of the process-status poll. */
   watchOutput?: (path: string, changed: () => void, failed: (error: Error) => void) => () => void
   /** Opens the panel as a selector overlay. */
@@ -499,7 +501,7 @@ export class BackgroundTerminals {
         return true
       }
       if (event.type === 'char' && event.char === 'c') {
-        this.deps.updatePanel({ ...state, outputView: { ...state.outputView, scrollOffset: undefined, showCommand: !state.outputView?.showCommand } })
+        this.deps.updatePanel({ ...state, outputView: { ...state.outputView, scrollOffset: 1 } })
         return true
       }
       if (event.type === 'end') {
@@ -509,12 +511,11 @@ export class BackgroundTerminals {
         return true
       }
       if (['up', 'down', 'page-up', 'page-down', 'home'].includes(event.type)) {
-        const preview = state.items[0]?.preview ?? []
-        const count = state.outputView?.showCommand ? preview.indexOf('') : preview.length - preview.indexOf('') - 1
+        const count = backgroundOutputRows(state, this.deps.columns?.() ?? 80).length
         const previous = state.outputView?.scrollOffset ?? count
         const delta = event.type === 'up' ? -1 : event.type === 'page-up' ? -10 : event.type === 'page-down' ? 10 : 1
         const offset = event.type === 'home' ? 1 : Math.max(1, Math.min(count, previous + delta))
-        const follow = !state.outputView?.showCommand && delta > 0 && offset >= count && event.type !== 'home'
+        const follow = delta > 0 && offset >= count && event.type !== 'home'
         const next = { ...state, outputView: { ...state.outputView, scrollOffset: follow ? undefined : offset } }
         this.deps.updatePanel(next)
         if (follow) this.refreshOutputView(next, this.processes)

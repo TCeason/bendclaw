@@ -45,6 +45,55 @@ export interface SelectorItem {
   /** Row count for a `header` item. Present headers render as a bold label with
    *  a dim count (`Shells (2)`); absent, they render as a `── label ──` rule. */
   headerCount?: number
+  /** Adjustable tier this row carries alongside its identity (model effort).
+   *  Absent means the row has no such axis, so ←/→ are never offered on it. */
+  effort?: SelectorEffort
+}
+
+/**
+ * An ordered tier ladder attached to a row, adjusted in place with ←/→.
+ *
+ * `levels` are wire names in ascending order, exactly as the source published
+ * them: the ladder is per-row, so a row whose model stops at `high` can never be
+ * pushed to `max` by a gesture. `index` is the chosen tier, always a valid
+ * position in `levels`.
+ */
+export interface SelectorEffort {
+  levels: string[]
+  index: number
+}
+
+/** The chosen tier's wire name, or undefined when the row has no ladder. */
+export function selectorEffortLevel(item: SelectorItem | undefined): string | undefined {
+  const effort = item?.effort
+  return effort?.levels[effort.index]
+}
+
+/**
+ * Move the focused row's tier by `delta`, clamped to the ladder's ends.
+ *
+ * Clamped rather than wrapping: ←/→ are a nudge along a scale a user can see,
+ * and wrapping from `max` straight to `off` would commit the opposite of the
+ * intent on one keypress. Returns the same state when there is no ladder or the
+ * end is already reached, so a caller can treat "unchanged" as "not handled".
+ *
+ * The row is updated in both the visible list and the unfiltered pool, so a
+ * tier survives typing, clearing a query, and async catalog refreshes.
+ */
+export function selectorAdjustEffort(state: SelectorState, delta: number): SelectorState {
+  const focused = state.items[state.focusIndex]
+  const effort = focused?.effort
+  if (!focused || focused.header || !effort || effort.levels.length === 0) return state
+
+  const index = Math.min(Math.max(effort.index + delta, 0), effort.levels.length - 1)
+  if (index === effort.index) return state
+
+  const key = focused.id ?? focused.label
+  const retier = (items: SelectorItem[]) => items.map(item =>
+    (item.id ?? item.label) === key && item.effort
+      ? { ...item, effort: { ...item.effort, index } }
+      : item)
+  return { ...state, items: retier(state.items), allItems: retier(state.allItems) }
 }
 
 export interface SelectorRenameState {
@@ -76,7 +125,6 @@ export interface SelectorState {
   /** Ephemeral state for an output detail: undefined offset follows the tail. */
   outputView?: {
     scrollOffset?: number
-    showCommand?: boolean
     returnToPrompt?: boolean
   }
   /** Wraps up/down navigation between the first and last focusable items. */

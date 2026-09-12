@@ -148,7 +148,8 @@ describe('renderSelector via viewmodel', () => {
     expect(lines[10]).toBe('❯ grok-4.5 ✓')
     expect(lines[11]).toBe('')
     expect(lines[12]).toBe('  droid')
-    expect(lines[13]).toBe('  gpt-5.6-sol')
+    // Idle model rows carry a `·` gutter; only group headings keep two spaces.
+    expect(lines[13]).toBe('· gpt-5.6-sol')
     expect(lines[15]).toBe('  Model Name: grok-4.5')
     expect(lines.at(-1)).toBe('─'.repeat(40))
     expect(lines.join('\n')).not.toContain('Models  2')
@@ -212,11 +213,11 @@ describe('renderSelector via viewmodel', () => {
     expect(lines.slice(listStart, listStart + 8)).toEqual([
       '  openai',
       '❯ gpt-5.6-sol ✓',
-      '  grok-4.5',
+      '· grok-4.5',
       '',
       '  anthropic',
-      '  claude-opus-4-8',
-      '  claude-sonnet-5',
+      '· claude-opus-4-8',
+      '· claude-sonnet-5',
       '',
     ])
     expect(lines.join('\n')).not.toContain('[openai]')

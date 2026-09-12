@@ -18,7 +18,22 @@ function legacyReader(json: string): void {
   for (const model of value.availableModels) {
     for (const key of ['provider', 'model', 'spec']) expect(typeof model[key]).toBe('string')
     for (const key of Object.keys(model)) {
-      expect(['provider', 'protocol', 'model', 'spec', 'group_label', 'group_order', 'sort_order', 'free']).toContain(key)
+      expect([
+        'provider', 'protocol', 'model', 'spec', 'group_label', 'group_order', 'sort_order',
+        // Additive-optional: absent for models with no selectable reasoning, so
+        // a reader that predates them sees exactly what it saw before.
+        'thinking_levels', 'thinking_level',
+        'free',
+      ]).toContain(key)
+    }
+    if (model.thinking_levels !== undefined) {
+      expect(Array.isArray(model.thinking_levels)).toBe(true)
+      for (const level of model.thinking_levels) expect(typeof level).toBe('string')
+      // A published starting tier must be a member of the published ladder;
+      // otherwise the picker would have to invent a position for it.
+      if (model.thinking_level !== undefined) {
+        expect(model.thinking_levels).toContain(model.thinking_level)
+      }
     }
     if (model.protocol !== undefined) expect(['anthropic', 'openai', 'openai_responses']).toContain(model.protocol)
     if (model.free !== undefined) {
@@ -32,6 +47,16 @@ describe('ConfigInfo boundary', () => {
     const decoded = decodeConfigInfo(JSON.stringify(legacy))
     expect(decoded).toEqual(legacy)
     expect(decoded.availableModels[0]?.protocol).toBeUndefined()
+    // A model with no selectable reasoning carries no ladder at all, so the
+    // picker shows no effort control rather than an invented one.
+    expect(decoded.availableModels[0]?.thinking_levels).toBeUndefined()
+    expect(decoded.availableModels[0]?.thinking_level).toBeUndefined()
+  })
+
+  test('per-model effort ladders survive the boundary in published order', () => {
+    const decoded = decodeConfigInfo(JSON.stringify(current))
+    expect(decoded.availableModels[0]?.thinking_levels).toEqual(['off', 'low', 'medium', 'high'])
+    expect(decoded.availableModels[0]?.thinking_level).toBe('high')
   })
 
   test('current shape round trips through a strict historical reader', () => {
@@ -58,6 +83,9 @@ describe('ConfigInfo boundary', () => {
       [{ ...current, availableModels: [null] }, '$.availableModels[0]'],
       [{ ...current, availableModels: [{ ...current.availableModels[0], sort_order: 'secret' }] }, '$.availableModels[0].sort_order'],
       [{ ...current, availableModels: [{ ...current.availableModels[0], free: { is_new: 'secret' } }] }, '$.availableModels[0].free.is_new'],
+      [{ ...current, availableModels: [{ ...current.availableModels[0], thinking_levels: 'secret' }] }, '$.availableModels[0].thinking_levels'],
+      [{ ...current, availableModels: [{ ...current.availableModels[0], thinking_levels: ['off', 7] }] }, '$.availableModels[0].thinking_levels[1]'],
+      [{ ...current, availableModels: [{ ...current.availableModels[0], thinking_level: 7 }] }, '$.availableModels[0].thinking_level'],
     ] as const) {
       expect(() => decodeConfigInfo(JSON.stringify(payload))).toThrow(`Invalid ConfigInfo at ${path}`)
     }

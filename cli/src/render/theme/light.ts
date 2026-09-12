@@ -24,6 +24,9 @@ export function lightTheme(): Theme {
     // Light counterpart of the dark selection fill: a pale periwinkle wash that
     // keeps the brand-hued label readable on a white background.
     mutedHex: '#777777',
+    // Light mirror of the dark theme's gauge tone: on a light page an empty
+    // cell has to sit *above* muted to stay visible, not below it.
+    subtleHex: '#b8b8b8',
     selectionBgHex: '#dfe3fd',
     selectionMutedHex: '#5b6070',
 

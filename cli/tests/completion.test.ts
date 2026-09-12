@@ -177,3 +177,72 @@ describe('alias completion', () => {
     expect(result!.candidates).toEqual(['/sessions'])
   })
 })
+
+describe('sub-command completion', () => {
+  test('completes the sub-command under the cursor', () => {
+    // The reported bug: `/harden chan` showed a `ges` ghost hint, but Tab
+    // refused to apply it because completion stopped at the command name.
+    const result = complete('/harden chan', 12)
+    expect(result).not.toBeNull()
+    expect(result!.replacement).toBe('changes ')
+    expect(result!.candidates).toEqual(['changes'])
+    // Splices the argument, leaving `/harden ` intact.
+    expect(result!.wordStart).toBe(8)
+  })
+
+  test('applies to every command with literal sub-commands', () => {
+    for (const [input, expected] of [
+      ['/skill inst', 'install '],
+      ['/log sh', 'shot '],
+      ['/env li', 'list '],
+      ['/clip a', 'all '],
+      ['/help mo', 'model '],
+    ] as const) {
+      const result = complete(input, input.length)
+      expect(result, input).not.toBeNull()
+      expect(result!.replacement, input).toBe(expected)
+    }
+  })
+
+  test('never completes a placeholder as literal text', () => {
+    // `<name>` / `<query>` describe what to type; inserting them verbatim would
+    // put angle brackets into the prompt.
+    for (const input of ['/model ', '/resume ', '/sessions ', '/share x']) {
+      expect(complete(input, input.length), input).toBeNull()
+    }
+  })
+
+  test('declines an ambiguous prefix rather than applying nothing', () => {
+    // `/env l` matches list+load; the common prefix adds no characters, so Tab
+    // must report "not handled" instead of consuming the key for a no-op.
+    expect(complete('/env l', 6)).toBeNull()
+    // One more character disambiguates it.
+    expect(complete('/env lo', 7)!.replacement).toBe('load ')
+  })
+
+  test('leaves free-form prompt text past the first argument alone', () => {
+    expect(complete('/harden changes and more', 24)).toBeNull()
+    expect(complete('harden chan', 11)).toBeNull()
+    expect(complete('/nonexist foo', 13)).toBeNull()
+  })
+
+  test('a literal ghost hint is always applicable by Tab', () => {
+    // The invariant that broke: the hint advertised a completion Tab could not
+    // deliver. Anything the hint offers as literal text must be appliable.
+    for (const input of [
+      '/harden chan', '/harden pl', '/harden a', '/skill re',
+      '/log sh', '/env lo', '/clip a', '/help mo',
+    ]) {
+      const hint = getGhostHint(input, input.length)
+      // A literal hint has no bracketed candidate list.
+      expect(hint, input).not.toBe('')
+      expect(hint.startsWith('  ['), input).toBe(false)
+
+      const result = complete(input, input.length)
+      expect(result, input).not.toBeNull()
+      // Applying the completion yields exactly what the hint promised.
+      const partial = input.slice(result!.wordStart)
+      expect(result!.replacement, input).toBe(`${partial}${hint.trimEnd()} `)
+    }
+  })
+})

@@ -1,8 +1,10 @@
 import { editSessionName } from './session-rename-editor.js'
 import type { KeyEvent } from '../input.js'
 import {
+  selectorAdjustEffort,
   selectorBackspace,
   selectorDown,
+  selectorEffortLevel,
   selectorFocusList,
   selectorRemoveItem,
   selectorSelect,
@@ -18,7 +20,9 @@ export type SelectorControlAction =
   | { kind: 'update'; state: SelectorState }
   | { kind: 'close' }
   | { kind: 'resume'; sessionId: string }
-  | { kind: 'select-model'; spec: string }
+  /** `thinkingLevel` is present only when the row carried an effort ladder, so
+   *  a model with no selectable reasoning never names a tier. */
+  | { kind: 'select-model'; spec: string; thinkingLevel?: string }
   | { kind: 'delete-session'; sessionId: string; label: string; state: SelectorState }
   | { kind: 'queue-edit'; entry: ManagedQueuedPrompt }
   | { kind: 'queue-remove'; entry: ManagedQueuedPrompt; state: SelectorState }
@@ -59,6 +63,15 @@ export function handleSelectorControl(state: SelectorState, event: KeyEvent): Se
     case 'down':
     case 'tab': {
       return { kind: 'update', state: selectorDown(selectorFocusList(disarmDelete(state))) }
+    }
+    case 'left':
+    case 'right': {
+      // Only a row carrying a ladder claims ←/→. Checked before anything else
+      // mutates, so on every other selector these keys stay exactly as
+      // unhandled as they were before the effort column existed.
+      if (selectorEffortLevel(state.items[state.focusIndex]) === undefined) return { kind: 'none' }
+      const next = selectorAdjustEffort(disarmDelete(state), event.type === 'left' ? -1 : 1)
+      return next === state ? { kind: 'none' } : { kind: 'update', state: next }
     }
     case 'char':
       // Lists that reserve bare letters for their own gestures never build a
@@ -104,7 +117,12 @@ function selectAction(state: SelectorState): SelectorControlAction {
     return { kind: 'none' }
   }
 
-  return { kind: 'select-model', spec: selected.id ?? selected.label }
+  const level = selectorEffortLevel(selected)
+  return {
+    kind: 'select-model',
+    spec: selected.id ?? selected.label,
+    ...(level !== undefined ? { thinkingLevel: level } : {}),
+  }
 }
 
 function deleteAction(state: SelectorState): SelectorControlAction {

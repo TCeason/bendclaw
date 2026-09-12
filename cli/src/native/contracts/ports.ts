@@ -47,6 +47,7 @@ export interface NativeAgent {
   reloadSelection(): boolean
   reloadProvider(provider: string): boolean
   cycleThinkingLevel(): string | null
+  setThinkingLevel(level: string): string | null
   restoreThinkingLevel(level: string): void
   setLimits(turns: number | null, tokens: number | null, duration: number | null): void
   appendSystemPrompt(extra: string): void

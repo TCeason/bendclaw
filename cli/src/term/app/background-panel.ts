@@ -9,7 +9,7 @@
  * terminal: the controller in `background-terminals.ts` owns the side effects.
  */
 
-import { buildToolCall } from '../../render/output.js'
+import { wrapTextWithAnsi } from '../../render/wrap.js'
 import stripAnsi from 'strip-ansi'
 import type { KeyEvent } from '../input.js'
 import type { BackgroundProcess } from '../../native/index.js'
@@ -64,14 +64,11 @@ export function isLiveStatus(status: BackgroundProcess['status']): boolean {
  */
 export { formatElapsed }
 
-/** First non-empty line of a command, with the rest reported as a line count. */
+/** A script label must not imply its first command is the active process. */
 export function formatCommandLabel(command: string, maxChars = 96): string {
-  const lines = command.split('\n')
-  const first = lines.map(line => line.trim()).find(Boolean) ?? '(empty)'
-  const extra = lines.length - 1
-  const suffix = extra > 0 ? ` (+${extra} ${extra === 1 ? 'line' : 'lines'})` : ''
-  const available = Math.max(1, maxChars - suffix.length)
-  return `${clipDisplayText(first, available)}${suffix}`
+  const text = sanitizeTerminalOutput(command).trim()
+  const lines = text.split('\n')
+  return clipDisplayText(lines.length > 1 ? `script (${lines.length} lines)` : text || '(empty)', maxChars)
 }
 
 /** Parenthesised status shown after a row's command. */
@@ -280,8 +277,6 @@ export function backgroundOutputHints(process: BackgroundProcess, returnToPrompt
     { keys: 'escape', action: returnToPrompt ? 'close' : 'back' },
     ...(isLiveStatus(process.status) ? [{ keys: 'x', action: 'stop' } satisfies Hint] : []),
     { keys: ['up', 'down'], action: 'scroll' },
-    { keys: 'end', action: 'follow' },
-    { keys: 'c', action: 'command' },
   ]
 }
 
@@ -301,9 +296,6 @@ export function formatLiveOutputView(process: BackgroundProcess, output: string)
   const hidden = all.length - visible.length
   const body = visible.length === 0 ? ['(no output yet)'] : visible
   return [
-    // The panel owns navigation: don't advertise the transcript's Ctrl+O here.
-    ...buildToolCall('bash', { command: sanitizeTerminalOutput(process.command) }, undefined, true)
-      .filter(line => line.kind === 'tool').map(line => line.text),
     `  ${STATUS_MARK[process.status]} · ${formatStatusDetail(process)}`,
     `  Output: ${sanitizeTerminalOutput(process.output_path)}`,
     ...(process.output_file_truncated
@@ -311,8 +303,20 @@ export function formatLiveOutputView(process: BackgroundProcess, output: string)
       : []),
     ...(hidden > 0 ? [`  … ${hidden} earlier ${hidden === 1 ? 'line' : 'lines'}`] : []),
     '',
+    'Command',
+    ...sanitizeTerminalOutput(process.command).split('\n'),
+    '',
+    'Output',
     ...body,
   ]
+}
+
+export function backgroundOutputRows(state: SelectorState, columns: number): string[] {
+  const preview = state.items[0]?.preview ?? ['', '(no output yet)']
+  const split = preview.indexOf('')
+  const body = split < 0 ? preview : preview.slice(split + 1)
+  const width = Number.isFinite(columns) ? Math.max(1, Math.floor(columns)) : 80
+  return body.flatMap(entry => wrapTextWithAnsi(entry, Math.max(1, width - 2)))
 }
 
 /** Replace status and tail while preserving the open output view. */

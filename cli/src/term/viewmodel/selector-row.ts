@@ -7,8 +7,10 @@ export interface SelectorRowOptions {
   highlighted: boolean
   /** Optional filter text. Matches are emphasized only on non-highlighted rows. */
   query?: string
-  /** Model lists keep idle rows quieter than general-purpose selectors. */
-  dimIdleLabel?: boolean
+  /** Mark idle rows with a leading `·` instead of blank space, so every row in
+   *  the list reads as a choice rather than only the current one. Opt-in: lists
+   *  that predate it keep their blank gutter. */
+  idleMarker?: boolean
   /** Models use a compact detail/tag gap; generic selectors use two cells. */
   detailGap?: string
 }
@@ -25,18 +27,20 @@ export function buildSelectorRow(item: SelectorItem, options: SelectorRowOptions
   const {
     highlighted,
     query = '',
-    dimIdleLabel = false,
+    idleMarker = false,
     detailGap = '  ',
   } = options
-  const { brandHex, selectionBgHex, selectionMutedHex } = getTheme()
+  const { brandHex, mutedHex, selectionBgHex, selectionMutedHex } = getTheme()
   const bg = highlighted ? selectionBgHex : undefined
   const prefix: StyledSpan = highlighted
     ? { text: '❯ ', hex: brandHex, bold: true, bg }
-    : plain('  ')
+    : idleMarker
+      ? { text: '· ', hex: mutedHex }
+      : plain('  ')
 
   const label = highlighted
     ? [{ text: item.label, hex: brandHex, bold: true, bg }]
-    : highlightSelectorMatches(item.label, query, dimIdleLabel ? { dim: true } : {})
+    : highlightSelectorMatches(item.label, query, {})
   const detail = item.detail
     ? highlighted
       ? [{ text: `${detailGap}${item.detail}`, hex: selectionMutedHex, bg }]

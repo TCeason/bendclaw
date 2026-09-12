@@ -1,5 +1,6 @@
 import { marked, type Token, type Tokens } from 'marked'
 import { createMathMarkedExtension } from '../math/marked.js'
+import { createCjkEmphasisExtension } from './cjk-emphasis.js'
 
 let markedConfigured = false
 
@@ -9,6 +10,7 @@ function configureMarked(): void {
 
   marked.use(
     createMathMarkedExtension(),
+    createCjkEmphasisExtension(),
     {
       tokenizer: {
         // Disable strikethrough parsing — the model often uses ~ for "approximate"

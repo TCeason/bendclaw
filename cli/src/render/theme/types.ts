@@ -28,6 +28,10 @@ export interface Theme {
 
   /** Secondary interface copy (hints, metadata), independent of ANSI dim. */
   mutedHex: string
+  /** One step below `mutedHex`: structural marks that must stay legible without
+   *  reading as copy, e.g. the unfilled cells of a gauge. `dim` is already
+   *  `mutedHex`, so a two-tone meter needs a tone below it. */
+  subtleHex: string
   /** Fill behind a selected row (completion menu). */
   selectionBgHex: string
   /** Secondary text on `selectionBgHex`, where the normal dim gray is too dark. */

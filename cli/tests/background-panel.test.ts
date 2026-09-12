@@ -63,13 +63,13 @@ describe('formatCommandLabel', () => {
   })
 
   test('reports extra lines as a count so rows stay one line', () => {
-    expect(formatCommandLabel('bun run dev\n--watch')).toBe('bun run dev (+1 line)')
-    expect(formatCommandLabel('a\nb\nc')).toBe('a (+2 lines)')
+    expect(formatCommandLabel('bun run dev\n--watch')).toBe('script (2 lines)')
+    expect(formatCommandLabel('a\nb\nc')).toBe('script (3 lines)')
   })
 
   test('truncates long commands while keeping the line count visible', () => {
     const label = formatCommandLabel(`${'x'.repeat(200)}\nsecond`, 40)
-    expect(label).toEndWith('(+1 line)')
+    expect(label).toBe('script (2 lines)')
     expect(label.length).toBeLessThanOrEqual(40)
   })
 

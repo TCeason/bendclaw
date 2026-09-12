@@ -1,3 +1,4 @@
+import { backgroundOutputRows } from '../app/background-panel.js'
 import { buildSessionRenameLines } from './session-rename.js'
 import { buildOutputBlocks } from './output.js'
 import { clipDisplayText } from '../../render/format.js'
@@ -7,11 +8,12 @@ import { wrapTextWithAnsi } from '../../render/wrap.js'
 import { CURSOR_MARKER } from '../render-frame.js'
 import { line, block, plain, dim, bold, colored, blocksToLines, styledLineToAnsi, type ViewBlock, type StyledSpan, type StyledLine } from './types.js'
 import { finiteSize, spansWidth, truncateSpansToWidth, truncateToWidth } from './width.js'
-import { PREVIEW_SECTION_PREFIX, SELECTOR_VIEWPORT, type SelectorItem, type SelectorState } from '../selector.js'
+import { PREVIEW_SECTION_PREFIX, SELECTOR_VIEWPORT, selectorEffortLevel, type SelectorItem, type SelectorState } from '../selector.js'
 import { HINT_SEPARATOR, formatChord, type Hint } from '../design/key-hints.js'
 import { getTheme } from '../../render/theme/index.js'
 import { buildSkillSelectorLines } from './skill-selector.js'
 import { buildSelectorRow } from './selector-row.js'
+import { buildEffortCell, effortLabel, planEffortLayout } from './model-effort.js'
 
 /** Render a selector in pi's editorContainer position, never as a modal. */
 export function buildSelectorRegionLines(
@@ -69,15 +71,10 @@ function buildBackgroundOutputRegionLines(state: SelectorState, width: number, r
   const preview = item?.preview ?? ['', '(no output yet)']
   const split = preview.indexOf('')
   const metadata = split < 0 ? [] : preview.slice(0, split)
-  const body = state.outputView?.showCommand
-    ? metadata.filter(text => !/^  [●✓✗■]/u.test(text) && !text.includes('earlier line') && !text.includes('output file was capped'))
-    : split < 0 ? preview : preview.slice(split + 1)
+  const body = backgroundOutputRows(state, width)
   const paused = state.outputView?.scrollOffset !== undefined
   const end = Math.min(body.length, state.outputView?.scrollOffset ?? body.length)
-  const wrapBody = (entries: string[]) => entries.flatMap(entry =>
-    wrapTextWithAnsi(entry, Math.max(1, width - 2)).map(text => `${width > 2 ? '  ' : ''}${text}`),
-  )
-  const wrapped = wrapBody(body.slice(0, end))
+  const wrapped = body.slice(0, end).map(text => `${width > 2 ? '  ' : ''}${text}`)
   // The outer renderer adds a leading blank and two borders. Leave those out
   // of this budget; keep enough space for activity even on short terminals.
   const budget = Math.max(4, Math.min(24, Math.floor(rows) - 4))
@@ -94,7 +91,7 @@ function buildBackgroundOutputRegionLines(state: SelectorState, width: number, r
   const bodyBudget = Math.max(1, budget - header.length - 2)
   const visible = wrapped.slice(-bodyBudget)
   const hasEarlier = wrapped.length > visible.length || metadata.some(text => text.includes('earlier line'))
-  const position = paused ? 'Paused · End to follow' : hasEarlier ? '… earlier output · ↑ scroll' : ''
+  const position = paused ? 'Paused' : hasEarlier ? '… command / earlier output · ↑ scroll' : ''
   const hints = state.hints ?? [{ keys: 'escape', action: 'back' }]
   return [
     ...header,
@@ -134,7 +131,12 @@ function buildModelSelectorRegionLines(state: SelectorState, width: number, acti
   )
   const end = Math.min(start + maxVisible, state.items.length)
 
-  const { accentHex } = getTheme()
+  const { accentHex, brandHex } = getTheme()
+  // Rows are built and measured first, then the effort column is planned for
+  // the whole page: one shared column keeps every gauge and tier label aligned
+  // instead of each row placing its own relative to its label length.
+  const pageLines: StyledLine[] = []
+  const rowRefs: { item: SelectorItem; width: number; at: number; focused: boolean }[] = []
   let visibleListRowSeen = false
   for (let index = start; index < end; index++) {
     const item = state.items[index]!
@@ -143,21 +145,48 @@ function buildModelSelectorRegionLines(state: SelectorState, width: number, acti
     if (item.header) {
       // The viewport can begin halfway through a large group, with its header
       // scrolled offscreen. Still separate the next group from those rows.
-      if (visibleListRowSeen) lines.push(line(plain('')))
-      lines.push(line(plain('  '), { text: item.label, hex: accentHex, bold: true }))
+      if (visibleListRowSeen) pageLines.push(line(plain('')))
+      pageLines.push(line(plain('  '), { text: item.label, hex: accentHex, bold: true }))
       visibleListRowSeen = true
       continue
     }
 
     const highlighted = index === state.focusIndex
-    lines.push(buildSelectorRow(item, {
+    const row = buildSelectorRow(item, {
       highlighted,
       query: state.query,
-      dimIdleLabel: true,
+      // Devin marks every idle row with a `·` gutter and leaves its label at
+      // full strength, so the list reads as a set of choices and the accent
+      // alone says which one is current (measured from the binary's palette:
+      // idle label `--text-primary`, idle gutter `--text-muted`).
+      idleMarker: true,
       detailGap: ' ',
-    }))
+    })
+    rowRefs.push({ item, width: spansWidth(row.spans), at: pageLines.length, focused: highlighted })
+    pageLines.push(row)
     visibleListRowSeen = true
   }
+
+  // One column stays free so a full-width row cannot wrap into the next line.
+  const effortLayout = planEffortLayout(rowRefs, Math.max(1, width - 1))
+  if (effortLayout) {
+    for (const ref of rowRefs) {
+      if (!ref.item.effort) continue
+      const target = pageLines[ref.at]!
+      pageLines[ref.at] = {
+        ...target,
+        spans: [
+          ...target.spans,
+          ...buildEffortCell(ref.item.effort, effortLayout, ref.width, {
+            focused: ref.focused,
+            active,
+            ...(target.bg ? { bg: target.bg } : {}),
+          }),
+        ],
+      }
+    }
+  }
+  lines.push(...pageLines)
 
   if (start > 0 || end < state.items.length) {
     // Headings are not choices, so the counter reflects models only.
@@ -173,6 +202,18 @@ function buildModelSelectorRegionLines(state: SelectorState, width: number, acti
     if (selected && !selected.header) {
       lines.push(line(plain('')))
       lines.push(line(dim(`  Model Name: ${selected.label}`)))
+      // The gauge alone does not say it can be moved, so the gesture is named
+      // only on a row that actually carries a ladder — and only where it would
+      // actually work. In a command-window preview the composer still owns the
+      // line, so ←/→ move the text cursor there; naming them would be a lie.
+      const level = selectorEffortLevel(selected)
+      if (level !== undefined) {
+        lines.push(line(
+          dim('  Effort: '),
+          { text: effortLabel(level), hex: brandHex },
+          ...(active ? [dim(`${HINT_SEPARATOR}${formatChord(['left', 'right'])} to adjust`)] : []),
+        ))
+      }
     }
   }
 
