@@ -4,6 +4,7 @@
  * parses them into proper TS interfaces.
  */
 
+import { shareCreated, shareList, type ShareNotice } from './contracts/share.js'
 // @ts-ignore — binding.js is generated
 import { NapiAgent as RawAgent, version as rawVersion, startServer as rawStartServer, startServerBackground as rawStartServerBackground, fastExit as rawFastExit, authBegin as rawAuthBegin, authPoll as rawAuthPoll, authLogout as rawAuthLogout, authSyncModels as rawAuthSyncModels, authSyncNotices as rawAuthSyncNotices, authWhoami as rawAuthWhoami, authRefreshSession as rawAuthRefreshSession, authNotices as rawAuthNotices } from './binding.js'
 
@@ -209,6 +210,22 @@ export class Agent {
   async sessionWithText(sessionId: string): Promise<SessionWithText | null> {
     const json = await this.raw.sessionWithText(sessionId)
     return json === null ? null : decodeResult(json, results.sessionWithText)
+  }
+
+  async shareSession(sessionId: string) {
+    return decodeResult(await this.raw.shareSession(sessionId), shareCreated)
+  }
+
+  async listShares() {
+    return decodeResult(await this.raw.listShares(), shareList).shares
+  }
+
+  async deleteShare(id: string): Promise<void> {
+    await this.raw.deleteShare(id)
+  }
+
+  async recordShareNotices(sessionId: string, notices: ShareNotice[]): Promise<void> {
+    await this.raw.recordShareNotices(sessionId, JSON.stringify(notices))
   }
 
   async loadTranscript(sessionId: string): Promise<TranscriptItem[]> {

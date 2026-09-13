@@ -46,6 +46,8 @@ describe('term stream machine', () => {
     }
     const waiting = reduceRunEvent(initial, event, { termRows: 24 })
 
+    expect(waiting.noticeLines).toHaveLength(1)
+    expect(waiting.noticeLines[0]?.text).toContain('quota unavailable')
     expect(waiting.state.spinnerState.phase).toBe('quota_waiting')
     expect(waiting.state.spinnerState.waitRetryAt).toBeGreaterThan(Date.now())
     const text = waiting.commitLines.map(line => line.text).join('\n')
@@ -59,6 +61,7 @@ describe('term stream machine', () => {
 
     const repeated = reduceRunEvent(waiting.state, event, { termRows: 24 })
     expect(repeated.commitLines).toEqual([])
+    expect(repeated.noticeLines).toEqual([])
     expect(repeated.state.spinnerState.waitRetryAt).toBeGreaterThan(Date.now())
 
     const changed = reduceRunEvent(waiting.state, {

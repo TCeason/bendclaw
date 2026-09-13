@@ -1,3 +1,4 @@
+import { replaceOrPushStatusLine } from './app/status-line.js'
 import type { OutputLine } from '../render/output.js'
 import { buildOutputBlocks, blocksToLines } from './viewmodel/index.js'
 
@@ -7,6 +8,7 @@ export interface CommitterDeps {
   isExpanded: () => boolean
   columns: () => number
   logLines: (lines: string[]) => void
+  notices?: (lines: OutputLine[]) => void
   requestRender: () => void
   /** Called after an in-place edit, so the append-only render cache rebuilds. */
   invalidateHistory: () => void
@@ -18,9 +20,9 @@ export class Committer {
 
   constructor(private readonly deps: CommitterDeps) {}
 
-  contextFor(lines: OutputLine[]): { prevKind?: string; columns?: number } {
-    const prev = lines.at(-1)
-    return { prevKind: prev?.kind, columns: this.deps.columns() }
+  /** Block layout only needs the line it follows, so history is never copied. */
+  private contextAfter(previous: OutputLine | undefined): { prevKind?: string; columns?: number } {
+    return { prevKind: previous?.kind, columns: this.deps.columns() }
   }
 
   restore(lines: OutputLine[], expandedLines: OutputLine[] = lines): void {
@@ -31,17 +33,43 @@ export class Committer {
   }
 
   commit(lines: OutputLine[]): void {
+    this.commitDual(lines, lines)
+  }
+
+  /**
+   * Append to scrollback. Nothing here is persisted: these lines render output
+   * the agent already wrote to the transcript, so capturing them as notices
+   * would store — and later share — a second copy of every tool error.
+   */
+  commitDual(compact: OutputLine[], expanded: OutputLine[]): void {
+    if (!compact.length && !expanded.length) return
+    const previous = this.deps.compactLines.at(-1)
+    this.deps.compactLines.push(...compact)
+    this.deps.expandedLines.push(...expanded)
+    this.paint(this.deps.isExpanded() ? expanded : compact, previous)
+  }
+
+  /**
+   * Commit lines that exist only on this client — a cancellation, a slash
+   * command reply, a connection failure the transcript never saw. These are
+   * offered to `notices` so a shared session still shows them.
+   */
+  commitNotice(lines: OutputLine[]): void {
     if (lines.length === 0) return
-    this.deps.compactLines.push(...lines)
-    this.deps.expandedLines.push(...lines)
-    const visible = this.deps.isExpanded()
-      ? this.deps.expandedLines.slice(-lines.length)
-      : lines
-    this.paint(visible, this.deps.compactLines.slice(0, -lines.length))
+    this.commitDual(lines, lines)
+    this.deps.notices?.(lines)
+  }
+
+  commitStatus(line: OutputLine): void {
+    const replaced = replaceOrPushStatusLine(this.deps.compactLines, line)
+    replaceOrPushStatusLine(this.deps.expandedLines, line)
+    if (replaced) this.deps.invalidateHistory()
+    this.deps.notices?.([line])
+    this.paint([line], this.deps.compactLines.at(-2))
   }
 
   system(id: string, text: string, kind: OutputLine['kind'] = 'system'): void {
-    this.commit([{ id, kind, text }])
+    this.commitNotice([{ id, kind, text }])
   }
 
   /**
@@ -96,8 +124,9 @@ export class Committer {
    */
   revealTemporarily(id: string, text: string, erasedText: string, delayMs: number): ReturnType<typeof setTimeout> {
     this.commitUnlogged([{ id, kind: 'system', text }])
+    this.deps.notices?.([{ id, kind: 'system', text: erasedText }])
     // Only the masked form is logged; see commitUnlogged.
-    const context = this.contextFor(this.deps.compactLines.slice(0, -1))
+    const context = this.contextAfter(this.deps.compactLines.at(-2))
     this.deps.logLines(blocksToLines(buildOutputBlocks([{ id, kind: 'system', text: erasedText }], context)))
     const timer = setTimeout(() => {
       this.pendingReveals.delete(timer)
@@ -114,8 +143,8 @@ export class Committer {
     this.pendingReveals.clear()
   }
 
-  paint(lines: OutputLine[], contextLines: OutputLine[]): void {
-    const blocks = buildOutputBlocks(lines, this.contextFor(contextLines))
+  paint(lines: OutputLine[], previous: OutputLine | undefined): void {
+    const blocks = buildOutputBlocks(lines, this.contextAfter(previous))
     this.deps.logLines(blocksToLines(blocks))
     this.deps.requestRender()
   }

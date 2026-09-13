@@ -84,6 +84,8 @@ mod session_service_test;
 mod session_test;
 #[path = "settings_test.rs"]
 mod settings_test;
+mod share_client;
+mod share_export;
 #[path = "skill_loader_test.rs"]
 mod skill_loader_test;
 #[path = "skill_prompt_test.rs"]

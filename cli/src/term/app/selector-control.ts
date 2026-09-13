@@ -20,6 +20,8 @@ export type SelectorControlAction =
   | { kind: 'update'; state: SelectorState }
   | { kind: 'close' }
   | { kind: 'resume'; sessionId: string }
+  | { kind: 'open-share'; shareId: string }
+  | { kind: 'delete-share'; shareId: string; state: SelectorState }
   /** `thinkingLevel` is present only when the row carried an effort ladder, so
    *  a model with no selectable reasoning never names a tier. */
   | { kind: 'select-model'; spec: string; thinkingLevel?: string }
@@ -104,12 +106,14 @@ function selectAction(state: SelectorState): SelectorControlAction {
   // Skill/background/unknown lists must never fall through to model selection.
   if (state.owner !== SELECTOR_OWNER.model
     && state.owner !== SELECTOR_OWNER.resume
+    && state.owner !== SELECTOR_OWNER.shares
     && state.owner !== SELECTOR_OWNER.queue) return { kind: 'none' }
 
   const selected = selectorSelect(state)
   if (!selected) return { kind: 'close' }
 
   if (state.owner === SELECTOR_OWNER.resume) return { kind: 'resume', sessionId: selected.id ?? selected.label }
+  if (state.owner === SELECTOR_OWNER.shares) return { kind: 'open-share', shareId: selected.id ?? '' }
 
   if (state.owner === SELECTOR_OWNER.queue) {
     const action = decideQueueSelectorAction(selected, 'enter')
@@ -139,13 +143,16 @@ function deleteAction(state: SelectorState): SelectorControlAction {
     }
   }
 
-  if (state.owner !== SELECTOR_OWNER.resume) return { kind: 'none' }
+  if (state.owner !== SELECTOR_OWNER.resume && state.owner !== SELECTOR_OWNER.shares) return { kind: 'none' }
 
   // Deleting a session is irreversible, so the first press only arms it and a
   // second press confirms. The armed id must still be the focused row: an async
   // list refresh (listSessionsWithText) can reorder rows between the two
   // presses, and matching on index alone would delete the wrong session.
   if (state.pendingDeleteId === target.id) {
+    if (state.owner === SELECTOR_OWNER.shares) {
+      return { kind: 'delete-share', shareId: target.id, state: { ...state, pendingDeleteId: undefined, subtitle: undefined } }
+    }
     return {
       kind: 'delete-session',
       sessionId: target.id,

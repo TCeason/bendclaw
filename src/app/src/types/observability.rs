@@ -25,6 +25,9 @@ pub struct LlmCallStartedStats {
     #[serde(default)]
     pub injected_count: usize,
     pub model: String,
+    /// Effective level after model capability clamping. Missing in historical stats.
+    #[serde(default)]
+    pub thinking_level: String,
     pub message_count: usize,
     pub message_bytes: usize,
     pub system_prompt_tokens: usize,

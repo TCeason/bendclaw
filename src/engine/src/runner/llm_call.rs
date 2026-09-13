@@ -142,6 +142,7 @@ pub(super) async fn stream_assistant_response(
                 injected_count,
                 request: LlmCallRequest {
                     model: config.model.clone(),
+                    thinking_level,
                     system_prompt: context.system_prompt.clone(),
                     messages: llm_messages.clone(),
                     tools: tool_defs.clone(),

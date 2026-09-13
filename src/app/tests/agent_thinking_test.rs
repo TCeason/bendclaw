@@ -550,6 +550,10 @@ async fn pinned_request_model_survives_live_model_changes() -> TestResult {
     assert_eq!(meta.provider, "anthropic");
     assert_eq!(meta.model, "claude-opus-4-6");
     assert_eq!(meta.thinking_level.as_deref(), Some("max"));
+    let transcript = agent.sessions().transcript(&session_id).await?;
+    assert!(transcript.iter().any(|item| matches!(item,
+        evot::types::TranscriptItem::Stats { kind, data }
+            if kind == "llm_call_started" && data["thinking_level"] == "max")));
     // The live selection remains available as the next request's default.
     assert_eq!(agent.llm().model, "claude-sonnet-4-6");
     Ok(())

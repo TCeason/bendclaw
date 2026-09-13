@@ -4,6 +4,7 @@ import { createSelectorState, type SelectorItem, type SelectorState } from '../s
 export const SELECTOR_OWNER = {
   model: Symbol('model'),
   resume: Symbol('resume'),
+  shares: Symbol('shares'),
   skill: Symbol('skill'),
   queue: Symbol('queue'),
   background: Symbol('background'),

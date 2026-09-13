@@ -26,7 +26,7 @@ use crate::tracing::init_tracing;
 
 #[napi]
 pub struct NapiAgent {
-    agent: Arc<Agent>,
+    pub(crate) agent: Arc<Agent>,
     env_file_path: String,
 }
 

@@ -135,7 +135,10 @@ import { findPreviousSession, shouldPreloadStartupSessions, selectResumeMessages
 import { saveSessionRename } from './app/session-rename.js'
 import { handleSelectorControl } from './app/selector-control.js'
 import { decideReplControl, type ReplControlAction } from './app/repl-control.js'
-import { replaceOrPushStatusLine } from './app/status-line.js'
+import { ShareNotices } from '../session/share-notices.js'
+import { modelShareEvents } from '../session/share-events.js'
+import { ShareSelector } from './app/share-selector.js'
+import { openWebLink } from './open-link.js'
 import { AuthWatcher } from './app/auth-watch.js'
 import { RunInteraction, type RunInteractionInput } from './app/run-interaction.js'
 import { ManualCompaction } from './app/manual-compaction.js'
@@ -281,8 +284,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const setTerminalTitle = terminalTitle.set.bind(terminalTitle)
   const freezeTerminalTitle = terminalTitle.freeze.bind(terminalTitle)
   const unfreezeTerminalTitle = terminalTitle.unfreeze.bind(terminalTitle)
+  let shareSelector: ShareSelector | null = null
+  const shareNotices = new ShareNotices((sid, notices) => agent.recordShareNotices(sid, notices))
   const replCommands: ReplCommandContext = {
     agent,
+    flushShareNotices: () => shareNotices.flush(),
+    isBusy: () => isLoading,
+    openShareList,
     getSessionId: () => sessionId,
     getCompactLines: () => compactLines,
     getConfigInfo: () => configInfo ?? null,
@@ -958,6 +966,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     isExpanded: () => expanded,
     columns: () => renderer.termCols,
     logLines: lines => screenLog.logLines(lines),
+    notices: lines => shareNotices.record(sessionId, lines),
     requestRender: () => renderer.requestRender(),
     invalidateHistory: () => {
       resetHistoryCache()
@@ -1085,6 +1094,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         id: 'sys-model',
         kind: 'system',
         text: `  Model → ${formatModelLabel(agent.model, next.provider, next.group_label)}`,
+        shareEvents: modelShareEvents(next.provider, agent.model, configInfo?.thinkingLevel),
       })
     }
     return true
@@ -1523,10 +1533,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   renderer.setRenderCallback(buildFrame)
 
-  function outputContextFor(lines: OutputLine[]): { prevKind?: string; columns?: number } {
-    return committer.contextFor(lines)
-  }
-
   function restoreLines(outputLines: OutputLine[], expandedOutputLines: OutputLine[] = outputLines) {
     committer.restore(outputLines, expandedOutputLines)
   }
@@ -1563,15 +1569,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
    *  stay single-line. Only the trailing line is eligible for replacement, so a
    *  later user message or other output freezes the prior status into history. */
   function commitStatusLine(line: OutputLine) {
-    const replaced = replaceOrPushStatusLine(compactLines, line)
-    replaceOrPushStatusLine(expandedLines, line)
-    // In-place mutation invalidates the append-only history cache prefix.
-    if (replaced) resetHistoryCache()
-    const context = outputContextFor(compactLines.slice(0, -1))
-    const blocks = buildOutputBlocks([line], context)
-    const rendered = blocksToLines(blocks)
-    screenLog.logLines(rendered)
-    renderer.requestRender()
+    committer.commitStatus(line)
   }
 
   /** Commit slash-command system lines, collapsing model/thinking status in place. */
@@ -1580,7 +1578,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       if (line.kind === 'system' && (line.id === 'sys-model' || line.id === 'sys-think')) {
         commitStatusLine(line)
       } else {
-        commitLines([line])
+        committer.commitNotice([line])
       }
     }
   }
@@ -1589,14 +1587,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   function commitFlushResult(flushed: { lines: OutputLine[]; expandedLines?: OutputLine[] }) {
     if (flushed.lines.length === 0) return
     if (flushed.expandedLines) {
-      compactLines.push(...flushed.lines)
-      expandedLines.push(...flushed.expandedLines)
-      const visible = expanded ? flushed.expandedLines : flushed.lines
-      const context = outputContextFor(compactLines.slice(0, -flushed.lines.length))
-      const blocks = buildOutputBlocks(visible, context)
-      const rendered = blocksToLines(blocks)
-      screenLog.logLines(rendered)
-      renderer.requestRender()
+      committer.commitDual(flushed.lines, flushed.expandedLines)
     } else {
       commitLines(flushed.lines)
     }
@@ -1632,7 +1623,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
     refreshConfigInfo()
     const label = level === 'off' ? 'off' : level
-    commitStatusLine({ id: 'sys-think', kind: 'system', text: `  Thinking level → ${label}` })
+    commitStatusLine({ id: 'sys-think', kind: 'system', text: `  Thinking level → ${label}`,
+      shareEvents: [{ kind: 'thinking_level_change', data: { thinking_level: level } }],
+    })
     renderer.requestRender()
   }
 
@@ -1750,9 +1743,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     restoreLines(messagesToOutputLines(shown))
 
     const lines = manualCompactionLines(outcome)
-    compactLines.push(...lines.compact)
-    expandedLines.push(...lines.expanded)
-    renderer.requestRender()
+    committer.commitDual(lines.compact, lines.expanded)
   }
 
   async function submitQueuedAfterCompaction() {
@@ -2118,6 +2109,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         appState = update.state.appState
         spinnerState = update.state.spinnerState
         if (update.sessionRevoked) handleCloudSessionRevoked()
+        shareNotices.record(sessionId, update.noticeLines)
 
         // Git commands run inside tool subprocesses. Refresh synchronously when
         // any tool settles instead of waiting for the debounced HEAD watcher;
@@ -2134,16 +2126,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             // Dual-commit: compact in compactLines, expanded in expandedLines
             const compact = update.commitLines
             const exp = update.expandedCommitLines
-            compactLines.push(...compact)
-            expandedLines.push(...exp)
-            const visible = expanded ? exp : compact
-            const context = outputContextFor(compactLines.slice(0, -compact.length))
-            const blocks = buildOutputBlocks(visible, context)
-            const rendered = blocksToLines(blocks)
-            screenLog.logLines(rendered)
-            renderer.requestRender()
+            committer.commitDual(compact, exp)
           } else {
-            commitLines(update.commitLines)
+            committer.commitDual(update.commitLines, update.commitLines)
           }
         }
 
@@ -2470,7 +2455,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // editor so the user can edit and press Enter, instead of committing it as
     // history under the cancellation notice.
     restoreQueuedUserMessagesToEditor()
-    commitLines([{ id, kind: 'cancelled', text }])
+    // The transcript has no record of a user-side interrupt, so this line is
+    // captured as a client notice and survives into a shared session.
+    committer.commitNotice([{ id, kind: 'cancelled', text }])
     commitRunFooter()
     backgroundTerminals.parkUntilBackground()
     sessionHook.settleRun()
@@ -3702,6 +3689,23 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
+  async function openShareList(): Promise<void> {
+    invalidateExplicitResumeSelector()
+    focusedCommandWindowGeneration = null
+    nextCommandWindowGeneration()
+    releaseCommandWindowLayout()
+    const controller: ShareSelector = new ShareSelector({
+      list: () => agent.listShares(),
+      delete: id => agent.deleteShare(id),
+      open: openWebLink,
+      current: () => shareSelector === controller && overlay.kind === 'selector'
+        && overlay.state.owner === SELECTOR_OWNER.shares ? overlay.state : undefined,
+      publish: state => { overlay = { kind: 'selector', state }; renderer.requestRender() },
+    })
+    shareSelector = controller
+    await controller.load()
+  }
+
   function handleSelectorKey(event: KeyEvent) {
     if (overlay.kind !== 'selector') return
     const action = handleSelectorControl(overlay.state, event)
@@ -3772,6 +3776,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             id: 'sys-model',
             kind: 'system',
             text: `  Model → ${label}${effort ? ` · thinking ${effort}` : ''}`,
+            shareEvents: modelShareEvents(provider, model, effort),
           })
         } catch (err) {
           commitSystem('sys-model-err', chalk.red(`  Failed to switch model: ${errorText(err)}`))
@@ -3811,6 +3816,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             }
           }
         })
+        renderer.requestRender()
+        return
+      case 'open-share':
+        void shareSelector?.open(action.shareId)
+        return
+      case 'delete-share':
+        overlay = { kind: 'selector', state: action.state }
+        void shareSelector?.delete(action.shareId)
         renderer.requestRender()
         return
       case 'queue-edit':

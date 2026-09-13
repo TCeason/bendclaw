@@ -3,12 +3,13 @@ import type { AppState } from './state.js'
 import type { OutputLine } from '../../render/output.js'
 import type { OverlayState } from './overlay-state.js'
 import { resolveCommand } from '../../commands/index.js'
+import { modelShareEvents } from '../../session/share-events.js'
 import { currentModelSpec, formatModelLabel, modelOptions } from './provider.js'
 
 export interface CommandModelClient {
   model: string
   setProvider(spec: string): void
-  configInfo(): Pick<ConfigInfo, 'provider'>
+  configInfo(): Pick<ConfigInfo, 'provider'> & Partial<Pick<ConfigInfo, 'thinkingLevel'>>
 }
 
 export interface CommandContext {
@@ -86,11 +87,13 @@ export function handleSlashCommand(text: string, ctx: CommandContext): CommandRe
         const idx = models.findIndex(option => option.spec === activeSpec)
         const next = models[(idx + 1) % models.length]!
         ctx.agent.setProvider(next.spec)
+        const config = ctx.agent.configInfo()
         const appState = { ...ctx.appState, model: next.model }
+        const shareEvents = modelShareEvents(next.provider, next.model, config.thinkingLevel)
         return {
           ...baseResult(ctx),
           appState,
-          systemLines: [{ id: 'sys-model', kind: 'system', text: `  Model → ${formatModelLabel(next.model, next.provider, next.group_label)}` }],
+          systemLines: [{ id: 'sys-model', kind: 'system', text: `  Model → ${formatModelLabel(next.model, next.provider, next.group_label)}`, shareEvents }],
         }
       }
       if (args) {
@@ -101,14 +104,16 @@ export function handleSlashCommand(text: string, ctx: CommandContext): CommandRe
           ctx.agent.model = args
         }
         const model = ctx.agent.model
-        const provider = ctx.agent.configInfo().provider
+        const config = ctx.agent.configInfo()
+        const provider = config.provider
         const appState = { ...ctx.appState, model }
         const selected = configured ?? ctx.configInfo?.availableModels.find(
           option => option.model === model && option.provider === provider)
+        const shareEvents = modelShareEvents(provider, model, config.thinkingLevel)
         return {
           ...baseResult(ctx),
           appState,
-          systemLines: [{ id: 'sys-model', kind: 'system', text: `  Model → ${formatModelLabel(model, provider, selected?.group_label)}` }],
+          systemLines: [{ id: 'sys-model', kind: 'system', text: `  Model → ${formatModelLabel(model, provider, selected?.group_label)}`, shareEvents }],
         }
       }
       // No arg — return empty result; handleSlashInput will show selector overlay

@@ -33,6 +33,10 @@ export interface NativeAgent {
   killAllBackgroundProcessesNow(): number
   listSessionsWithText(limit: number | null): Promise<string>
   sessionWithText(id: string): Promise<string | null>
+  shareSession(id: string): Promise<string>
+  listShares(): Promise<string>
+  deleteShare(id: string): Promise<void>
+  recordShareNotices(id: string, json: string): Promise<void>
   loadTranscript(id: string): Promise<string>
   loadContextTranscript(id: string): Promise<string>
   loadResumeTranscript(id: string): Promise<string>

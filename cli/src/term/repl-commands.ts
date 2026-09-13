@@ -2,7 +2,7 @@ import chalk from 'chalk'
 import type { Agent } from '../native/index.js'
 import type { ConfigInfo } from '../native/index.js'
 import { findLastAssistantMarkdown, findLastAssistantTurn } from '../session/assistant-markdown.js'
-import { resolveSessionByPrefix } from './app/resume.js'
+import { runShareCommand } from '../commands/share.js'
 import type { OutputLine } from '../render/output.js'
 import { defaultDeps, type LoginDeps } from '../commands/login-flow.js'
 import { createCommandOutput } from './command-output.js'
@@ -11,6 +11,9 @@ import type { RunResult } from '../update/types.js'
 
 export interface ReplCommandContext {
   agent: Agent
+  flushShareNotices?: () => Promise<void>
+  isBusy?: () => boolean
+  openShareList: () => Promise<void>
   getSessionId: () => string | null
   getCompactLines: () => import('../render/output.js').OutputLine[]
   getConfigInfo: () => ConfigInfo | null
@@ -95,58 +98,7 @@ export async function handleClipCommand(ctx: ReplCommandContext): Promise<void> 
 }
 
 export async function handleShareCommand(ctx: ReplCommandContext, args: string): Promise<void> {
-  const target = args.trim()
-  const { importSharedSession, isSharedSessionUrl, shareSession } = await import('../commands/share.js')
-
-  if (target && isSharedSessionUrl(target)) {
-    ctx.commitSystem('sys-share-import', '  downloading and importing...')
-    ctx.requestRender()
-    try {
-      const result = await importSharedSession(target)
-      ctx.commitSystem('sys-share-import-ok', `  imported session: ${result.sessionId}\n  resume with: /resume ${result.sessionId.slice(0, 8)}`)
-    } catch (err) {
-      ctx.commitSystem('sys-share-err', failureText('Import failed', err))
-    }
-    return
-  }
-
-  let resolvedSid = ctx.getSessionId()
-  if (target) {
-    if (!/^[0-9a-f-]{1,36}$/i.test(target)) {
-      ctx.commitSystem('sys-share-err', '  Usage: /share [session-id | url#password]')
-      return
-    }
-    try {
-      const sessions = await ctx.agent.listSessions(0)
-      const resolved = resolveSessionByPrefix(sessions, target)
-      if (resolved.kind === 'none') {
-        ctx.commitSystem('sys-share-err', `  Session not found: ${target}`)
-        return
-      }
-      if (resolved.kind === 'ambiguous') {
-        ctx.commitSystem('sys-share-err', `  Ambiguous session id: ${target} (${resolved.matches.length} matches)`)
-        return
-      }
-      resolvedSid = resolved.session.session_id
-    } catch (err) {
-      ctx.commitSystem('sys-share-err', failureText('Failed to list sessions', err))
-      return
-    }
-  }
-
-  if (!resolvedSid) {
-    ctx.commitSystem('sys-share-err', '  No active session to share.')
-    return
-  }
-
-  ctx.commitSystem('sys-share', `  packing session ${resolvedSid.slice(0, 8)}...`)
-  ctx.requestRender()
-  try {
-    const result = await shareSession(resolvedSid)
-    ctx.commitSystem('sys-share-url', `  uploaded. share this link:\n  ${result.url}\n  ⏳ link expires in 60 minutes`)
-  } catch (err) {
-    ctx.commitSystem('sys-share-err', failureText('Share failed', err))
-  }
+  await runShareCommand(ctx, args)
 }
 
 /**

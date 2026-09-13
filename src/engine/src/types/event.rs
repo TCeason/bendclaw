@@ -2,6 +2,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use super::llm::LlmCallMetrics;
+use super::llm::ThinkingLevel;
 use super::llm::Usage;
 use super::message::AgentMessage;
 use super::message::Message;
@@ -171,6 +172,8 @@ pub enum AgentEvent {
 #[derive(Debug, Clone)]
 pub struct LlmCallRequest {
     pub model: String,
+    /// Effective level after model capability clamping, not just the configured request.
+    pub thinking_level: ThinkingLevel,
     pub system_prompt: String,
     pub messages: Vec<Message>,
     pub tools: Vec<ToolDefinition>,

@@ -310,6 +310,11 @@ export interface OutputLine {
    * the card's edges, where the padded rows go.
    */
   toolCard?: ToolCardMembership
+  /** Display-only events persisted for sharing, independent of rendered copy. */
+  shareEvents?: Array<
+    | { kind: 'thinking_level_change'; data: { thinking_level: string } }
+    | { kind: 'model_change'; data: { provider: string; model: string } }
+  >
 }
 
 export type ToolCardState = 'pending' | 'success' | 'error'

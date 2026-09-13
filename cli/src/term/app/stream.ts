@@ -43,6 +43,8 @@ export interface StreamUpdate {
   commitLines: OutputLine[]
   expandedCommitLines?: OutputLine[]
   writeLines: OutputLine[]
+  /** Visible client-only lines: persisted separately, never rendered twice. */
+  noticeLines: OutputLine[]
   rerenderStatus: boolean
   /** The evot cloud gateway rejected this session after an admin sign-out. */
   sessionRevoked: boolean
@@ -116,6 +118,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
   let state = event.kind === 'host_tool_call' ? prev : { ...prev, appState: applyEvent(prev.appState, event) }
   const commitLines: OutputLine[] = []
   const writeLines: OutputLine[] = []
+  const noticeLines: OutputLine[] = []
   let expandedCommitLines: OutputLine[] | undefined
   let rerenderStatus = false
   let sessionRevoked = false
@@ -179,6 +182,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
           expandedLines: undefined,
         }
       : flushStreaming(state)
+    if (abandonsPartial) noticeLines.push(...flushed.lines)
     const activeLlmCall = event.kind === 'llm_call_started' || event.kind === 'llm_call_retry' || event.kind === 'api_retry'
     const isRetryEvent = event.kind === 'llm_call_retry' || event.kind === 'api_retry'
     // A bounded retry re-emits `llm_call_started` for every attempt — only a
@@ -286,11 +290,9 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     }
     commitLines.push(...flushed.lines)
     if (known.kind === 'quota_waiting' && !quotaWaitAlreadyShown) {
-      commitLines.push(...buildEventCard(formatLongWaitError(
-        state.appState.model,
-        quotaError,
-        waitDelayMs,
-      )))
+      const lines = buildEventCard(formatLongWaitError(state.appState.model, quotaError, waitDelayMs))
+      commitLines.push(...lines)
+      noticeLines.push(...buildSystem(lines.map(line => line.text).join('\n')))
     }
     rerenderStatus = true
   }
@@ -425,7 +427,9 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
   if (known?.kind === 'tool_progress') {
     const spill = parseSpillProgress(known.payload.text)
     if (spill) {
-      commitLines.push(...buildSpillEventLines(spill, known.payload.tool_name))
+      const lines = buildSpillEventLines(spill, known.payload.tool_name)
+      commitLines.push(...lines)
+      noticeLines.push(...lines.map(line => ({ ...line, kind: 'system' as const })))
     }
     rerenderStatus = true
   }
@@ -472,7 +476,9 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
       if (alreadyShown) writeLines.push(...buildError(message))
       else {
         const failure = providerFailurePresentation({ error: message })
-        commitLines.push(...buildError(failure.kind === 'unknown' ? message : failure.label))
+        const lines = buildError(failure.kind === 'unknown' ? message : failure.label)
+        commitLines.push(...lines)
+        noticeLines.push(...lines)
         writeLines.push(...buildError(message))
       }
     }
@@ -492,6 +498,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     commitLines,
     expandedCommitLines,
     writeLines,
+    noticeLines,
     rerenderStatus,
     sessionRevoked,
   }

@@ -130,13 +130,13 @@ describe('resolveCommand', () => {
     expect(isSlashCommand('/clip')).toBe(true)
   })
 
-  test('resolves /share for upload and import targets', () => {
+  test('resolves /share for upload and management', () => {
     expect(resolveCommand('/share')).toEqual({ kind: 'resolved', name: '/share', args: '' })
     expect(resolveCommand('/share abcdef01')).toEqual({ kind: 'resolved', name: '/share', args: 'abcdef01' })
-    expect(resolveCommand('/share https://tmpfiles.org/id/file#key')).toEqual({
+    expect(resolveCommand('/share list')).toEqual({
       kind: 'resolved',
       name: '/share',
-      args: 'https://tmpfiles.org/id/file#key',
+      args: 'list',
     })
     expect(isSlashCommand('/share')).toBe(true)
   })

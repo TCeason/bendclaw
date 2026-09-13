@@ -1,0 +1,16 @@
+[
+  {"type":"stats","kind":"llm_call_started","data":{"turn":1,"attempt":0,"model":"early","thinking_level":"low","system_prompt":"instructions","tool_definitions":[],"private":"DO_NOT_EXPORT"}},
+  {"type":"stats","kind":"llm_call_completed","data":{"turn":1,"attempt":0,"error":"temporarily unavailable"}},
+  {"type":"stats","kind":"llm_call_retry","data":{"turn":1,"attempt":1,"max_retries":5,"delay_ms":1000,"error":"temporarily unavailable"}},
+  {"type":"stats","kind":"llm_call_started","data":{"turn":1,"attempt":1,"model":"early","thinking_level":"low"}},
+  {"type":"stats","kind":"llm_call_completed","data":{"turn":1,"attempt":1,"error":"temporarily unavailable"}},
+  {"type":"stats","kind":"llm_call_retry","data":{"turn":1,"attempt":2,"max_retries":5,"delay_ms":2000,"error":"temporarily unavailable"}},
+  {"type":"assistant","content":[{"type":"text","text":"partial"}],"stop_reason":"length","usage":{"input":10,"output":5,"cache_read":7,"cache_write":3}},
+  {"type":"stats","kind":"tool_finished","data":{"tool_call_id":"tool-1","tool_name":"read","duration_ms":123,"result_tokens":88,"is_error":false,"private":"DO_NOT_EXPORT"}},
+  {"type":"stats","kind":"context_compaction_started","data":{"private":"DO_NOT_EXPORT"}},
+  {"type":"stats","kind":"context_compaction_completed","data":{"result":{"type":"no_op"},"private":"DO_NOT_EXPORT"}},
+  {"type":"stats","kind":"context_compaction_completed","data":{"reason":"overflow","result":{"type":"compacted","method":"remote_failed_local","before_tokens":10000,"after_tokens":2000,"before_message_count":20,"after_message_count":4,"fallback_reason":"remote timeout"}}},
+  {"type":"stats","kind":"thinking_level_change","data":{"thinking_level":"high"}},
+  {"type":"stats","kind":"run_finished","data":{"duration_ms":61000,"turn_count":2,"usage":{"input":10,"output":5},"private":"DO_NOT_EXPORT"}},
+  {"type":"stats","kind":"future_debug","data":{"private":"DO_NOT_EXPORT"}}
+]

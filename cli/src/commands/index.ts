@@ -39,7 +39,7 @@ export const HIDDEN_COMMANDS: SlashCommand[] = [
   { name: '/skill', description: 'Manage skills', usage: '/skill [list | install [name | source] | update [name] | remove <name>]', handler: 'builtin' },
   { name: '/copy', description: 'Copy last agent message (Markdown source) to clipboard', handler: 'builtin' },
   { name: '/clip', description: 'Clip last reply to the memory vault; all = distill session', usage: '/clip [all]', handler: 'builtin' },
-  { name: '/share', description: 'Share a session or import a shared session', usage: '/share [session-id | url#password]', handler: 'builtin' },
+  { name: '/share', description: 'Share a session as a read-only web page', usage: '/share [session-id | list]', handler: 'builtin' },
   { name: '/compact', description: 'Compact session context', usage: '/compact [instructions]', handler: 'builtin' },
   { name: '/clear', description: 'Clear session context', handler: 'builtin' },
   { name: '/env', description: 'Manage variables', usage: '/env [list | get KEY [--reveal] | set K=V | del K | load FILE]', handler: 'builtin' },

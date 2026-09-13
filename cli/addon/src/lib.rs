@@ -7,6 +7,7 @@ mod fork;
 mod host;
 mod run;
 mod server;
+mod share;
 mod tracing;
 
 pub use agent::NapiAgent;
