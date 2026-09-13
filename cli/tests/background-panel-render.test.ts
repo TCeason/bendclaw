@@ -127,7 +127,7 @@ describe('background panel rendering', () => {
     const state = createBackgroundOutputState(proc(), output)
     const lines = buildSelectorRegionLines(state, 100, 24).map(stripAnsi)
 
-    expect(lines).toContain('⌘ bash  sleep 30')
+    expect(lines).toContain('⌘ Background task · aaaaaaaa')
     expect(lines.some(line => line.trim() === 'line 30')).toBe(true)
     expect(lines.some(line => line.trim() === 'line 1')).toBe(false)
     expect(lines.join('\n')).toContain('Esc to back')
@@ -150,6 +150,19 @@ describe('background panel rendering', () => {
       if (status === 'running') expect(footer).toContain('x to stop')
       else expect(footer).not.toContain('stop')
     }
+  })
+
+  test('detail shows one complete command, not a second clipped summary', () => {
+    const command = 'cd /repo && pytest -q tests/ > /tmp/test.log 2>&1; tail -3 /tmp/test.log; git diff --check'
+    const state = createBackgroundOutputState(proc({ command, status: 'completed', exit_code: 0 }), '2619 passed\ndiff-ok')
+    const lines = buildSelectorRegionLines(state, 120, 30).map(stripAnsi)
+    const text = lines.join('\n')
+    expect(text.split('cd /repo').length - 1).toBe(1)
+    expect(text).toContain(command)
+    expect(text).toContain('2619 passed')
+    expect(text).toContain('diff-ok')
+    expect(text).not.toContain('⌘ bash')
+    expect(text).toContain('Background task · aaaaaaaa')
   })
 
   test('live output includes the complete script before output', () => {
@@ -193,7 +206,8 @@ describe('background panel rendering', () => {
       const lines = buildSelectorRegionLines(view, 40, 12).map(stripAnsi)
       expect(lines).toContain(`  ${rows[offset - 1]}`)
       expect(lines.length).toBeLessThanOrEqual(12)
-      expect(lines.join('\n')).toContain('script (5 lines)')
+      expect(lines.join('\n')).toContain('Background task · aaaaaaaa')
+      expect(lines.join('\n')).not.toContain('script (5 lines)')
     }
   })
 

@@ -78,12 +78,14 @@ function buildBackgroundOutputRegionLines(state: SelectorState, width: number, r
   // The outer renderer adds a leading blank and two borders. Leave those out
   // of this budget; keep enough space for activity even on short terminals.
   const budget = Math.max(4, Math.min(24, Math.floor(rows) - 4))
-  const title = item?.label ?? state.title
+  // List rows summarize commands; detail views show the full command in the
+  // scrollable body exactly once. Keep task identity pinned instead.
+  const taskId = item?.id.slice(0, 8)
   const status = metadata.find(text => /^  [●✓✗■]/u.test(text)) ?? item?.detail ?? ''
   const warnings = metadata.filter(text => text.includes('output file was capped'))
   const header = [
     ...buildOutputBlocks([
-      { id: 'background-title', kind: 'tool', text: `⌘ bash  ${clipDisplayText(title, Math.max(1, width - 8))}` },
+      { id: 'background-title', kind: 'tool', text: `⌘ Background task${taskId ? ` · ${taskId}` : ''}` },
       { id: 'background-status', kind: 'tool', text: status },
     ], { columns: width }).flatMap(block => block.lines).map(styledLineToAnsi),
     ...warnings.map(text => styledLineToAnsi(line(colored(clipDisplayText(text, width), 'yellow')))),
@@ -91,15 +93,15 @@ function buildBackgroundOutputRegionLines(state: SelectorState, width: number, r
   const bodyBudget = Math.max(1, budget - header.length - 2)
   const visible = wrapped.slice(-bodyBudget)
   const hasEarlier = wrapped.length > visible.length || metadata.some(text => text.includes('earlier line'))
-  const position = paused ? 'Paused' : hasEarlier ? '… command / earlier output · ↑ scroll' : ''
+  const position = paused ? 'Paused · ↓ to return to latest output' : hasEarlier ? '↑ command and earlier output' : ''
   const hints = state.hints ?? [{ keys: 'escape', action: 'back' }]
   return [
     ...header,
-    ...visible.map((text, index) => {
+    ...visible.map(text => {
       if (text.trim() === '(no output yet)') {
         return styledLineToAnsi(line(dim('  ↳ No stdout/stderr received yet')))
       }
-      return styledLineToAnsi(line(index === visible.length - 1 ? plain(text) : dim(text)))
+      return styledLineToAnsi(line(plain(text)))
     }),
     styledLineToAnsi(line(dim(position))),
     styledLineToAnsi(buildHintLine(hints)),
