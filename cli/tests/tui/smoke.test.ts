@@ -555,7 +555,11 @@ describe.skipIf(!canRun)('evot binary smoke (PTY)', () => {
 
       // Persistence happens before the provider necessarily finishes. Return
       // to an idle composer so the next command is executed, not queued. Esc
-      // arms first and interrupts on the confirming press.
+      // arms first and interrupts on the confirming press, but only once the
+      // run owns a stream: the session reaches disk inside the query, so a
+      // press sent before that is not yet an interrupt and would be dropped.
+      // Wait for the footer to offer the gesture, then arm it.
+      await session.waitForScreen(/esc\s+twice\s+to\s+interrupt/)
       session.checkpoint()
       session.write('\x1b')
       // A retry hint can wrap after `esc`. Differential rendering may only
