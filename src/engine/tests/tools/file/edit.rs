@@ -210,6 +210,125 @@ fn test_preview_command_multi_edit() {
     assert!(cmd.contains("2 replacement"));
 }
 
+#[tokio::test]
+async fn success_reports_changed_region_with_line_numbers() {
+    let tmp = std::env::temp_dir().join("yoagent-test-edit-region.txt");
+    let path = tmp.to_str().unwrap();
+    let body: String = (1..=20).map(|i| format!("line{i}\n")).collect();
+    std::fs::write(&tmp, &body).unwrap();
+
+    let result = EditFileTool::new()
+        .execute(
+            serde_json::json!({
+                "path": path,
+                "edits": [
+                    {"oldText": "line5", "newText": "five\nfive-b"},
+                    {"oldText": "line15", "newText": "fifteen"}
+                ]
+            }),
+            ctx("edit"),
+        )
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    // Two disjoint regions, each with 3 lines of context, numbered against the new file.
+    assert!(text.contains("Lines 2-9:"), "text was: {text}");
+    assert!(text.contains("\n5 | five\n"), "text was: {text}");
+    assert!(text.contains("\n6 | five-b\n"), "text was: {text}");
+    assert!(text.contains("Lines 13-19:"), "text was: {text}");
+    assert!(text.contains("\n16 | fifteen\n"), "text was: {text}");
+    assert!(
+        !text.contains("line11\n"),
+        "unrelated middle lines must be omitted: {text}"
+    );
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn not_unique_error_shows_each_location_in_context() {
+    let tmp = std::env::temp_dir().join("yoagent-test-not-unique-ctx.txt");
+    let path = tmp.to_str().unwrap();
+    std::fs::write(&tmp, "a\nfoo\nb\nc\nfoo\nd\n").unwrap();
+
+    let err = EditFileTool::new()
+        .execute(
+            serde_json::json!({"path": path, "edits": [{"oldText": "foo", "newText": "bar"}]}),
+            ctx("edit"),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("lines 2, 5"), "err was: {err}");
+    assert!(
+        err.contains("Line 2:\n1 | a\n2 ! foo\n3 | b\n"),
+        "err was: {err}"
+    );
+    assert!(err.contains("5 ! foo\n6 | d\n"), "err was: {err}");
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn not_found_error_marks_differing_lines() {
+    let tmp = std::env::temp_dir().join("yoagent-test-not-found-hint.txt");
+    let path = tmp.to_str().unwrap();
+    std::fs::write(
+        &tmp,
+        "fn a() {}\nfn b() {\n    call(1);\n    call(2);\n}\nfn c() {}\n",
+    )
+    .unwrap();
+
+    let err = EditFileTool::new()
+        .execute(
+            serde_json::json!({"path": path, "edits": [
+                {"oldText": "fn b() {\n    call(1);\n    call(3);\n}", "newText": "x"}
+            ]}),
+            ctx("edit"),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("oldText not found"), "err was: {err}");
+    assert!(
+        err.contains("Closest match at lines 2-5 (3 of 4 lines identical"),
+        "err was: {err}"
+    );
+    assert!(err.contains("4 !     call(2);\n"), "err was: {err}");
+    assert!(err.contains("3 |     call(1);\n"), "err was: {err}");
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn identical_old_and_new_rejected_before_matching() {
+    let tmp = std::env::temp_dir().join("yoagent-test-identical.txt");
+    let path = tmp.to_str().unwrap();
+    std::fs::write(&tmp, "hello\n").unwrap();
+
+    let err = EditFileTool::new()
+        .execute(
+            serde_json::json!({"path": path, "edits": [
+                {"oldText": "hello", "newText": "hello2"},
+                {"oldText": "nope", "newText": "nope"}
+            ]}),
+            ctx("edit"),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        err.contains("edits[1].oldText and newText are identical"),
+        "err was: {err}"
+    );
+    assert_eq!(std::fs::read_to_string(&tmp).unwrap(), "hello\n");
+    let _ = std::fs::remove_file(tmp);
+}
+
 // ─── Matching tests ──────────────────────────────────────────────────────────
 
 use evotengine::tools::file::edit::*;
@@ -285,19 +404,6 @@ fn not_found() {
     let content = "fn main() {}\n";
     let err = resolve_unique_match(content, "nonexistent").unwrap_err();
     assert_eq!(err, MatchError::NotFound);
-}
-
-#[test]
-fn find_similar_returns_context() {
-    let content = "line1\nline2\nline3\nline4\n";
-    let result = find_similar_text(content, "line2");
-    assert!(result.is_some());
-    assert!(result.unwrap().contains("line2"));
-}
-
-#[test]
-fn find_similar_empty_target() {
-    assert!(find_similar_text("content", "").is_none());
 }
 
 #[test]

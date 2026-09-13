@@ -2,9 +2,11 @@
 
 pub mod diff;
 pub mod edit;
+pub mod hint;
 pub mod image;
 pub mod mutex;
 pub mod read;
+pub mod snippet;
 pub mod write;
 
 pub use edit::EditFileTool;
