@@ -685,7 +685,9 @@ describe('buildVerboseEvent', () => {
     expect(result.text).toContain('[LLM] ✓ · claude-sonnet-4 · turn 2 · 8.4s')
     expect(result.text).toContain('    tokens    42k in → 352 out')
     expect(result.text).toContain('    cache     21k read · 0 write · 33% hit')
-    expect(result.text).toContain('    timing    ttfb 1.1s (13%) · stream 7.3s (87%)')
+    // Historical events lack streaming_ms; wall time minus TTFB is not a measured stream.
+    expect(result.text).toContain('    timing    ttfb 1.1s (13%) · stream unavailable')
+    expect(result.text).not.toContain('tok/s')
     expect(result.text).toContain('    tools     search')
     expect(result.text).not.toContain('    output    ')
     expect(result.expandedText).toBeUndefined()

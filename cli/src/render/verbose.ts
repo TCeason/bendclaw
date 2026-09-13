@@ -6,6 +6,7 @@
  */
 import { formatDuration, humanTokens, renderBar, renderPositionBar, type CompactionAction } from './format.js'
 import { formatCacheHitPercent } from './cache.js'
+import { streamTokenRate } from '../provider/stream-rate.js'
 
 interface MessageStats {
   user_count?: number
@@ -270,18 +271,17 @@ export function formatLlmCallCompleted(data: Record<string, unknown>): { text: s
   const cacheWriteTok = usage?.cache_write ?? (data.cache_write as number) ?? 0
   const cacheHitRate = formatCacheHitPercent(inputTok, cacheReadTok, cacheWriteTok)
   const ttfbMs = (data.time_to_first_byte_ms as number) ?? metrics?.ttfb_ms ?? 0
-  const streamingMs = metrics?.streaming_ms ?? Math.max(0, durationMs - ttfbMs)
-  // Real generation speed: output tokens over the pure streaming window (first
-  // delta → done), not total wall-clock. Using duration_ms would dilute the rate
-  // with the ttfb wait (queueing + prompt processing), understating how fast the
-  // model actually emits tokens.
-  const tokPerSec = streamingMs > 0 ? (outputTok / (streamingMs / 1000)).toFixed(0) : '0'
+  const streamingMs = metrics?.streaming_ms
+  const tokPerSec = streamTokenRate(outputTok, streamingMs)
+  const rateLabel = tokPerSec == null ? '' : ` · ${tokPerSec.toFixed(0)} tok/s (received)`
   const dur = durationMs || 1
   const ttfbPct = ((ttfbMs / dur) * 100).toFixed(0)
-  const streamPct = ((streamingMs / dur) * 100).toFixed(0)
+  const streamTiming = streamingMs != null && Number.isFinite(streamingMs) && streamingMs >= 0
+    ? `${(streamingMs / 1000).toFixed(1)}s (${((streamingMs / dur) * 100).toFixed(0)}%)`
+    : 'unavailable'
 
   const lines: string[] = []
-  lines.push(`[LLM] ✓ · ${model ?? 'unknown'}${servedByFallback ? ` → ${responseModel}` : ''}${turn != null ? ` · turn ${turn}` : ''} · ${formatDuration(durationMs)} · ${tokPerSec} tok/s`)
+  lines.push(`[LLM] ✓ · ${model ?? 'unknown'}${servedByFallback ? ` → ${responseModel}` : ''}${turn != null ? ` · turn ${turn}` : ''} · ${formatDuration(durationMs)}${rateLabel}`)
   if (servedByFallback) {
     lines.push(`    fallback  served by ${responseModel} (requested ${model})`)
   }
@@ -289,7 +289,7 @@ export function formatLlmCallCompleted(data: Record<string, unknown>): { text: s
   if (cacheReadTok > 0 || cacheWriteTok > 0) {
     lines.push(`    cache     ${humanTokens(cacheReadTok)} read · ${humanTokens(cacheWriteTok)} write · ${cacheHitRate}% hit`)
   }
-  lines.push(`    timing    ttfb ${(ttfbMs / 1000).toFixed(1)}s (${ttfbPct}%) · stream ${(streamingMs / 1000).toFixed(1)}s (${streamPct}%)`)
+  lines.push(`    timing    ttfb ${(ttfbMs / 1000).toFixed(1)}s (${ttfbPct}%) · stream ${streamTiming}`)
 
   const toolCalls = data.tool_calls as { id: string; name: string; arguments: Record<string, unknown> }[] | undefined
   if (toolCalls && toolCalls.length > 0) {

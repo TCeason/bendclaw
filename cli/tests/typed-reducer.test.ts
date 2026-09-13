@@ -24,6 +24,17 @@ function queued() {
 }
 
 describe('typed run reducer', () => {
+  test('stats and verbose output share the same reception-rate policy', () => {
+    for (const streaming_ms of [0, 100, 3000]) {
+      const state = apply(createInitialState('model', '/tmp'), 'llm_call_completed', {
+        turn: 1, attempt: 0, usage: { input: 3, output: 600 },
+        metrics: { duration_ms: 15000, ttfb_ms: 1000, ttft_ms: 2000, streaming_ms, chunk_count: 10 },
+      })
+      expect(state.currentRunStats.llmCallDetails[0].tokPerSec).toBe(streaming_ms === 3000 ? 200 : 0)
+      expect(state.verboseEvents.at(-1)?.text.includes('tok/s')).toBe(streaming_ms === 3000)
+    }
+  })
+
   test('bash countdown updates in place and disappears when the tool finishes', () => {
     const queuedState = apply(createInitialState('model', '/tmp'), 'assistant_tool_call', {
       content_index: 0, tool_call_id: 'bash', tool_name: 'bash', phase: 'end', args: { command: 'sleep 30' },

@@ -1421,6 +1421,21 @@ describe('term stream machine', () => {
     expect(failed.commitLines.map(l => l.text).join('\n')).toContain('Service busy')
   })
 
+  test('overflow card preserves the diagnosis before compaction starts', () => {
+    const err = 'Context overflow: HTTP 400: invalid_request_error: prompt is too long'
+    const state = createStreamMachineState(createInitialState('test', '/tmp'), createSpinnerState())
+    const failed = reduceRunEvent(state, {
+      kind: 'llm_call_completed',
+      payload: { model: 'test', turn: 1, error: err, metrics: { duration_ms: 24900 } },
+    }, { termRows: 24 })
+    const text = failed.commitLines.map(l => l.text).join('\n')
+    expect(text).toContain('Context limit exceeded')
+    expect(text).not.toContain('Invalid request')
+    const terminal = reduceRunEvent(failed.state, { kind: 'error', payload: { message: err } }, { termRows: 24 })
+    expect(terminal.commitLines.map(l => l.text).join('\n')).not.toContain('Context limit exceeded')
+    expect(terminal.writeLines.some(line => line.text.includes(err))).toBe(true)
+  })
+
   test('an unconfigured model reports the configuration gap instead of an outage', () => {
     // Production: evot asked for a model with no channel behind it. llmproxy
     // answered 503 "No permitted model backend is configured.", which used to

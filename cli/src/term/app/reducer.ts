@@ -5,6 +5,7 @@
 import { isKnownRunEvent, type RunEvent } from '../../native/contracts/query-event.js'
 import { formatLlmCallStarted, formatLlmCallRetry, formatLlmCallCompleted, formatCompactionStarted, formatCompactionCompleted } from '../../render/verbose.js'
 import { emptyRunStats, type AppState } from './state.js'
+import { streamTokenRate } from '../../provider/stream-rate.js'
 import type { MessageStats, UIAssistantBlock, UIMessage, UIToolCall } from './types.js'
 import { appendAssistantDelta, assistantToolCalls, completedAssistantContent, findAssistantToolCall, updateAssistantToolCall, updateToolCallInMessages, upsertAssistantToolCall } from './assistant-content.js'
 import { compactRecordFromResult } from './compaction-record.js'
@@ -295,11 +296,8 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const durationMs = metrics?.duration_ms ?? 0
       const ttfbMs = metrics?.ttfb_ms ?? 0
       const ttftMs = metrics?.ttft_ms ?? 0
-      const streamingMs = metrics?.streaming_ms ?? 0
-      // Real generation speed: output tokens over the pure streaming window
-      // (first delta → done), not total wall-clock. duration_ms would dilute the
-      // rate with the ttfb wait (queueing + prompt processing).
-      const tokPerSec = streamingMs > 0 ? outputTok / (streamingMs / 1000) : 0
+      // Preserve the existing numeric stats field; zero denotes unavailable.
+      const tokPerSec = streamTokenRate(outputTok, metrics?.streaming_ms) ?? 0
 
       const cacheReadTok = usage?.cache_read ?? 0
       const cacheWriteTok = usage?.cache_write ?? 0

@@ -2,7 +2,7 @@
  * Consumers retain the original error separately for diagnostics. Prefer a
  * structured category; string matching is only for historical error events.
  */
-export type ProviderFailureKind = 'connection' | 'timeout' | 'dns' | 'busy' | 'rate-limit' | 'quota' | 'authentication' | 'invalid-request' | 'configuration' | 'backend-version' | 'unknown'
+export type ProviderFailureKind = 'connection' | 'timeout' | 'dns' | 'busy' | 'rate-limit' | 'quota' | 'authentication' | 'invalid-request' | 'context-overflow' | 'configuration' | 'backend-version' | 'unknown'
 
 export function classifyProviderFailure(error: string): ProviderFailureKind {
   const text = error.toLowerCase()
@@ -17,6 +17,8 @@ export function classifyProviderFailure(error: string): ProviderFailureKind {
   // retry that cannot succeed.
   if (/no permitted model backend/.test(text)) return 'configuration'
   if (/version is out of date|requires a supported client version/.test(text)) return 'backend-version'
+  // Preserve the engine's overflow diagnosis before the generic HTTP 400 branch.
+  if (/context overflow|context_length_exceeded|prompt is too long|request exceeds the model context window|maximum context length/.test(text)) return 'context-overflow'
   if (/quota|insufficient_quota|credit balance/.test(text)) return 'quota'
   if (status === 401 || status === 403 || /unauthorized|invalid.api.key|authentication/.test(text)) return 'authentication'
   if (status === 429 || /rate.limit|too many requests/.test(text)) return 'rate-limit'
@@ -34,6 +36,7 @@ const labels: Record<ProviderFailureKind, string> = {
   dns: 'Unable to resolve service address', busy: 'Service busy',
   'rate-limit': 'Rate limited', quota: 'Quota unavailable',
   authentication: 'Authentication failed', 'invalid-request': 'Invalid request',
+  'context-overflow': 'Context limit exceeded',
   configuration: 'Model not configured', 'backend-version': 'Backend version unsupported',
   unknown: 'Request failed',
 }
@@ -49,6 +52,8 @@ export function providerFailurePresentation(input: {
     label: input.sustained && kind === 'connection' ? 'Unable to connect' : labels[kind],
     guidance: kind === 'connection' || kind === 'timeout' || kind === 'dns'
       ? 'Check your network or proxy settings. The service may also be temporarily unavailable.'
+      : kind === 'context-overflow'
+        ? 'Compact the conversation before retrying. The upstream input limit may be smaller than the advertised model window.'
       : kind === 'invalid-request'
         ? 'Check the request content and attachments against the model’s input requirements. Retrying unchanged will not help.'
         : kind === 'configuration'

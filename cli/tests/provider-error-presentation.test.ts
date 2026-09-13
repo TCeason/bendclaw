@@ -36,6 +36,22 @@ test('input validation numbers are not mistaken for HTTP status codes', () => {
   expect(providerFailurePresentation({ error: 'HTTP 502: invalid_request_error' }).kind).toBe('busy')
 })
 
+test('overflow semantics take precedence over generic invalid requests', () => {
+  for (const error of [
+    'Context overflow: HTTP 400: invalid_request_error: prompt is too long',
+    'HTTP 413: context_length_exceeded',
+    'HTTP 400: the request exceeds the model context window',
+    'This model has a maximum context length of 128000 tokens',
+  ]) {
+    const copy = providerFailurePresentation({ error })
+    expect(copy.kind).toBe('context-overflow')
+    expect(copy.label).toBe('Context limit exceeded')
+    expect(copy.guidance).toContain('Compact')
+    expect(copy.guidance).not.toContain('attachments')
+  }
+  expect(providerFailurePresentation({ kind: 'context-overflow', error: 'HTTP 400' }).kind).toBe('context-overflow')
+})
+
 test('proxy configuration faults do not read as an outage', () => {
   // llmproxy answers 503 when no channel is entitled to the selected model and
   // when the model backend requires a newer client version than the proxy
