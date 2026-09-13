@@ -80,7 +80,7 @@ function buildBackgroundOutputRegionLines(state: SelectorState, width: number, r
   const budget = Math.max(4, Math.min(24, Math.floor(rows) - 4))
   // List rows summarize commands; detail views show the full command in the
   // scrollable body exactly once. Keep task identity pinned instead.
-  const taskId = item?.id.slice(0, 8)
+  const taskId = item?.id?.slice(0, 8)
   const status = metadata.find(text => /^  [●✓✗■]/u.test(text)) ?? item?.detail ?? ''
   const warnings = metadata.filter(text => text.includes('output file was capped'))
   const header = [
