@@ -14,10 +14,21 @@ pub fn transform_messages_for_model(
     target_model: &str,
     target_api: ApiProtocol,
 ) -> Vec<Message> {
-    messages
-        .into_iter()
-        .map(|message| transform_message(message, target_provider, target_model, target_api))
-        .collect()
+    // Run after any caller-supplied conversion too: it can remove results or
+    // reintroduce incomplete assistant turns after the session was normalized.
+    super::sanitize::sanitize_tool_pairs(
+        messages
+            .into_iter()
+            .map(crate::types::AgentMessage::Llm)
+            .collect(),
+    )
+    .into_iter()
+    .filter_map(|message| match message {
+        crate::types::AgentMessage::Llm(message) => Some(message),
+        crate::types::AgentMessage::Extension(_) => None,
+    })
+    .map(|message| transform_message(message, target_provider, target_model, target_api))
+    .collect()
 }
 
 fn transform_message(

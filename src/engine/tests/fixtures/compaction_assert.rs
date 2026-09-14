@@ -2,31 +2,39 @@ use std::collections::HashSet;
 
 use evotengine::types::*;
 
-/// Assert the message list contains no orphan tool calls/results.
+/// Check exchange-local adjacency and uniqueness, not global ID membership.
+/// Reusing an ID in a later exchange must not hide a missing earlier result.
 pub fn assert_no_orphan_tool_pairs(messages: &[AgentMessage]) {
-    let mut call_ids = HashSet::new();
-    let mut result_ids = HashSet::new();
-
+    let mut pending = HashSet::new();
     for msg in messages {
         match msg {
             AgentMessage::Llm(Message::Assistant { content, .. }) => {
+                assert!(
+                    pending.is_empty(),
+                    "unanswered calls before assistant: {pending:?}"
+                );
                 for block in content {
                     if let Content::ToolCall { id, .. } = block {
-                        call_ids.insert(id.clone());
+                        assert!(pending.insert(id.clone()), "duplicate tool call: {id}");
                     }
                 }
             }
             AgentMessage::Llm(Message::ToolResult { tool_call_id, .. }) => {
-                result_ids.insert(tool_call_id.clone());
+                assert!(
+                    pending.remove(tool_call_id),
+                    "displaced/duplicate tool result: {tool_call_id}"
+                );
             }
-            _ => {}
+            AgentMessage::Llm(Message::User { .. }) => {
+                assert!(
+                    pending.is_empty(),
+                    "unanswered calls before user: {pending:?}"
+                );
+            }
+            AgentMessage::Extension(_) => {}
         }
     }
-
-    assert_eq!(
-        call_ids, result_ids,
-        "tool call/result ids differ: calls={call_ids:?}, results={result_ids:?}"
-    );
+    assert!(pending.is_empty(), "unanswered trailing calls: {pending:?}");
 }
 
 /// Assert a message list has the exact structural pattern expected by the DSL.

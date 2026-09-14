@@ -70,6 +70,87 @@ fn big_text(n: usize) -> String {
     "x".repeat(n)
 }
 
+#[test]
+fn normalize_small_histories_preserves_exchange_invariants() {
+    use super::fixtures::compaction_assert::assert_no_orphan_tool_pairs;
+
+    let mut failed = multi_tool_call_msg(&["a"]);
+    if let AgentMessage::Llm(Message::Assistant { stop_reason, .. }) = &mut failed {
+        *stop_reason = StopReason::Error;
+    }
+    let choices = [
+        user_msg("next"),
+        multi_tool_call_msg(&["a", "b", "a"]),
+        tool_result_msg("a", "real a"),
+        tool_result_msg("b", "real b"),
+        extension_msg(),
+        failed,
+    ];
+    assert!(evotengine::sanitize_tool_pairs(Vec::new()).is_empty());
+    // Exhaust all short combinations: missing/duplicate results, interruptions,
+    // repeated IDs, partial failures, and UI-only entries.
+    for mut pattern in 0..choices.len().pow(5) {
+        let mut history = Vec::new();
+        for _ in 0..5 {
+            history.push(choices[pattern % choices.len()].clone());
+            pattern /= choices.len();
+        }
+        let replay = evotengine::sanitize_tool_pairs(history);
+        assert_no_orphan_tool_pairs(&replay);
+        assert_eq!(evotengine::sanitize_tool_pairs(replay.clone()), replay);
+    }
+}
+
+#[test]
+fn normalize_large_parallel_batch_keeps_real_results() {
+    let ids: Vec<String> = (0..10_000).map(|i| format!("call-{i}")).collect();
+    let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let mut history = vec![multi_tool_call_msg(&refs)];
+    history.extend(
+        ids.iter()
+            .rev()
+            .map(|id| tool_result_msg(id, "actual result")),
+    );
+    assert_eq!(evotengine::sanitize_tool_pairs(history.clone()), history);
+}
+
+#[tokio::test]
+async fn compact_snapshot_keeps_missing_outcomes_and_failed_turns_unmodified() {
+    let mut failed = assistant_msg("partial");
+    if let AgentMessage::Llm(Message::Assistant { stop_reason, .. }) = &mut failed {
+        *stop_reason = StopReason::Error;
+    }
+    let tail = vec![
+        multi_tool_call_msg(&["a", "b"]),
+        tool_result_msg("a", "real"),
+        failed,
+    ];
+    let mut history = vec![user_msg("old context")];
+    history.extend(tail.clone());
+    let plan = manual_plan(&history, 0..1, None, 1);
+    let outcome = compacted(
+        run(
+            history,
+            &plan,
+            &config_small(),
+            LlmPolicy::Required,
+            CancellationToken::new(),
+        )
+        .await,
+    );
+    // The compact snapshot can be stored and reloaded without persisting fake
+    // executions or deleting the original failed turn.
+    assert_eq!(&outcome.messages[1..], tail.as_slice());
+    let replay = evotengine::sanitize_tool_pairs(outcome.messages.clone());
+    super::fixtures::compaction_assert::assert_no_orphan_tool_pairs(&replay);
+    assert!(
+        matches!(replay.last(), Some(AgentMessage::Llm(Message::ToolResult {
+        tool_call_id, is_error: true, ..
+    })) if tool_call_id == "b")
+    );
+    assert_eq!(&outcome.messages[1..], tail.as_slice());
+}
+
 fn config_small() -> CompactionConfig {
     CompactionConfig {
         context_window: 10_000,
@@ -373,7 +454,7 @@ async fn executor_tracks_file_ops_in_state() {
 }
 
 #[test]
-fn sanitize_tool_pairs_removes_orphans() {
+fn sanitize_tool_pairs_completes_orphans() {
     let messages = vec![
         user_msg("hello"),
         tool_call_msg("tc1", "read", "foo.rs"),
@@ -382,7 +463,7 @@ fn sanitize_tool_pairs_removes_orphans() {
     ];
 
     let result = evotengine::sanitize_tool_pairs(messages);
-    // The orphan tool call should be removed
+    // The call remains, with an explicit missing-outcome result.
     let has_tool_call = result.iter().any(|m| {
         if let AgentMessage::Llm(Message::Assistant { content, .. }) = m {
             content
@@ -392,7 +473,8 @@ fn sanitize_tool_pairs_removes_orphans() {
             false
         }
     });
-    assert!(!has_tool_call);
+    assert!(has_tool_call);
+    assert_eq!(result.iter().filter(|m| is_tool_result(m)).count(), 1);
 }
 
 fn is_tool_result(msg: &AgentMessage) -> bool {
@@ -430,11 +512,13 @@ fn sanitize_drops_tool_result_separated_from_its_call() {
 
     let result = evotengine::sanitize_tool_pairs(messages);
 
-    // The misplaced tool_result is removed.
-    assert!(!result.iter().any(is_tool_result));
-    // The now-orphaned tool_use is removed too (its only block), dropping the
-    // assistant message entirely.
-    assert_eq!(count_tool_calls(&result), 0);
+    // Replace the misplaced result with a missing-outcome marker before the
+    // interrupting user, never move a real result across a user boundary.
+    assert_eq!(result.iter().filter(|m| is_tool_result(m)).count(), 1);
+    assert_eq!(count_tool_calls(&result), 1);
+    assert!(matches!(&result[2], AgentMessage::Llm(Message::ToolResult {
+        is_error: true, content, ..
+    }) if content == &vec![Content::Text { text: "No result provided".into() }]));
 }
 
 #[test]
@@ -550,9 +634,8 @@ fn sanitize_keeps_parallel_tool_calls_with_all_results() {
 }
 
 #[test]
-fn sanitize_drops_only_unmatched_parallel_call() {
-    // Two parallel calls but only one result: the matched call/result survive,
-    // the unmatched call is stripped from the (otherwise kept) assistant message.
+fn sanitize_completes_only_unmatched_parallel_call() {
+    // Keep the real result and synthesize only the missing parallel outcome.
     let messages = vec![
         user_msg("hello"),
         multi_tool_call_msg(&["call_a", "call_b"]),
@@ -562,9 +645,11 @@ fn sanitize_drops_only_unmatched_parallel_call() {
 
     let result = evotengine::sanitize_tool_pairs(messages);
 
-    // call_b is removed; call_a and its result remain.
-    assert_eq!(count_tool_calls(&result), 1);
-    assert_eq!(result.iter().filter(|m| is_tool_result(m)).count(), 1);
+    assert_eq!(count_tool_calls(&result), 2);
+    assert_eq!(result.iter().filter(|m| is_tool_result(m)).count(), 2);
+    assert!(matches!(&result[3], AgentMessage::Llm(Message::ToolResult {
+        tool_call_id, is_error: true, ..
+    }) if tool_call_id == "call_b"));
     let kept_call_a = result.iter().any(|m| match m {
         AgentMessage::Llm(Message::Assistant { content, .. }) => content
             .iter()
@@ -596,8 +681,8 @@ fn sanitize_extension_between_call_and_result_stays_valid() {
 #[test]
 fn sanitize_handles_reused_tool_call_id_across_turns() {
     // A reused id: the first occurrence is matched, the second is a trailing
-    // orphan. Per-instance tracking must strip only the orphan, not assume the
-    // id is globally valid just because the earlier one matched.
+    // orphan. Per-instance tracking must complete that exchange, not assume
+    // the id is globally answered just because the earlier one matched.
     let messages = vec![
         user_msg("hello"),
         tool_call_msg("call_x", "read", "foo.rs"),
@@ -609,7 +694,77 @@ fn sanitize_handles_reused_tool_call_id_across_turns() {
 
     let result = evotengine::sanitize_tool_pairs(messages);
 
-    // The first matched pair survives; the trailing orphan call is removed.
-    assert_eq!(count_tool_calls(&result), 1);
-    assert_eq!(result.iter().filter(|m| is_tool_result(m)).count(), 1);
+    // The first real result survives; the second exchange gets a failed marker.
+    assert_eq!(count_tool_calls(&result), 2);
+    assert_eq!(result.iter().filter(|m| is_tool_result(m)).count(), 2);
+    assert!(matches!(
+        result.last(),
+        Some(AgentMessage::Llm(Message::ToolResult {
+            is_error: true,
+            ..
+        }))
+    ));
+}
+
+#[test]
+fn sanitize_missing_results_is_ordered_and_idempotent() {
+    let mut calls = multi_tool_call_msg(&["a", "b", "c", "d"]);
+    if let AgentMessage::Llm(Message::Assistant { content, .. }) = &mut calls {
+        content.push(Content::Thinking {
+            thinking: "plan".into(),
+            metadata: Some(evotengine::ThinkingMetadata::Anthropic {
+                signature: "sig".into(),
+            }),
+        });
+    }
+    let result = evotengine::sanitize_tool_pairs(vec![
+        user_msg("summary"),
+        calls.clone(),
+        extension_msg(),
+        tool_result_msg("b", "real result"),
+        assistant_msg("next"),
+    ]);
+    assert_eq!(result[1], calls);
+    let missing: Vec<&str> = result
+        .iter()
+        .filter_map(|message| match message {
+            AgentMessage::Llm(Message::ToolResult {
+                tool_call_id,
+                is_error: true,
+                content,
+                ..
+            }) => {
+                assert_eq!(content, &vec![Content::Text {
+                    text: "No result provided".into()
+                }]);
+                Some(tool_call_id.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(missing, vec!["a", "c", "d"]);
+    assert_eq!(evotengine::sanitize_tool_pairs(result.clone()), result);
+}
+
+#[test]
+fn sanitize_skips_failed_assistants_and_their_results() {
+    for reason in [StopReason::Error, StopReason::Aborted] {
+        let mut failed = multi_tool_call_msg(&["bad"]);
+        if let AgentMessage::Llm(Message::Assistant { stop_reason, .. }) = &mut failed {
+            *stop_reason = reason;
+        }
+        let result = evotengine::sanitize_tool_pairs(vec![
+            user_msg("hello"),
+            multi_tool_call_msg(&["pending"]),
+            failed,
+            tool_result_msg("bad", "partial"),
+            user_msg("next"),
+        ]);
+        assert_eq!(count_tool_calls(&result), 1);
+        assert_eq!(result.iter().filter(|m| is_tool_result(m)).count(), 1);
+        assert!(matches!(&result[2], AgentMessage::Llm(Message::ToolResult {
+            tool_call_id, is_error: true, ..
+        }) if tool_call_id == "pending"));
+        assert_eq!(result.len(), 4);
+    }
 }

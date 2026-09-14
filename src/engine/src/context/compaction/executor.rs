@@ -22,7 +22,6 @@ use super::types::CompactionOutcome;
 use super::types::CompactionState;
 use super::types::CompactionStats;
 use crate::context::compaction::summarizer::mode::SummarizerContext;
-use crate::context::sanitize::sanitize_tool_pairs;
 use crate::context::tokens::total_tokens;
 use crate::types::AgentMessage;
 use crate::types::Content;
@@ -116,13 +115,14 @@ pub async fn execute_with_contexts(
         return ExecutionResult::Skipped(messages);
     }
 
-    // Step 3: assemble — summary message + retained tail, sanitized.
+    // Step 3: assemble the summary and retained tail without replay repairs.
+    // These messages can be persisted in a compact snapshot. Missing-outcome
+    // placeholders and failed-turn filtering belong only to the outgoing view.
     let is_remote = result.remote.is_some();
     let summary_message = replacement_message(&result, contexts.remote);
     let mut rebuilt = Vec::with_capacity(1 + messages.len() - plan.first_kept);
     rebuilt.push(summary_message);
     rebuilt.extend_from_slice(&messages[plan.first_kept..]);
-    let rebuilt = sanitize_tool_pairs(rebuilt);
 
     // Step 4: cross-compaction state. The exact context message is recorded so
     // the next compaction can dedupe it; remote state has no text message.

@@ -1,174 +1,100 @@
-//! Tool pair sanitization — ensures every tool call has a matching result and vice-versa.
+//! Normalize tool exchanges without changing persisted transcripts.
 //!
-//! Anthropic-compatible providers require *adjacency*: a `tool_result` must
-//! correspond to a `tool_use` in the immediately preceding message. Loaded
-//! history can violate this — e.g. a run interrupted mid-tool-execution may have
-//! persisted a `tool_result` without its `tool_use`, or with another message
-//! between them. Such history is rejected with HTTP 400, so a global
-//! id-membership check is insufficient; placement must be validated.
+//! Missing outcomes become explicit failed results, never invented successful
+//! executions. Duplicate or displaced results cannot satisfy a later exchange.
 
 use std::collections::HashSet;
 
 use crate::types::*;
 
-/// Remove repeated `ToolCall` blocks (same id) within one assistant message,
-/// keeping the first occurrence.
-fn dedup_tool_call_ids(msg: AgentMessage) -> AgentMessage {
-    let AgentMessage::Llm(Message::Assistant {
-        content,
-        stop_reason,
-        model,
-        provider,
-        usage,
-        timestamp,
-        error_message,
-        response_id,
-    }) = msg
-    else {
-        return msg;
-    };
-    let mut seen: HashSet<String> = HashSet::new();
-    let content = content
-        .into_iter()
-        .filter(|c| match c {
-            Content::ToolCall { id, .. } => seen.insert(id.clone()),
-            _ => true,
-        })
-        .collect();
-    AgentMessage::Llm(Message::Assistant {
-        content,
-        stop_reason,
-        model,
-        provider,
-        usage,
-        timestamp,
-        error_message,
-        response_id,
-    })
-}
-
-fn has_content(content: &[Content]) -> bool {
-    content.iter().any(|c| match c {
-        Content::Text { text } => !text.is_empty(),
-        Content::Thinking { thinking, .. } => !thinking.is_empty(),
-        Content::Image { .. } | Content::ToolCall { .. } => true,
-    })
-}
-
-/// Remove tool calls and tool results that lack an adjacent matching partner.
-///
-/// A `tool_result` is valid only when the nearest preceding LLM message is an
-/// assistant message that still has an unconsumed `tool_use` with the same id.
-/// User messages reset the pairing; extension messages are skipped because they
-/// are dropped before the request is built. Each id is consumed once, so a
-/// duplicated result becomes an orphan. Orphaned `tool_use` blocks and orphaned
-/// results are removed; matched pairs pass through untouched.
+/// Complete missing results before the next user/assistant message or EOF.
+/// Preserve assistant content (including signed thinking) and call order.
+/// UI-only extensions do not interrupt an exchange. Failed/aborted assistant
+/// turns are not replayed, nor are tool results belonging only to those turns.
 pub fn sanitize_tool_pairs(messages: Vec<AgentMessage>) -> Vec<AgentMessage> {
-    // Anthropic rejects duplicate tool_use ids ("`tool_use` ids must be
-    // unique"); persisted history may contain them from a past decoder bug.
-    // Keep the first occurrence; extra results are dropped by pairing below.
-    let messages: Vec<AgentMessage> = messages.into_iter().map(dedup_tool_call_ids).collect();
-    let len = messages.len();
+    let mut result = Vec::with_capacity(messages.len());
+    let mut pending: Vec<(String, String)> = Vec::new();
+    let mut unanswered = HashSet::new();
+    let mut timestamp = 0;
 
-    // Pass 1: classify by adjacency, tracking orphans per message instance.
-    //
-    // `available` holds the unconsumed tool_use ids of the current pending
-    // assistant message (`pending_idx`). A contiguous run of results draws from
-    // it; a user/assistant message or end of history flushes whatever remains as
-    // orphan calls of that assistant. Tracking by index (not by id) keeps
-    // classification correct even if an id is reused across turns.
-    let mut available: HashSet<String> = HashSet::new();
-    let mut pending_idx: Option<usize> = None;
-    let mut orphan_calls_at: Vec<HashSet<String>> = vec![HashSet::new(); len];
-    let mut result_valid: Vec<bool> = Vec::with_capacity(len);
-
-    for (idx, msg) in messages.iter().enumerate() {
-        match msg {
-            AgentMessage::Llm(Message::Assistant { content, .. }) => {
-                if let Some(prev) = pending_idx.take() {
-                    orphan_calls_at[prev] = std::mem::take(&mut available);
-                }
-                available = content
-                    .iter()
-                    .filter_map(|c| match c {
-                        Content::ToolCall { id, .. } => Some(id.clone()),
-                        _ => None,
-                    })
-                    .collect();
-                pending_idx = if available.is_empty() {
-                    None
-                } else {
-                    Some(idx)
-                };
-                result_valid.push(false);
-            }
-            AgentMessage::Llm(Message::ToolResult { tool_call_id, .. }) => {
-                result_valid.push(available.remove(tool_call_id));
-            }
-            AgentMessage::Llm(Message::User { .. }) => {
-                if let Some(prev) = pending_idx.take() {
-                    orphan_calls_at[prev] = std::mem::take(&mut available);
-                }
-                result_valid.push(false);
-            }
-            AgentMessage::Extension(_) => {
-                result_valid.push(false);
-            }
-        }
-    }
-    if let Some(prev) = pending_idx {
-        orphan_calls_at[prev] = available;
-    }
-
-    let has_orphan_call = orphan_calls_at.iter().any(|ids| !ids.is_empty());
-    let has_invalid_result = result_valid.iter().zip(&messages).any(|(valid, msg)| {
-        matches!(msg, AgentMessage::Llm(Message::ToolResult { .. })) && !*valid
-    });
-
-    if !has_orphan_call && !has_invalid_result {
-        return messages;
-    }
-
-    // Pass 2: drop misplaced results and orphaned tool calls.
-    messages
-        .into_iter()
-        .zip(result_valid)
-        .enumerate()
-        .filter_map(|(idx, (msg, valid_result))| match msg {
-            AgentMessage::Llm(Message::ToolResult { .. }) if !valid_result => None,
-
+    for message in messages {
+        match message {
             AgentMessage::Llm(Message::Assistant {
-                content,
+                mut content,
                 stop_reason,
                 model,
                 provider,
                 usage,
-                timestamp,
+                timestamp: assistant_timestamp,
                 error_message,
                 response_id,
             }) => {
-                let orphans = &orphan_calls_at[idx];
-                let filtered: Vec<Content> = content
-                    .into_iter()
-                    .filter(|c| !matches!(c, Content::ToolCall { id, .. } if orphans.contains(id)))
+                complete_exchange(&mut result, &mut pending, &mut unanswered, timestamp);
+                if matches!(stop_reason, StopReason::Error | StopReason::Aborted) {
+                    continue;
+                }
+                content.retain(|block| match block {
+                    Content::ToolCall { id, .. } => unanswered.insert(id.clone()),
+                    _ => true,
+                });
+                pending = content
+                    .iter()
+                    .filter_map(|block| match block {
+                        Content::ToolCall { id, name, .. } => Some((id.clone(), name.clone())),
+                        _ => None,
+                    })
                     .collect();
-                if has_content(&filtered) {
-                    Some(AgentMessage::Llm(Message::Assistant {
-                        content: filtered,
-                        stop_reason,
-                        model,
-                        provider,
-                        usage,
-                        timestamp,
-                        error_message,
-                        response_id,
-                    }))
-                } else {
-                    None
+                timestamp = assistant_timestamp;
+                result.push(AgentMessage::Llm(Message::Assistant {
+                    content,
+                    stop_reason,
+                    model,
+                    provider,
+                    usage,
+                    timestamp: assistant_timestamp,
+                    error_message,
+                    response_id,
+                }));
+            }
+            AgentMessage::Llm(Message::ToolResult {
+                ref tool_call_id, ..
+            }) => {
+                if unanswered.remove(tool_call_id) {
+                    result.push(message);
                 }
             }
+            AgentMessage::Llm(Message::User { .. }) => {
+                complete_exchange(&mut result, &mut pending, &mut unanswered, timestamp);
+                result.push(message);
+            }
+            AgentMessage::Extension(_) => result.push(message),
+        }
+    }
+    complete_exchange(&mut result, &mut pending, &mut unanswered, timestamp);
+    result
+}
 
-            other => Some(other),
-        })
-        .collect()
+fn complete_exchange(
+    result: &mut Vec<AgentMessage>,
+    pending: &mut Vec<(String, String)>,
+    unanswered: &mut HashSet<String>,
+    timestamp: u64,
+) {
+    for (id, name) in pending.drain(..) {
+        if unanswered.remove(&id) {
+            result.push(AgentMessage::Llm(Message::ToolResult {
+                tool_call_id: id,
+                tool_name: name,
+                content: vec![Content::Text {
+                    text: "No result provided".into(),
+                }],
+                is_error: true,
+                // Stable across repeated normalization; this is a missing
+                // historical outcome, not a tool execution happening now.
+                timestamp,
+                retention: Retention::Normal,
+            }));
+        }
+    }
+    unanswered.clear();
 }

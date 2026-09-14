@@ -1324,7 +1324,8 @@ impl Agent {
         }
 
         let (prior_messages, compaction_state, transcript_seq) = session.context_snapshot().await;
-        let prior_messages = evot_engine::sanitize_tool_pairs(prior_messages);
+        // Keep the stored history intact. Replay normalization runs after
+        // context conversion at the engine's LLM boundary, not in session state.
         if consume_process_notifications {
             if let Some(process_manager) = &process_manager {
                 input.extend(

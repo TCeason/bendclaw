@@ -33,6 +33,83 @@ fn cache_config(cache: CacheConfig) -> StreamConfig {
         .build()
 }
 
+#[test]
+fn normalized_history_serializes_all_parallel_results_in_the_next_message() {
+    use evotengine::context::transform_messages_for_model;
+    use evotengine::provider::ApiProtocol;
+
+    let mut calls = assistant("reading files");
+    if let Message::Assistant {
+        content,
+        stop_reason,
+        ..
+    } = &mut calls
+    {
+        *stop_reason = StopReason::ToolUse;
+        for id in ["a", "b", "c", "d"] {
+            content.push(Content::ToolCall {
+                id: id.into(),
+                name: "read".into(),
+                arguments: serde_json::json!({"path": "README.md"}),
+                metadata: None,
+            });
+        }
+        content.push(Content::Thinking {
+            thinking: "plan".into(),
+            metadata: Some(ThinkingMetadata::Anthropic {
+                signature: "old-sig".into(),
+            }),
+        });
+    }
+    let mut failed = assistant("incomplete response");
+    if let Message::Assistant { stop_reason, .. } = &mut failed {
+        *stop_reason = StopReason::Error;
+    }
+    let messages = transform_messages_for_model(
+        vec![
+            Message::user("summary"),
+            calls,
+            Message::ToolResult {
+                tool_call_id: "b".into(),
+                tool_name: "read".into(),
+                content: vec![Content::Text {
+                    text: "file contents".into(),
+                }],
+                is_error: false,
+                timestamp: 1,
+                retention: Retention::Normal,
+            },
+            failed,
+            Message::user("continue"),
+        ],
+        "another-provider",
+        "another-model",
+        ApiProtocol::AnthropicMessages,
+    );
+    let config = StreamConfigBuilder::anthropic().messages(messages).build();
+    let body = build_request_body(&config, false);
+    assert_eq!(body["messages"][1]["role"], "assistant");
+    // Cross-model thinking becomes text in place, without arbitrary reordering.
+    assert_eq!(body["messages"][1]["content"][5]["type"], "text");
+    assert_eq!(body["messages"][2]["role"], "user");
+    for (index, id) in ["b", "a", "c", "d"].iter().enumerate() {
+        let block = &body["messages"][2]["content"][index];
+        assert_eq!(block["type"], "tool_result");
+        assert_eq!(block["tool_use_id"], *id);
+        assert_eq!(block["is_error"], index != 0);
+        assert_eq!(
+            block["content"],
+            if index == 0 {
+                "file contents"
+            } else {
+                "No result provided"
+            }
+        );
+    }
+    assert!(!body.to_string().contains("incomplete response"));
+    assert!(!body.to_string().contains("old-sig"));
+}
+
 // ---------------------------------------------------------------------------
 // Thinking
 // ---------------------------------------------------------------------------

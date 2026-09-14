@@ -119,10 +119,10 @@ async fn dsl_compaction_shape_is_marker_then_tail() {
 }
 
 #[test]
-fn dsl_sanitize_removes_orphan_calls_and_results() {
+fn dsl_sanitize_completes_orphan_calls() {
     let messages = pat("u T u tr T u").build();
     let result = evotengine::sanitize_tool_pairs(messages);
 
     assert_no_orphan_tool_pairs(&result);
-    assert_pattern(&result, "u u tr u");
+    assert_pattern(&result, "u tr u tr tr u");
 }

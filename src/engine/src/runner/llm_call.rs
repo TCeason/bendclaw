@@ -75,21 +75,14 @@ pub(super) async fn stream_assistant_response(
         context.messages.clone()
     };
 
-    // Last-line guard before the request: drop any tool call/result that lacks
-    // an adjacent partner. Anthropic-compatible providers reject a tool_result
-    // whose tool_use is not in the previous message (HTTP 400). Loaded history is
-    // already sanitized at session build, so in the normal path this is a no-op;
-    // it stays here so the request is well-formed regardless of how `messages`
-    // was assembled (custom transform_context, future call sites).
-    let messages = crate::context::sanitize_tool_pairs(messages);
-
     // Convert to LLM messages
     let convert = config.convert_to_llm.as_ref();
     let llm_messages = match convert {
         Some(f) => f(&messages),
         None => default_convert_to_llm(&messages),
     };
-    // Normalize provider-opaque history at the LLM boundary. Replayable
+    // Normalize tool exchanges after custom conversion, then provider-opaque
+    // history at the LLM boundary. Replayable
     // thinking survives only for the exact provider/model/protocol that emitted
     // it; foreign thinking is retained as ordinary text context.
     let (target_provider, target_model, target_api) = target_model(config);
