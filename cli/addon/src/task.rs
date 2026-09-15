@@ -30,7 +30,7 @@ struct DeliveryDefaults {
 
 fn executor(auth: &evot::auth::AuthState, env_file: Option<&str>) -> NapiResult<ExecutorContext> {
     let config = evot::conf::Config::load_with_env_file(env_file).map_err(to_napi)?;
-    let id = evot::automation::executor_id(config.id.as_deref(), &auth.user.id);
+    let id = evot::automation::executor_id(&auth.user.id);
     let name = evot::automation::executor_name(&id);
     let delivery_target = config
         .channels

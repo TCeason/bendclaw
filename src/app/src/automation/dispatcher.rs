@@ -37,7 +37,6 @@ pub fn effective_timeout(timeout_seconds: i64) -> Duration {
 }
 
 pub fn spawn(config: &Config, agent: Arc<Agent>, cancel: CancellationToken) -> JoinHandle<()> {
-    let instance_id = config.id.clone();
     let env_file = config.env_file_path.to_string_lossy().to_string();
     tokio::spawn(async move {
         let mut claim_request_id = Uuid::new_v4().to_string();
@@ -68,7 +67,7 @@ pub fn spawn(config: &Config, agent: Arc<Agent>, cancel: CancellationToken) -> J
                     continue;
                 }
             };
-            let executor_id = super::executor_id(instance_id.as_deref(), &auth.user.id);
+            let executor_id = super::executor_id(&auth.user.id);
             let executor_name = super::executor_name(&executor_id);
             let capabilities = ExecutorCapabilities::from_channels(&config.channels);
             let fingerprint = capabilities.fingerprint(&auth.user.id, &executor_id, &executor_name);

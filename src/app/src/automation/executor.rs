@@ -4,22 +4,18 @@ use crate::auth::AuthState;
 use crate::conf::ChannelsConfig;
 use crate::error::Result;
 
-/// Stable per-device executor id. Derived from the cloud user plus a local
-/// instance name so the same device keeps its identity across restarts.
-pub fn executor_id(instance_id: Option<&str>, user_id: &str) -> String {
+/// Executor identity is shared by every instance of one cloud user.
+///
+/// A run becomes claimable by whichever live instance polls for it — and the
+/// only process that polls is the one that bound the embedded server's port,
+/// so "the :8082 owner fetches the work" holds per machine and across
+/// machines. Deriving the id from `hostname` or an instance name orphaned
+/// tasks the moment the network renamed the host: nothing running could
+/// still claim them.
+pub fn executor_id(user_id: &str) -> String {
     use sha2::Digest;
 
-    let local = instance_id
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            hostname::get()
-                .ok()
-                .and_then(|name| name.into_string().ok())
-        })
-        .unwrap_or_else(|| "local".to_string());
-    let digest = sha2::Sha256::digest(format!("{user_id}:{local}").as_bytes());
+    let digest = sha2::Sha256::digest(user_id.as_bytes());
     format!("exec_{}", hex(&digest[..12]))
 }
 
