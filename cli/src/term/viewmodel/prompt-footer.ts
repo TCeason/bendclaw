@@ -8,6 +8,7 @@
  */
 
 import stringWidth from 'string-width'
+import { confirmationHint } from './confirmation-hint.js'
 import { line, block, plain, dim, colored, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
 import { finiteSize, spansWidth, truncateTailToWidth, truncateToWidth } from './width.js'
 import { BACKGROUND_PANEL_HINT_CHORD } from '../app/background-panel.js'
@@ -27,6 +28,7 @@ export interface PromptFooterVM {
   contextWindow: number
   backgroundProcessCount: number
   backgroundStopHint?: string
+  backgroundStopPending?: boolean
   /**
    * True when ↓ at the prompt opens the background panel.
    *
@@ -57,6 +59,7 @@ export function buildPromptFooterBlocks(
     input.backgroundPanelDownAvailable,
     finiteSize(input.columns, 80),
     input.backgroundStopHint,
+    input.backgroundStopPending,
   )
   if (chip) blocks.push(block([chip]))
   blocks.push(
@@ -91,6 +94,7 @@ function buildBackgroundChip(
   downAvailable: boolean,
   columns: number,
   stopHint?: string,
+  stopPending = false,
 ): StyledLine | null {
   if (count <= 0) return null
   const noun = count === 1 ? 'shell' : 'shells'
@@ -103,7 +107,14 @@ function buildBackgroundChip(
     const compact = `${count} bg · ${stopHint}`
     const text = stringWidth(full) <= columns ? full : stringWidth(`${label} · ${stopHint}`) <= columns
       ? `${label} · ${stopHint}` : compact
-    return line(colored(truncateToWidth(text, columns), stopHint.includes('again') ? 'yellow' : 'cyan'))
+    const clipped = truncateToWidth(text, columns)
+    const start = clipped.indexOf(stopHint)
+    if (start < 0) return line(confirmationHint(truncateToWidth(stopHint, columns), stopPending))
+    return line(
+      colored(clipped.slice(0, start), 'cyan'),
+      confirmationHint(stopHint, stopPending),
+      dim(clipped.slice(start + stopHint.length)),
+    )
   }
   if (downAvailable && stringWidth(`${label} · ${hint}`) <= columns) {
     return line(colored(label, 'cyan'), dim(' · '), dim(hint))

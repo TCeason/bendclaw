@@ -1,9 +1,11 @@
-import type { SessionMeta, SessionWithText } from '../../native/index.js'
+import type { SessionMeta, SessionWithText, TranscriptItem } from '../../native/index.js'
+import { enrichSessionRecognition, type SessionRecognition } from './session-recognition.js'
 
 export interface ResumeSessionClient {
   listSessions(limit: number): Promise<SessionMeta[]>
   listSessionsWithText(limit: number): Promise<SessionWithText[]>
   sessionWithText(sessionId: string): Promise<SessionWithText | null>
+  loadTranscript?(sessionId: string): Promise<TranscriptItem[]>
 }
 
 /**
@@ -31,7 +33,7 @@ export class ResumeSessionCache {
   private fullLoad: Promise<SessionMeta[]> | null = null
   private textLoad: Promise<SessionWithText[]> | null = null
   /** Text loaded one row at a time, for the focused preview. */
-  private readonly focusedText = new Map<string, SessionWithText>()
+  private readonly focusedText = new Map<string, SessionRecognition>()
   private readonly focusedLoads = new Map<string, Promise<SessionWithText | null>>()
 
   constructor(private readonly client: ResumeSessionClient, private readonly onLoaded: (rows: SessionMeta[]) => void = () => {}) {}
@@ -52,11 +54,11 @@ export class ResumeSessionCache {
    * The list formatter reads this, so a row renders the same whether its text
    * arrived with the whole catalog or from focusing that single row.
    */
-  sessionText(sessionId: string): SessionWithText | undefined {
+  sessionText(sessionId: string): SessionRecognition | undefined {
     if (this.textRows !== null && this.textIndex === null) {
       this.textIndex = new Map(this.textRows.map(row => [row.session_id, row]))
     }
-    return this.textIndex?.get(sessionId) ?? this.focusedText.get(sessionId)
+    return this.focusedText.get(sessionId) ?? this.textIndex?.get(sessionId)
   }
 
   replace(rows: SessionMeta[], complete = false): void {
@@ -176,11 +178,20 @@ export class ResumeSessionCache {
   loadSessionText(sessionId: string): Promise<SessionWithText | null> {
     if (this.disposed) return Promise.resolve(null)
     const known = this.sessionText(sessionId)
-    if (known) return Promise.resolve(known)
+    if (known && (!this.client.loadTranscript || known.recognition)) return Promise.resolve(known)
     const inFlight = this.focusedLoads.get(sessionId)
     if (inFlight) return inFlight
     const generation = this.generation
-    const load = this.client.sessionWithText(sessionId).then(row => {
+    const load = (known ? Promise.resolve(known) : this.client.sessionWithText(sessionId)).then(async row => {
+      if (generation !== this.generation || row === null) return null
+      if (this.client.loadTranscript) {
+        try {
+          const transcript = await this.client.loadTranscript(sessionId)
+          row = enrichSessionRecognition(row, transcript)
+        } catch {
+          // Keep the existing search excerpt; another focus can retry enrichment.
+        }
+      }
       if (generation !== this.generation || row === null) return null
       this.focusedText.set(sessionId, row)
       this.textGeneration++

@@ -1,26 +1,73 @@
 import { startServerBackground } from '../../native/index.js'
+import { inspectConsole } from '../../channels/console-client.js'
+// @ts-ignore — generated native bindings
+import { stopServerBackground } from '../../native/binding.js'
+import type { BackgroundScheduler } from '../../background/scheduler.js'
 
 export interface ServerState {
   port: number
   address: string
   channels: string[]
   startedAt: number
+  envFile: string
 }
 
 let activePort: number | null = null
+let ownedSince: number | null = null
 
 export async function tryStartServer(port?: number, envFile?: string): Promise<ServerState | null> {
-  const info = await startServerBackground(port, undefined, envFile)
-  if (info === null) return null
-  activePort = info.port
+  const endpoint = await startServerBackground(port, undefined, envFile)
+  if (endpoint === null) {
+    activePort = null
+    ownedSince = null
+    return null
+  }
+  const snapshot = await inspectConsole(endpoint.address)
+  if (activePort !== endpoint.port || ownedSince === null) ownedSince = Date.now()
+  activePort = endpoint.port
   // The UI URL is surfaced as a clickable link in the banner rather than
   // auto-opened — popping a browser tab on every launch is disruptive.
   return {
-    port: info.port,
-    address: info.address,
-    channels: info.channels,
-    startedAt: Date.now(),
+    port: endpoint.port,
+    address: endpoint.address,
+    channels: endpoint.channels,
+    envFile: snapshot.env_file_path,
+    startedAt: ownedSince,
   }
+}
+
+export interface DashboardHost {
+  attempt: () => Promise<ServerState | null>
+  stop: () => Promise<void>
+  publish: (state: ServerState | null) => void
+}
+
+/** Publish only native-confirmed ownership, never a discovered foreign URL. */
+export function registerDashboard(scheduler: BackgroundScheduler, host: DashboardHost): () => void {
+  const unregister = scheduler.register({
+    name: 'dashboard', intervalMs: 5000,
+    run: async signal => {
+      const state = await host.attempt()
+      if (signal.aborted) { await host.stop(); return }
+      host.publish(state)
+    },
+    onError: () => {
+      activePort = null
+      ownedSince = null
+      host.publish(null)
+    },
+  })
+  return () => {
+    unregister()
+    host.publish(null)
+    void host.stop().catch(() => {})
+  }
+}
+
+export async function stopOwnedServer(): Promise<void> {
+  activePort = null
+  ownedSince = null
+  await stopServerBackground()
 }
 
 export function formatUptime(startedAt: number): string {

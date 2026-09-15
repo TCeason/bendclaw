@@ -5,6 +5,7 @@ import { backgroundChord } from '../design/key-hints.js'
 export function runStatusPresentation(state: RunInteractionState): {
   label?: string
   hint: string
+  confirmationPending: boolean
   showUsage: boolean
   allowSlowWarning: boolean
 } {
@@ -29,6 +30,7 @@ export function runStatusPresentation(state: RunInteractionState): {
         ? state.backgroundStopping ? 'Stopping background tasks…' : 'Background task running · resumes when finished'
         : undefined,
     hint: hint ? ` · ${hint}` : '',
+    confirmationPending: Boolean(state.interruptTarget && state.interruptPending),
     showUsage: state.showUsage,
     allowSlowWarning: state.allowSlowWarning,
   }

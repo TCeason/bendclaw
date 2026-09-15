@@ -1,5 +1,10 @@
 import type { ConfigInfo } from '../../native/contracts/config-info.js'
-import { selectorFocusOn, type SelectorEffort, type SelectorItem, type SelectorState } from '../selector.js'
+import {
+  selectorFocusOn,
+  type SelectorEffort,
+  type SelectorItem,
+  type SelectorState,
+} from '../selector.js'
 import { createAppSelectorState } from './selector-identity.js'
 import { currentModelSpec, modelOptions, modelSelectorItems } from './provider.js'
 import { RESUME_SELECTOR_TITLE } from './resume.js'
@@ -40,14 +45,29 @@ export function carryModelEfforts(previous: SelectorItem[], next: SelectorItem[]
   })
 }
 
-export function createResumeWindow(items: SelectorItem[], initialQuery?: string): SelectorState {
+/**
+ * Resume list window.
+ *
+ * `listFocused` mirrors `createModelWindow`'s flag for the same reason: the
+ * command preview is driven by the composer's text, while Enter/↑ opens a list
+ * that owns its own letters. Only the focused list treats `e`/`d` as actions;
+ * the preview keeps typing as search.
+ */
+export function createResumeWindow(
+  items: SelectorItem[],
+  initialQuery?: string,
+  listFocused = false,
+): SelectorState {
   const state = createAppSelectorState('resume', RESUME_SELECTOR_TITLE, items, items, initialQuery)
   return {
     ...state,
-    listFocused: false,
+    previewPane: { fraction: 0.55, offset: 0, confirmDeleteKey: 'd' },
+    listFocused,
     lowercaseHints: true,
     ...(state.query.length === 0 && state.items.length === 0 && state.allItems.some(item => !item.header)
-      ? { emptyMessage: 'No sessions in current cwd · type to search all sessions' }
+      ? { emptyMessage: listFocused
+        ? 'No sessions in current cwd · press / to search all sessions'
+        : 'No sessions in current cwd · type to search all sessions' }
       : {}),
   }
 }

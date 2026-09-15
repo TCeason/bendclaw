@@ -18,7 +18,7 @@ import {
   askPasteText,
   handleAskKeyEvent,
 } from '../src/term/ask.js'
-import { askStateToResponse } from '../src/term/app/ask-user.js'
+import { askStateToResponse, prefixedAskLines } from '../src/term/app/ask-user.js'
 import { buildOverlayBlocks } from '../src/term/viewmodel/overlays.js'
 import { buildAskRegionLines } from '../src/term/viewmodel/ask.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
@@ -37,6 +37,19 @@ const singleQuestion = [
     ],
   },
 ]
+
+test('host setup prompts keep transient ownership through navigation and submission', () => {
+  const initial = { ...createAskState(singleQuestion), transient: true }
+  const moved = handleAskKeyEvent(initial, 'down')
+  expect(moved.action).toBe('update')
+  if (moved.action !== 'update') throw new Error('expected updated state')
+  expect(moved.state.transient).toBe(true)
+  const submitted = handleAskKeyEvent(moved.state, 'enter')
+  expect(submitted.action).toBe('submit')
+  if (submitted.action !== 'submit') throw new Error('expected submitted state')
+  expect(submitted.state.transient).toBe(true)
+  expect(createAskState(singleQuestion).transient).toBeUndefined()
+})
 
 const multiQuestion = [
   {
@@ -440,6 +453,24 @@ describe('renderAsk via viewmodel', () => {
     expect(text).toContain('• Which language?')
     expect(text).toContain('→ Rust')
     expect(text).not.toContain('• Which style?')
+  })
+
+  test('multiline questions use hanging indentation in review and committed history', () => {
+    const question = 'Run “Daily report” now?\nResult: feishu · p2p:*'
+    expect(prefixedAskLines(question, '  • ')).toEqual([
+      '  • Run “Daily report” now?',
+      '    Result: feishu · p2p:*',
+    ])
+
+    let state = createAskState([{
+      header: 'Run task',
+      question,
+      options: [{ label: 'Run now', description: '' }, { label: 'Cancel', description: '' }],
+    }])
+    state = { ...state, onSubmitTab: true, answers: [{ questionIndex: 0, selectedOption: 0, customText: null }] }
+    const lines = blocksToLines(buildOverlayBlocks({ kind: 'ask-user', state }, 80)).map(stripAnsi)
+    expect(lines).toContain('  • Run “Daily report” now?')
+    expect(lines).toContain('    Result: feishu · p2p:*')
   })
 
   test('renders ask_user as a full-width editor replacement rather than a centered modal', () => {

@@ -1,0 +1,235 @@
+import { describe, expect, test } from 'bun:test'
+import { handleTaskKey } from '../src/task/control.js'
+import { createTaskWindow } from '../src/task/window.js'
+import type { ScheduledTask, TaskListResponse, TaskRunSummary } from '../src/task/types.js'
+import { buildSelectorRegionLines } from '../src/term/viewmodel/selector.js'
+import stripAnsi from 'strip-ansi'
+
+const now = Date.now()
+const recentRuns: TaskRunSummary[] = [
+  {
+    id: 'run-running', status: 'running', source: 'schedule', delivery_status: 'not_requested',
+    scheduled_for: now - 30_000, updated_at: now - 5_000,
+  },
+  {
+    id: 'run-sent', status: 'succeeded', source: 'schedule', delivery_status: 'sent',
+    scheduled_for: now - 3_600_000, updated_at: now - 3_500_000,
+  },
+  {
+    id: 'run-delivery-failed', status: 'succeeded', source: 'manual', delivery_status: 'failed',
+    scheduled_for: now - 7_200_000, updated_at: now - 7_100_000, error: 'delivery failed',
+  },
+]
+
+const task: ScheduledTask = {
+  id: 'task1', revision: 1, name: 'Daily report', cron: '0 9 * * 1-5',
+  timezone: 'Asia/Shanghai', instruction: 'Prepare report', executor_id: 'exec1',
+  model_policy: 'fixed', model_spec: 'evot-pro:claude-opus', thinking_level: 'high',
+  workspace_ref: '', delivery_channel: 'feishu', delivery_target: 'p2p:*',
+  timeout_seconds: 900, max_lateness_seconds: 14_400,
+  enabled: true, next_run_at: now + 3_600_000, last_run: recentRuns[0],
+  recent_runs: recentRuns,
+  stats: {
+    window_days: 30,
+    runs: 12,
+    completed: 10,
+    succeeded: 9,
+    execution_success_rate: 0.9,
+    delivery_attempted: 8,
+    delivery_sent: 7,
+    delivery_success_rate: 0.875,
+  },
+}
+
+const response: TaskListResponse = {
+  cache: { ready: true, synced_at: now, stale: false },
+  tasks: [task],
+}
+
+describe('task window', () => {
+  const modelLabels = { 'evot-pro:claude-opus': 'Claude Opus' }
+
+  test('list row shows task name and simple counts, not model or rates', () => {
+    const state = createTaskWindow(response, undefined, undefined, modelLabels)
+    expect(state.title).toBe('Tasks')
+    expect(state.subtitle).toBe('1 task')
+    expect(state.noFilter).toBe(true)
+    expect(state.items[0]?.label).toBe('Daily report')
+    expect(state.items[0]?.detail).toBe(
+      'Weekdays 09:00  ·  Running  ·  12 runs · 9 succeeded',
+    )
+  })
+
+  test('side pane includes instructions, configuration, counts and history', () => {
+    const preview = createTaskWindow(response, undefined, undefined, modelLabels).items[0]?.preview ?? []
+    expect(preview).toContain('Model  Claude Opus · high')
+    expect(preview).toContain('# Instructions')
+    expect(preview).toContain(task.instruction)
+    expect(preview).toContain(`Schedule  ${task.cron} · ${task.timezone}`)
+    expect(preview).toContain('# Activity')
+    expect(preview).toContain('12 runs · 9 succeeded · last 30 days')
+    expect(preview.join('\n')).not.toContain('%')
+    expect(preview).toContain('# Recent runs')
+    expect(preview.some(line => line.includes('Running'))).toBe(true)
+    expect(preview.some(line => line.includes('Delivery failed'))).toBe(true)
+  })
+
+  test('rendered two-pane layout keeps model, metrics, and recent activity visible', () => {
+    for (const [columns, rows] of [[120, 24], [90, 20]] as const) {
+      const state = createTaskWindow(response, undefined, undefined, modelLabels)
+      const rendered = Array.from({ length: 8 }, (_, page) => buildSelectorRegionLines(
+        { ...state, previewPane: { ...state.previewPane!, offset: page * 5 } }, columns, rows,
+      ).map(stripAnsi).join('\n')).join('\n')
+      expect(rendered).toContain('Model  Claude Opus · high')
+      expect(rendered).toContain('12 runs')
+      expect(rendered).toContain('9 succeeded')
+      expect(rendered).toContain('Prepare report')
+      expect(rendered).toContain('Recent runs')
+      expect(rendered).toContain('◷ just now  Running')
+    }
+  })
+
+  test('detail data replaces the focused row history without duplicating sections', () => {
+    const fullHistory = Array.from({ length: 8 }, (_, index): TaskRunSummary => ({
+      id: `run-${index}`,
+      status: 'succeeded',
+      source: index % 2 ? 'manual' : 'schedule',
+      delivery_status: index === 0 ? 'failed' : 'sent',
+      scheduled_for: now - index * 60_000,
+      updated_at: now - index * 60_000,
+    }))
+    const detail = { ...task, runs: fullHistory }
+    const preview = createTaskWindow(response, task.id, detail).items[0]?.preview ?? []
+    expect(preview.filter(line => line === '# Recent runs')).toHaveLength(1)
+    expect(preview.filter(line => /^[✓✗◷–] /.test(line))).toHaveLength(8)
+    expect(preview.some(line => line.includes('Delivery failed'))).toBe(true)
+  })
+
+  test('cold tasks show zero total and successful runs', () => {
+    const cold: ScheduledTask = {
+      ...task,
+      id: 'cold',
+      name: 'Cold task',
+      last_run: null,
+      recent_runs: [],
+      stats: {
+        window_days: 30, runs: 0, completed: 0, succeeded: 0,
+        execution_success_rate: null, delivery_attempted: 0, delivery_sent: 0,
+        delivery_success_rate: null,
+      },
+    }
+    const state = createTaskWindow({ ...response, tasks: [cold] })
+    expect(state.items[0]?.detail).toContain('0 runs · 0 succeeded')
+    expect(state.items[0]?.preview).toContain('No runs yet')
+  })
+
+  test('full instructions remain reachable by paging on wide and narrow terminals', () => {
+    const instruction = Array.from({ length: 40 }, (_, i) => `instruction-line-${i}`).join('\n')
+    const state = createTaskWindow({ ...response, tasks: [{ ...task, instruction }] })
+    for (const columns of [60, 100, 180]) {
+      const pages = Array.from({ length: 30 }, (_, page) => buildSelectorRegionLines(
+        { ...state, previewPane: { ...state.previewPane!, offset: page * 5 } }, columns, 28,
+      ).map(stripAnsi).join('\n')).join('\n')
+      for (let i = 0; i < 40; i++) expect(pages).toContain(`instruction-line-${i}`)
+    }
+    const next = handleTaskKey(state, { type: 'page-down' })
+    expect(next.kind).toBe('update')
+    if (next.kind !== 'update') throw new Error('expected detail page update')
+    expect(next.state.previewPane?.offset).toBeGreaterThan(0)
+    const navigate = handleTaskKey(next.state, { type: 'down' })
+    if (navigate.kind !== 'update') throw new Error('expected navigation')
+    // At the final task, navigation does not change selection or reset reading.
+    expect(navigate.state.previewPane?.offset).toBe(next.state.previewPane?.offset)
+  })
+
+  test('wide terminals allocate more than the former 52 columns to details', () => {
+    const state = createTaskWindow(response)
+    const lines = buildSelectorRegionLines(state, 180, 32).map(stripAnsi)
+    const divider = lines.find(row => row.includes('│'))?.indexOf('│') ?? -1
+    expect(divider).toBeGreaterThan(0)
+    expect(divider).toBeLessThan(100)
+  })
+
+  test('details have fixed height regardless of instruction length or terminal height', () => {
+    for (const columns of [60, 100, 180]) {
+      const short = createTaskWindow({ ...response, tasks: [{ ...task, instruction: 'hi' }] })
+      const long = createTaskWindow({ ...response, tasks: [{ ...task, instruction: 'long instruction\n'.repeat(200) }] })
+      for (const rows of [20, 32, 60]) {
+        const shortLines = buildSelectorRegionLines(short, columns, rows)
+        const longLines = buildSelectorRegionLines(long, columns, rows)
+        expect(longLines.length).toBe(shortLines.length)
+        expect(longLines.length).toBeLessThan(30)
+      }
+      expect(buildSelectorRegionLines(long, columns, 60).length)
+        .toBe(buildSelectorRegionLines(long, columns, 32).length)
+    }
+  })
+
+  test('Tab focuses details, arrows scroll without selecting tasks, ends clamp, Esc returns to list', () => {
+    let state = createTaskWindow({ ...response, tasks: [{ ...task, instruction: 'readable line\n'.repeat(30) }, { ...task, id: 'second' }] })
+    const apply = (event: Parameters<typeof handleTaskKey>[1]) => {
+      const action = handleTaskKey(state, event, 120, 32)
+      if (action.kind === 'update') state = action.state
+      return action
+    }
+    apply({ type: 'tab' })
+    expect(state.previewPane?.focused).toBe(true)
+    apply({ type: 'down' })
+    expect(state.previewPane?.offset).toBe(1)
+    expect(state.focusIndex).toBe(0)
+    expect(apply({ type: 'char', char: 'd' }).kind).toBe('none')
+    for (let i = 0; i < 100; i++) apply({ type: 'page-down' })
+    const bottom = state.previewPane?.offset
+    apply({ type: 'down' })
+    expect(state.previewPane?.offset).toBe(bottom)
+    apply({ type: 'up' })
+    expect(state.previewPane?.offset).toBe(bottom! - 1)
+    for (let i = 0; i < 100; i++) apply({ type: 'page-up' })
+    expect(state.previewPane?.offset).toBe(0)
+    apply({ type: 'escape' })
+    expect(state.previewPane?.focused).toBe(false)
+    apply({ type: 'down' })
+    expect(state.focusIndex).toBe(1)
+  })
+
+  test('footer exposes edit/delete only when the task list owns focus', () => {
+    const state = createTaskWindow(response)
+    expect(state.hints).toEqual([
+      { keys: ['up', 'down'], action: 'select' },
+      { keys: 'tab', action: 'details' },
+      { keys: 'e', action: 'edit' },
+      { keys: 'd', action: 'delete' },
+      { keys: 'escape', action: 'close' },
+    ])
+    expect(state.items[0]?.hints).toEqual(state.hints)
+    for (const focused of [false, true]) {
+      const text = buildSelectorRegionLines({
+        ...state, previewPane: { ...state.previewPane!, focused },
+      }, 120, 32).map(stripAnsi).join('\n')
+      expect(text).toContain(focused ? 'scroll' : 'select')
+      expect(text).not.toContain('page-up')
+      expect(text).not.toContain('pause/resume')
+      if (focused) expect(text).not.toContain('to delete')
+      else {
+        expect(text).toContain('to edit')
+        expect(text).toContain('to delete')
+      }
+      expect(text).not.toContain('to history')
+      expect(text).not.toContain('Tab to focus')
+      expect(text).not.toContain('Tab back')
+    }
+  })
+
+  test('maps task shortcuts without filtering', () => {
+    const state = createTaskWindow(response)
+    expect(handleTaskKey(state, { type: 'char', char: 'r' })).toEqual({ kind: 'run', id: 'task1' })
+    expect(handleTaskKey(state, { type: 'char', char: ' ' })).toEqual({ kind: 'toggle', id: 'task1' })
+    const help = handleTaskKey(state, { type: 'char', char: '?' })
+    expect(help.kind).toBe('none')
+    const armed = handleTaskKey(state, { type: 'char', char: 'd' })
+    expect(armed.kind).toBe('update')
+    if (armed.kind === 'update') {
+      expect(handleTaskKey(armed.state, { type: 'char', char: 'd' }).kind).toBe('delete')
+    }
+  })
+})

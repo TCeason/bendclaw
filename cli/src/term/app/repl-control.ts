@@ -75,6 +75,8 @@ export function decideReplControl(input: ReplControlInput): ReplControlAction[] 
   if (event.type === 'escape') {
     if (overlay.kind !== 'none') {
       if (overlay.kind === 'ask-user' && hasStream) return actions.concat({ kind: 'cancel-ask' })
+      if (overlay.kind === 'selector' && !overlay.state.rename && overlay.state.previewPane
+        && (overlay.state.previewPane.focused || overlay.state.pendingDeleteId)) return actions.concat({ kind: 'selector-key' })
       if (overlay.kind === 'selector' && overlay.state.query) return actions.concat({ kind: 'clear-selector-query' })
       return actions.concat({ kind: 'close-overlay' })
     }

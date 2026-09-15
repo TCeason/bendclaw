@@ -162,7 +162,7 @@ describe('repl selector control', () => {
     expect(first.kind).toBe('update')
     if (first.kind !== 'update') return
     expect(first.state.pendingDeleteId).toBe('session-one')
-    expect(first.state.subtitle).toBe('Press ctrl+d / delete again to delete')
+    expect(first.state.subtitle).toBe('d confirm delete · esc cancel')
     expect(first.state.items.map(i => i.label)).toEqual(['one', 'two'])
 
     const second = handleSelectorControl(first.state, key('delete'))
@@ -176,13 +176,13 @@ describe('repl selector control', () => {
     }
   })
 
-  test('ctrl-d requires a second press before removing resume session', () => {
-    const state = createAppSelectorState('resume', RESUME_SELECTOR_TITLE, items)
-    const first = handleSelectorControl(state, { type: 'ctrl', key: 'd' })
+  test('bare d requires a second press before removing resume session', () => {
+    const state = { ...createAppSelectorState('resume', RESUME_SELECTOR_TITLE, items), listFocused: true, previewPane: { fraction: 0.55, offset: 0, confirmDeleteKey: 'd' } }
+    const first = handleSelectorControl(state, char('d'))
     expect(first.kind).toBe('update')
     if (first.kind !== 'update') return
 
-    const second = handleSelectorControl(first.state, { type: 'ctrl', key: 'd' })
+    const second = handleSelectorControl(first.state, char('d'))
     expect(second.kind).toBe('delete-session')
   })
 

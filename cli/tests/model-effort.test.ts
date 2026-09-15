@@ -66,13 +66,12 @@ function rows(state: SelectorState, width = 80, active = true): string[] {
     .map(row => stripAnsi(row).replaceAll('\x1b_pi:c\x07', ''))
 }
 
-/** Rows with styling intact, for asserting the selection treatment. */
-/** The focused row's plain text. Every row carries the same `·` gutter now, so
- *  the current row is identified by the brand colour it alone is painted in. */
+/** Locate the focused model without depending on terminal color support.
+ * Styling assertions below explicitly enable truecolor in their own suite. */
 function focusedRow(state: SelectorState, width = 80, active = true): string {
-  const brand = fg(getTheme().brandHex)
+  const selected = state.items[state.focusIndex]
   const raw = buildSelectorRegionLines(state, width, 24, active)
-    .find(row => row.includes(brand) && stripAnsi(row).includes('\u25fc'))
+    .find(row => selected && stripAnsi(row).includes(selected.label) && stripAnsi(row).includes('\u25fc'))
   return stripAnsi(raw ?? '').replaceAll('\x1b_pi:c\x07', '')
 }
 

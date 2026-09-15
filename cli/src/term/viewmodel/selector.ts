@@ -12,6 +12,10 @@ import { PREVIEW_SECTION_PREFIX, SELECTOR_VIEWPORT, selectorEffortLevel, type Se
 import { HINT_SEPARATOR, formatChord, type Hint } from '../design/key-hints.js'
 import { getTheme } from '../../render/theme/index.js'
 import { buildSkillSelectorLines } from './skill-selector.js'
+import { scrollPreview } from './scroll-preview.js'
+import { confirmationHint } from './confirmation-hint.js'
+import { previewGeometry } from '../preview-scroll.js'
+import { splitPaneHints } from '../split-pane.js'
 import { buildSelectorHeader, buildSelectorRow } from './selector-row.js'
 import { buildEffortCell, effortLabel, planEffortLayout } from './model-effort.js'
 
@@ -62,7 +66,7 @@ export function buildSelectorRegionLines(
     return ['', border, ...buildBackgroundOutputRegionLines(state, width, rows), border]
   }
 
-  return ['', border, ...blocksToLines(buildSelectorBlocks(state, width, active)), border]
+  return ['', border, ...blocksToLines(buildSelectorBlocks(state, width, active, rows)), border]
 }
 
 /** Bounded detail: metadata cannot consume the activity viewport or footer. */
@@ -117,7 +121,7 @@ function buildModelSelectorRegionLines(state: SelectorState, width: number, acti
   const lines: StyledLine[] = [
     border,
     line(plain('')),
-    line(dim('Only showing models from configured providers. Run /login to add cloud models.')),
+    line(dim(state.subtitle ?? 'Only showing models from configured providers. Run /login to add cloud models.')),
     line(plain('')),
     buildModelSearchLine(state.query, width, searchFocused),
     line(plain('')),
@@ -133,10 +137,22 @@ function buildModelSelectorRegionLines(state: SelectorState, width: number, acti
   )
   const end = Math.min(start + maxVisible, state.items.length)
 
-  const { accentHex, brandHex } = getTheme()
-  // Rows are built and measured first, then the effort column is planned for
-  // the whole page: one shared column keeps every gauge and tier label aligned
-  // instead of each row placing its own relative to its label length.
+  const { brandHex } = getTheme()
+  // Plan from all filtered model rows, not the current viewport. Policy rows
+  // have no effort control and must not push model gauges across the terminal
+  // while their explanatory text enters/leaves the viewport.
+  const measuredModels = state.items.filter(item => !item.header && item.effort).map(item => ({
+    item,
+    width: spansWidth(buildSelectorRow(item, { highlighted: false, query: state.query, detailGap: ' ' }).spans),
+  }))
+  const effortLayout = planEffortLayout(measuredModels, Math.max(1, width - 1))
+  // Group separators consume rows too. Reserve the largest viewport geometry
+  // so scrolling across a heading never moves the search line or footer.
+  let pageHeight = 0
+  for (let offset = 0; offset <= Math.max(0, state.items.length - maxVisible); offset++) {
+    const page = state.items.slice(offset, offset + maxVisible)
+    pageHeight = Math.max(pageHeight, page.length + page.filter((item, at) => at > 0 && item.header).length)
+  }
   const pageLines: StyledLine[] = []
   const rowRefs: { item: SelectorItem; width: number; at: number; focused: boolean }[] = []
   let visibleListRowSeen = false
@@ -165,7 +181,6 @@ function buildModelSelectorRegionLines(state: SelectorState, width: number, acti
   }
 
   // One column stays free so a full-width row cannot wrap into the next line.
-  const effortLayout = planEffortLayout(rowRefs, Math.max(1, width - 1))
   if (effortLayout) {
     for (const ref of rowRefs) {
       if (!ref.item.effort) continue
@@ -184,6 +199,7 @@ function buildModelSelectorRegionLines(state: SelectorState, width: number, acti
     }
   }
   lines.push(...pageLines)
+  for (let pad = pageLines.length; pad < pageHeight; pad++) lines.push(line(plain('')))
 
   if (start > 0 || end < state.items.length) {
     // Headings are not choices, so the counter reflects models only.
@@ -210,6 +226,8 @@ function buildModelSelectorRegionLines(state: SelectorState, width: number, acti
           { text: effortLabel(level), hex: brandHex },
           ...(active ? [dim(`${HINT_SEPARATOR}${formatChord(['left', 'right'])} to adjust`)] : []),
         ))
+      } else if (measuredModels.length > 0) {
+        lines.push(line(plain('')))
       }
     }
   }
@@ -287,12 +305,14 @@ export function buildSelectorBlocks(
   state: SelectorState,
   columns: number,
   active = true,
+  rows = 24,
 ): ViewBlock[] {
   const selectable = (items: SelectorItem[]) => items.filter(i => !i.header).length
-  // A selector that supplies its own hints also owns its header: its counts live
-  // in the subtitle and group headings, so the generic row tally beside the
-  // title would only restate them.
-  const ownsHeader = state.hints !== undefined
+  // The tally beside the title is dropped only when the subtitle already carries
+  // it (task lists say "3 tasks" there). Hints alone are not a reason to hide it:
+  // the resume list has no count in its subtitle, so hiding it there would remove
+  // the only on-screen total.
+  const ownsHeader = state.hints !== undefined && state.subtitle !== undefined
   const countLabel = `${selectable(state.items)}${state.query ? ` of ${selectable(state.allItems)}` : ''}`
   const lines: StyledLine[] = [
     ownsHeader
@@ -301,7 +321,8 @@ export function buildSelectorBlocks(
   ]
 
   if (state.subtitle) {
-    lines.push(line(dim(state.subtitle)))
+    const pending = state.pendingDeleteId !== undefined && state.items[state.focusIndex]?.id === state.pendingDeleteId
+    lines.push(line(confirmationHint(state.subtitle, pending)))
   }
 
   lines.push(line(plain('')))
@@ -323,8 +344,13 @@ export function buildSelectorBlocks(
       ))
     } else {
       // Nothing typed yet: the filter line doubles as the discoverability hint,
-      // otherwise there is no on-screen signal that typing filters at all.
-      lines.push(line(colored('Filter  ', 'cyan'), dim(PLACEHOLDER_HINT)))
+      // otherwise there is no on-screen signal that typing filters at all. A
+      // list that owns its letters instead names the key that starts a search,
+      // because there typing an `e` would be an action.
+      const searchEntry = state.listFocused === true
+        ? '/ to search titles, prompts and transcript text'
+        : PLACEHOLDER_HINT
+      lines.push(line(colored('Filter  ', 'cyan'), dim(searchEntry)))
     }
     lines.push(line(plain('')))
   }
@@ -334,26 +360,35 @@ export function buildSelectorBlocks(
   // stays free so a full-width row cannot wrap into the next terminal line.
   const available = Math.max(1, finiteSize(columns, 80) - 1)
   const paneWidth = selectorPaneWidth(state, available)
-  const listLines = buildSelectorListLines(state)
+  const geometry = state.previewPane ? previewGeometry(columns, rows, state.previewPane.fraction) : undefined
+  const listLines = buildSelectorListLines(state, geometry?.listRows)
   if (paneWidth > 0) {
     const preview = state.items[state.focusIndex]?.preview ?? []
     // Height is the list viewport, not the focused preview: a short session
     // would otherwise shrink the pane and jump the composer when focus moves.
-    const paneRows = Math.max(listLines.length, PANE_MIN_ROWS)
+    const paneRows = state.previewPane
+      ? geometry!.height
+      : Math.max(listLines.length, PANE_MIN_ROWS)
     lines.push(...joinPaneColumns(
       listLines,
-      padPreviewLines(buildPreviewLines(preview, state.query, paneWidth, paneRows), paneRows),
+      state.previewPane
+        ? scrollPreview(preview, paneWidth, paneRows, state.previewPane.offset)
+        : padPreviewLines(buildPreviewLines(preview, state.query, paneWidth, paneRows), paneRows),
       available - paneWidth - PANE_DIVIDER.length,
     ))
   } else {
     lines.push(...listLines)
+    if (state.previewPane && state.items[state.focusIndex]?.preview) {
+      lines.push(line(plain('')))
+      lines.push(...scrollPreview(state.items[state.focusIndex]!.preview!, available, geometry!.height, state.previewPane.offset))
+    }
   }
 
   lines.push(line(plain('')))
   // A focused row's own hints win over the selector's, so a gesture is only ever
   // offered where it would actually do something. Selectors that predate the
   // hint list keep their hand-written lines below.
-  const hints = state.items[state.focusIndex]?.hints ?? state.hints
+  const hints = state.previewPane ? splitPaneHints(state) : state.items[state.focusIndex]?.hints ?? state.hints
   if (hints) {
     lines.push(buildHintLine(hints, state.lowercaseHints))
   } else if (state.owner === SELECTOR_OWNER.queue) {
@@ -384,13 +419,15 @@ function buildHintLine(hints: Hint[], lowercase = false): StyledLine {
   for (const hint of hints) {
     if (spans.length > 0) spans.push(dim(HINT_SEPARATOR))
     const chord = formatChord(hint.keys)
-    spans.push(colored(lowercase ? chord.toLowerCase() : chord, 'cyan'), dim(` to ${hint.action}`))
+    const key = lowercase ? chord.toLowerCase() : chord
+    if (hint.confirmationPending) spans.push(confirmationHint(`${key} to ${hint.action}`, true))
+    else spans.push(colored(key, 'cyan'), dim(` to ${hint.action}`))
   }
   return line(...spans)
 }
 
 /** The list rows themselves — everything between the filter line and the hints. */
-function buildSelectorListLines(state: SelectorState): StyledLine[] {
+function buildSelectorListLines(state: SelectorState, viewport = SELECTOR_VIEWPORT): StyledLine[] {
   if (state.items.length === 0) {
     if (state.emptyMessage) return [line(dim(`  ${state.emptyMessage}`))]
     // A no-filter list has no query to explain an empty result, so the generic
@@ -400,7 +437,7 @@ function buildSelectorListLines(state: SelectorState): StyledLine[] {
   }
 
   const lines: StyledLine[] = []
-  const maxVisible = SELECTOR_VIEWPORT
+  const maxVisible = viewport
   // The window follows scrollOffset (updated one row at a time by up/down),
   // clamped defensively so the focused row is always on screen.
   let start = Math.min(Math.max(state.scrollOffset, 0), Math.max(0, state.items.length - maxVisible))
@@ -473,7 +510,10 @@ function selectorPaneWidth(state: SelectorState, columns: number): number {
   if (!focused?.preview || focused.preview.length === 0) return 0
   // One width for every focused row, so moving between sessions does not
   // slide the divider. Extra terminal columns stay with the list.
-  const width = Math.min(PANE_MAX_WIDTH, Math.max(24, Math.floor(columns / 3)))
+  const width = state.previewPane
+    ? previewGeometry(columns + 1, 24, state.previewPane.fraction).paneWidth
+    : Math.min(PANE_MAX_WIDTH, Math.max(24, Math.floor(columns / 3)))
+  if (width < 24) return 0
   if (columns - width - PANE_DIVIDER.length < PANE_MIN_LIST_WIDTH) return 0
   return width
 }

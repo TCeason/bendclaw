@@ -3,12 +3,14 @@ import { createSelectorState, type SelectorItem, type SelectorState } from '../s
 /** In-memory feature ownership, never inferred from copy or visual styling. */
 export const SELECTOR_OWNER = {
   model: Symbol('model'),
+  taskModel: Symbol('task-model'),
   resume: Symbol('resume'),
   shares: Symbol('shares'),
   skill: Symbol('skill'),
   queue: Symbol('queue'),
   background: Symbol('background'),
   backgroundOutput: Symbol('background-output'),
+  task: Symbol('task'),
 } as const
 
 export function createAppSelectorState(

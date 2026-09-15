@@ -26,6 +26,9 @@ export interface QuestionUIState {
 }
 
 export interface AskState {
+  /** Host setup prompts are transient UI, not conversation turns. */
+  transient?: boolean
+  owner?: symbol
   questions: AskQuestion[]
   currentTab: number
   focusIndex: number

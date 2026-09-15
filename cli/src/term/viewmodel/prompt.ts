@@ -9,6 +9,7 @@
  */
 
 import stringWidth from 'string-width'
+import { confirmationHint } from './confirmation-hint.js'
 import { COMMANDS, HIDDEN_COMMANDS } from '../../commands/index.js'
 import { getTheme } from '../../render/theme/index.js'
 import type { CompletionMenu } from '../input/editor.js'
@@ -152,7 +153,7 @@ export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOpt
   }
   if (frame.ruled) blocks.push(block([frame.bottom(overflowLabel('↓', visual.lines.length - end))]))
 
-  if (input.exitHint) blocks.push(block([line(dim(truncateToWidth('  Press Ctrl+C again to exit', columns)))]))
+  if (input.exitHint) blocks.push(block([line(confirmationHint(truncateToWidth('  Press Ctrl+C again to exit', columns), true))]))
   // The border label carries the mode whenever it is drawn, so the footer only
   // repeats it on terminals too short for a border.
   blocks.push(...buildPromptFooterBlocks(input, { modeShownAbove: frame.ruled }))

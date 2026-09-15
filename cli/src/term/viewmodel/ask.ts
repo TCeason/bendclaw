@@ -1,6 +1,7 @@
 import { wrapTextWithAnsi } from '../../render/wrap.js'
 import { blocksToLines, styledLineToAnsi } from './types.js'
 import type { AskState } from '../ask.js'
+import { prefixedAskLines } from '../app/ask-user.js'
 import { CURSOR_MARKER } from '../render-frame.js'
 import { getTheme } from '../../render/theme/index.js'
 import { rowMarker } from './selector-row.js'
@@ -62,7 +63,12 @@ export function buildAskBlocks(state: AskState, _columns: number): ViewBlock[] {
       const qq = state.questions[i]!
       const answerText = selectedAnswerText(state, i)
       if (!answerText) continue
-      result.push(line(plain(`  ${BULLET} ${qq.question}`)), line(colored(`    ${ARROW_RIGHT} ${answerText}`, 'green')))
+      for (const text of prefixedAskLines(qq.question, `  ${BULLET} `)) {
+        result.push(line(plain(text)))
+      }
+      for (const text of prefixedAskLines(answerText, `    ${ARROW_RIGHT} `)) {
+        result.push(line(colored(text, 'green')))
+      }
     }
     result.push(line(plain('')), line(dim('Ready to submit your answers?')), line(plain('')))
     const submitFocused = state.submitFocus === 0
@@ -80,7 +86,8 @@ export function buildAskBlocks(state: AskState, _columns: number): ViewBlock[] {
   }
 
   const q = state.questions[state.currentTab]!
-  result.push(line(bold(q.question)), line(plain('')))
+  for (const text of q.question.split('\n')) result.push(line(bold(text)))
+  result.push(line(plain('')))
   const ui = state.uiStates.get(state.currentTab) ?? { focusIndex: 0, inOtherMode: false, otherText: '', otherCursor: 0 }
   const answer = state.answers[state.currentTab]
   const otherSelected = answer !== undefined && answer.customText !== null

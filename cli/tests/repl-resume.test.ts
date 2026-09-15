@@ -12,6 +12,8 @@ import {
 } from '../src/term/app/resume.js'
 import { createSelectorState, selectorExpandItems, selectorReplaceItem, selectorType } from '../src/term/selector.js'
 import type { SessionMeta, SessionWithText } from '../src/native/index.js'
+import { enrichSessionRecognition, type SessionRecognition } from '../src/term/app/session-recognition.js'
+import type { TranscriptItem } from '../src/native/index.js'
 
 describe('repl resume helpers', () => {
   const sessions: SessionMeta[] = [
@@ -201,6 +203,48 @@ describe('repl resume helpers', () => {
     expect(lines.slice(2)).toEqual(['', '# Started with', '› only ask'])
   })
 
+  test('recognition pane leads with the latest result, latest request and original goal', () => {
+    const transcript: TranscriptItem[] = [
+      { type: 'user', text: 'Build a Hacker News summary task' },
+      { type: 'assistant', content: [{ type: 'text', text: 'Created the summary task.' }] },
+      { type: 'user', text: 'Send the result hourly' },
+      { type: 'assistant', content: [
+        { type: 'thinking', text: 'Implementation details must not be shown' },
+        { type: 'tool_call', id: 'x', name: 'write', input: { path: 'secret.txt' } },
+        { type: 'text', text: 'Updated the schedule to hourly and confirmed the destination.' },
+      ] },
+      { type: 'tool_result', tool_call_id: 'x', tool_name: 'write', content: 'wrote secret.txt', is_error: false },
+    ]
+    const session = enrichSessionRecognition(
+      text(sessions[0]!, { user_prompts: [], changed_paths: ['a.ts'] }),
+      transcript,
+    )
+    const joined = sessionPreviewLines(sessions[0]!, session).join('\n')
+    expect(joined.indexOf('# Latest assistant response')).toBeLessThan(joined.indexOf('# Latest request'))
+    expect(joined.indexOf('# Latest request')).toBeLessThan(joined.indexOf('# Original goal'))
+    expect(joined).toContain('Updated the schedule to hourly')
+    expect(joined).toContain('Send the result hourly')
+    expect(joined).toContain('Build a Hacker News summary task')
+    expect(joined).toContain('# Session')
+    expect(joined).toContain('a.ts')
+    expect(joined).not.toContain('Implementation details')
+    expect(joined).not.toContain('wrote secret.txt')
+    expect(joined).not.toContain('secret.txt')
+  })
+
+  test('empty conversation and long excerpts degrade without hiding the first request', () => {
+    const session = enrichSessionRecognition(text(sessions[0]!), [])
+    expect(sessionPreviewLines(sessions[0]!, session).join('\n')).toContain('No user requests or assistant responses')
+    const long = enrichSessionRecognition(text(sessions[0]!), [
+      { type: 'user', text: 'goal ' + 'x'.repeat(6000) },
+      { type: 'assistant', content: [{ type: 'text', text: 'answer ' + 'y'.repeat(6000) }] },
+    ])
+    const joined = sessionPreviewLines(sessions[0]!, long).join('\n')
+    expect(joined).toContain('Excerpt — resume session')
+    expect(joined).toContain('# Latest request')
+    expect(joined).toContain('goal ')
+  })
+
   test('formatSessionItems hides the source column when every row shares one source', () => {
     const same = sessions.map(session => ({ ...session, source: 'tui' }))
     const items = formatSessionItems(same, '/work')
@@ -229,8 +273,8 @@ describe('repl resume helpers', () => {
     expect(sessionPreviewLines(session)[1]).toBe('anthropic · 3 turns · just now')
   })
 
-  test('resume title shows the portable Ctrl+D delete shortcut', () => {
-    expect(RESUME_SELECTOR_TITLE).toBe('Resume session  (ctrl+r rename · ctrl+d delete twice)')
+  test('resume title stays free of implementation shortcuts', () => {
+    expect(RESUME_SELECTOR_TITLE).toBe('Resume session')
   })
 
   test('sanitizeSessionTitle hides compaction boilerplate titles', () => {

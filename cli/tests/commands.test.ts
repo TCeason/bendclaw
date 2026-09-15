@@ -40,6 +40,15 @@ describe('resolveCommand', () => {
     expect(result).toEqual({ kind: 'resolved', name: '/model', args: 'gpt-4o' })
   })
 
+  test('resolves /task command', () => {
+    expect(resolveCommand('/task')).toEqual({ kind: 'resolved', name: '/task', args: '' })
+    expect(resolveCommand('/task send a daily report')).toEqual({
+      kind: 'resolved',
+      name: '/task',
+      args: 'send a daily report',
+    })
+  })
+
   test('resolves /harden command', () => {
     const result = resolveCommand('/harden plan')
     expect(result).toEqual({ kind: 'resolved', name: '/harden', args: 'plan' })

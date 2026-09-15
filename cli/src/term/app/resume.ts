@@ -1,8 +1,9 @@
 import { padRight, relativeTime } from '../../render/format.js'
 import type { SessionMeta, SessionWithText } from '../../native/index.js'
 import { PREVIEW_SECTION_PREFIX, type SelectorItem } from '../selector.js'
+import { recognitionSections, type SessionRecognition } from './session-recognition.js'
 
-export const RESUME_SELECTOR_TITLE = 'Resume session  (ctrl+r rename · ctrl+d delete twice)'
+export const RESUME_SELECTOR_TITLE = 'Resume session'
 
 /**
  * Stem of the synthetic user message compaction injects ahead of a summary.
@@ -112,13 +113,25 @@ const PREVIEW_CHANGED_PATHS_SHOWN = 3
  */
 export function sessionPreviewLines(
   session: SessionMeta,
-  text?: SessionWithText,
+  text?: SessionRecognition,
   showCwd = false,
 ): string[] {
   const facts = [shortModel(session), `${session.turns || 0} turns`, sessionSpan(session)]
   if (showCwd) facts.push(shortenSessionCwd(session.cwd))
   const lines = [sanitizeSessionTitle(session.custom_title ?? session.title), facts.filter(Boolean).join(' · ')]
   if (!text) return lines
+  if (text.recognition) {
+    // Generated titles often repeat the first instruction. Keep the title
+    // compact so the first screen shows where this session actually left off.
+    const title = Array.from(lines[0] ?? '')
+    if (title.length > 100) lines[0] = `${title.slice(0, 100).join('')}…`
+    lines.push('', ...recognitionSections(text))
+    const paths = text.changed_paths ?? []
+    if (paths.length) lines.push('', '# Files referenced by edits', ...paths)
+    lines.push('', '# Session', `ID  ${session.session_id}`, `Source  ${session.source || 'unknown'}`,
+      `Workspace  ${shortenSessionCwd(session.cwd)}`)
+    return lines
+  }
 
   const prompts = text.user_prompts
   const first = text.first_prompt ?? prompts[0]
@@ -223,10 +236,11 @@ function formatSessionItem(
     id: s.session_id,
     renameTitle: s.custom_title ?? s.title ?? '',
     hints: [
-      { keys: ['up', 'down'], action: 'move' },
+      { keys: ['up', 'down'], action: 'select' },
+      { keys: 'tab', action: 'details' },
       { keys: 'enter', action: 'resume' },
-      { keys: 'ctrl+r', action: 'rename' },
-      { keys: 'ctrl+d', action: 'delete' },
+      { keys: 'e', action: 'rename' },
+      { keys: 'd', action: 'delete' },
       { keys: 'escape', action: 'close' },
     ],
     detail: `${source}${title} ${turns} ${time}${cwd}`,

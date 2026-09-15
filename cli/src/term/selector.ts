@@ -4,6 +4,8 @@ import type { Hint } from './design/key-hints.js'
 export const PREVIEW_SECTION_PREFIX = '# '
 
 export interface SelectorItem {
+  /** In-flight domain action; disables action hints without parsing display copy. */
+  pendingAction?: boolean
   renameTitle?: string
   label: string
   detail?: string
@@ -105,6 +107,8 @@ export interface SelectorRenameState {
 }
 
 export interface SelectorState {
+  /** Fixed-height scrollable details, independent of list navigation. */
+  previewPane?: { fraction: number; offset: number; focused?: boolean; confirmDeleteKey?: string }
   rename?: SelectorRenameState
   /** Opaque host-owned identity. Generic navigation preserves but never interprets it. */
   owner?: symbol

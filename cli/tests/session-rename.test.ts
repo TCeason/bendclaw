@@ -11,9 +11,9 @@ import { buildSelectorRegionLines } from '../src/term/viewmodel/selector.js'
 import type { SessionMeta } from '../src/native/contracts/results.js'
 
 const session: SessionMeta = { session_id: 's1', title: 'Original task', cwd: '/work', model: 'test', turns: 2, created_at: '', updated_at: '' }
-function window(): SelectorState { return createResumeWindow(formatSessionItems([session], '/work')) }
+function window(): SelectorState { return createResumeWindow(formatSessionItems([session], '/work'), undefined, true) }
 function editing(): SelectorState {
-  const action = handleSelectorControl(window(), { type: 'ctrl', key: 'r' })
+  const action = handleSelectorControl(window(), { type: 'char', char: 'e' })
   if (action.kind !== 'update') throw new Error('Expected editor')
   return action.state
 }
@@ -43,15 +43,15 @@ describe('session name editor', () => {
     expect(handleSelectorControl(save.state, { type: 'enter' }).kind).toBe('update')
   })
   test('cancel restores query, focus and rows; empty lists cannot rename', () => {
-    const original = selectorType(window(), 'Original')
-    const opened = handleSelectorControl(original, { type: 'ctrl', key: 'r' })
+    const original = { ...selectorType(window(), 'Original'), listFocused: true }
+    const opened = handleSelectorControl(original, { type: 'char', char: 'e' })
     if (opened.kind !== 'update') throw new Error('Expected editor')
     const cancelled = handleSelectorControl(opened.state, { type: 'escape' })
     if (cancelled.kind !== 'update') throw new Error('Expected cancel')
     expect(cancelled.state.query).toBe(original.query)
     expect(cancelled.state.focusIndex).toBe(original.focusIndex)
     expect(cancelled.state.rename).toBeUndefined()
-    expect(handleSelectorControl(createResumeWindow([]), { type: 'ctrl', key: 'r' })).toEqual({ kind: 'none' })
+    expect(handleSelectorControl(createResumeWindow([], undefined, true), { type: 'char', char: 'e' })).toEqual({ kind: 'none' })
   })
   test('name validation keeps input for correction and saving prevents duplicate input', () => {
     const value = { sessionId: 's1', text: ' ', cursor: 1 }
@@ -61,7 +61,8 @@ describe('session name editor', () => {
   })
   test('renders lowercase shortcuts and prefilled editable title', () => {
     const list = buildSelectorRegionLines(window(), 120).map(stripAnsi).join('\n')
-    expect(list).toContain('ctrl+r')
+    expect(list).toContain('e to rename')
+    expect(list).not.toContain('ctrl+r')
     expect(list).toContain('enter')
     expect(list).not.toMatch(/Ctrl\+|Enter|Esc/)
     const editor = buildSelectorRegionLines(editing(), 80).map(stripAnsi).join('\n')

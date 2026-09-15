@@ -19,6 +19,7 @@ export interface PromptSnapshot {
   gitBranch: string | null
   backgroundProcessCount: number
   backgroundStopHint?: string
+  backgroundStopPending?: boolean
 }
 
 /** Pure projection of a single host snapshot. No agent, terminal or clocks. */
@@ -51,6 +52,7 @@ export function promptFromSnapshot(input: PromptSnapshot): PromptVMInput {
     contextWindow: session.sessionTokens.contextWindow,
     backgroundProcessCount: input.backgroundProcessCount,
     backgroundStopHint: input.backgroundStopHint,
+    backgroundStopPending: input.backgroundStopPending,
     backgroundPanelDownAvailable: shouldDownOpenPanel({ editorEmpty: empty, running: input.backgroundProcessCount }),
     thinkingLevel: config?.thinkingLevel ?? '',
   }

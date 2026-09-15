@@ -90,13 +90,14 @@ import {
   type StreamMachineState,
 } from './app/stream.js'
 import { handleSlashCommand } from './app/commands.js'
-import { askStateToResponse } from './app/ask-user.js'
+import { askStateToResponse, prefixedAskLines } from './app/ask-user.js'
 import { RunOwnership } from './app/run-ownership.js'
 import {
   dispatchHostToolCall,
   HOST_TOOL_SPECS_JSON,
   type AskUserAnswer,
   type AskUserParams,
+  type HostToolExtension,
 } from './host-tools.js'
 import { extractPlanItems, type PlanModeItem } from './plan-mode.js'
 import { currentModelSpec, formatModelLabel, formatModelOptionLabel, hasPremiumModel, isCloudModel, modelOptions, modelSelectorItems, selectModelOption } from './app/provider.js'
@@ -120,7 +121,9 @@ import { getTextFromClipboard } from './input/clipboard_text.js'
 import { InputImageHistory } from './input/image-history.js'
 import { storeImage, formatImageSourceText } from './input/image_store.js'
 import type { ContentBlock } from '../native/index.js'
-import { tryStartServer, type ServerState } from './app/server.js'
+import { tryStartServer, registerDashboard, stopOwnedServer, type ServerState } from './app/server.js'
+import { BackgroundScheduler } from '../background/scheduler.js'
+import { inspectConsole } from '../channels/console-client.js'
 import {
   RESUME_SELECTOR_TITLE,
   COMPACT_SUMMARY_PREFIX,
@@ -140,6 +143,7 @@ import { modelShareEvents } from '../session/share-events.js'
 import { ShareSelector } from './app/share-selector.js'
 import { openWebLink } from './open-link.js'
 import { AuthWatcher } from './app/auth-watch.js'
+import { AuthIdentityTracker } from './app/auth-identity.js'
 import { RunInteraction, type RunInteractionInput } from './app/run-interaction.js'
 import { ManualCompaction } from './app/manual-compaction.js'
 import { busySubmissionAction } from './app/busy-submission.js'
@@ -170,6 +174,16 @@ import { ResourceScope } from './resource-scope.js'
 import { RenderWakeup } from './render-wakeup.js'
 import { errorText } from '../render/format.js'
 import { buildRunFooterLine } from '../render/run-footer.js'
+import { TaskSession } from '../task/session.js'
+import { ensureFeishuDelivery } from '../channels/feishu/setup.js'
+import { waitForSetup } from '../channels/setup-wait.js'
+import { TASK_RUNTIME_DEFAULT_MODEL } from '../task/types.js'
+import {
+  createTaskModelWindow,
+  refreshTaskModelWindow,
+  type TaskModelPickerRequest,
+  type TaskModelSelection,
+} from '../task/model-picker.js'
 import { TerminalTitle } from './title.js'
 import {
   formatLogPaths,
@@ -225,6 +239,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   // The composer paints its own caret, so the idle blink is ours to drive.
   const resources = new ResourceScope()
+  const backgroundJobs = new BackgroundScheduler()
+  resources.add(() => backgroundJobs.dispose())
   const backgroundCleanup = new ResourceScope()
   // Armed by buildFrame only while visible text or its lifecycle needs a wakeup.
   const adSlotWakeup = new RenderWakeup(() => renderer.requestRender())
@@ -276,7 +292,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let runTurnCount = 0
   const beginRun = (): number => runOwnership.begin()
   const ownsRun = (generation: number): boolean => runOwnership.owns(generation)
-  const revokeRun = (): void => runOwnership.revoke()
+  const revokeRun = (): void => {
+    runOwnership.revoke()
+    taskSession.cancelSetup()
+  }
   const manualCompaction = new ManualCompaction()
   let queuedCompactionSubmissions: QueuedCompactionSubmission[] = []
   let spinnerTimer: ReturnType<typeof setInterval> | null = null
@@ -285,6 +304,66 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const freezeTerminalTitle = terminalTitle.freeze.bind(terminalTitle)
   const unfreezeTerminalTitle = terminalTitle.unfreeze.bind(terminalTitle)
   let shareSelector: ShareSelector | null = null
+  const taskSession = new TaskSession({
+    dimensions: () => ({ columns: renderer.termCols, rows: renderer.termRows }),
+    envFile: opts.envFile,
+    ensureDelivery: async signal => {
+      const ask = (questions: AskQuestion[]) => presentAskQuestions(questions, 'working', true)
+      return ensureFeishuDelivery({
+        signal, ask,
+        consoleUrl: new URL('/feishu', serverState?.address ?? `http://127.0.0.1:${opts.serverPort ?? 8082}`).href,
+        envFile: () => configInfo?.envPath,
+        console: async () => {
+          await backgroundJobs.trigger('dashboard')
+          if (serverState) return serverState
+          // Discovery permits setup on another process, but never publishes
+          // that process as this CLI's dashboard.
+          const address = `http://127.0.0.1:${opts.serverPort ?? 8082}`
+          const snapshot = await inspectConsole(address)
+          return { address, envFile: snapshot.env_file_path }
+        },
+        wait: (message, check, signal) => {
+          const owner = Symbol('setup-wait')
+          return waitForSetup({
+            ask: questions => presentAskQuestions(questions, 'working', true, owner),
+            dismiss: () => {
+              if (overlay.kind !== 'ask-user' || overlay.state.owner !== owner) return
+              resolvePendingAsk()
+              overlay = { kind: 'none' }
+              unfreezeTerminalTitle()
+              renderer.requestRender()
+            },
+          }, message, check, signal)
+        },
+      })
+    },
+    configInfo: () => configInfo,
+    activeModelSpec: () => currentModelSpec(configInfo, agent.model),
+    activeModel: () => agent.model,
+    modelOptionLabel: formatModelOptionLabel,
+    isTaskOverlay: () =>
+      overlay.kind === 'selector' && overlay.state.owner === SELECTOR_OWNER.task,
+    taskOverlayState: () =>
+      overlay.kind === 'selector' && overlay.state.owner === SELECTOR_OWNER.task
+        ? overlay.state
+        : null,
+    showSelector: state => { overlay = { kind: 'selector', state } },
+    closeOverlay: () => { overlay = { kind: 'none' } },
+    requestRender: () => renderer.requestRender(),
+    notifyError: text => commitSystem('sys-task-err', chalk.red(`  ${text}`)),
+    collectAnswers: questions => presentAskQuestions(questions, 'idle'),
+    presentModelPicker: presentTaskModelPicker,
+    runTaskTurn: (userLine, prompt, extension) => {
+      commitLines(buildUserMessage(userLine))
+      runQuery(prompt, undefined, undefined, extension)
+    },
+    primeInput: text => {
+      clearAll()
+      editor = insertText(editor, text)
+    },
+    destroyed: () => destroyed,
+  })
+  const taskIdentity = new AuthIdentityTracker(() => taskSession.resetIdentity())
   const shareNotices = new ShareNotices((sid, notices) => agent.recordShareNotices(sid, notices))
   const replCommands: ReplCommandContext = {
     agent,
@@ -343,6 +422,39 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   // and await the user's answers here. Resolves with the collected answers, or
   // null when the user cancels/skips.
   let pendingAsk: ((answers: AskUserAnswer[] | null) => void) | null = null
+  let pendingTaskModel: ((selection: TaskModelSelection | null) => void) | null = null
+
+  function resolvePendingTaskModel(selection: TaskModelSelection | null = null) {
+    if (!pendingTaskModel) return
+    const resolve = pendingTaskModel
+    pendingTaskModel = null
+    sessionHook.state('working')
+    unfreezeTerminalTitle()
+    resolve(selection)
+  }
+
+  function presentTaskModelPicker(
+    request: TaskModelPickerRequest,
+  ): Promise<TaskModelSelection | null> {
+    resolvePendingTaskModel()
+    // Match /model: open immediately from the latest local config, then let a
+    // cloud sync refresh the catalog in place without blocking interaction.
+    refreshConfigInfo()
+    sessionHook.state('blocked')
+    overlay = {
+      kind: 'selector',
+      state: createTaskModelWindow(
+        configInfo,
+        agent.model,
+        request.preferredSpec,
+        request.preferredThinkingLevel,
+      ),
+    }
+    freezeTerminalTitle('?')
+    renderer.requestRender()
+    void syncCloudNow(true)
+    return new Promise(resolve => { pendingTaskModel = resolve })
+  }
 
   /** Resolve any awaiting ask/plan-review overlay as cancelled. Safe to call
    *  on every teardown path (interrupt, cancel, overlay close, re-present) so a
@@ -357,12 +469,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   function presentAskQuestions(
     questions: AskQuestion[],
     resumeState: 'working' | 'idle' = 'working',
+    transient = false,
+    owner?: symbol,
   ): Promise<AskUserAnswer[] | null> {
     // Only one ask overlay can be active at a time; resolve any prior one as
     // cancelled before opening the next.
     resolvePendingAsk()
     sessionHook.state('blocked')
-    overlay = { kind: 'ask-user', state: createAskState(questions) }
+    overlay = { kind: 'ask-user', state: { ...createAskState(questions), transient, owner } }
     freezeTerminalTitle('?')
     renderer.requestRender()
     return new Promise(resolve => {
@@ -528,7 +642,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   function resumeSelectorState(items: SelectorItem[], initialQuery?: string): SelectorState {
-    return createResumeWindow(items, initialQuery)
+    // An explicitly opened list owns `e`/`d`; the command preview below does not.
+    return createResumeWindow(items, initialQuery, true)
   }
 
   function currentResumeCommandWindowState(generation: number): SelectorState | null {
@@ -588,12 +703,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
     if (resumeCache.complete) {
       return {
-        ...createAppSelectorState('resume', RESUME_SELECTOR_TITLE, []),
+        ...createResumeWindow([]),
         emptyMessage: 'No sessions found',
       }
     }
     return {
-      ...createAppSelectorState('resume', RESUME_SELECTOR_TITLE, []),
+      ...createResumeWindow([]),
       emptyMessage: 'Loading sessions…',
     }
   }
@@ -904,15 +1019,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       trigger,
       sourceText,
       generation,
-      state: resumeSelectorStateFromCache(),
+      // The composer holds the text here, so typing stays search.
+      state: { ...resumeSelectorStateFromCache(), listFocused: false },
     }
     renderer.requestRender()
     scheduleResumeCommandLoad(generation)
   }
 
   function activateCommandWindow(event: KeyEvent): boolean {
-    if (event.type !== 'up' && event.type !== 'down'
-      && !(event.type === 'ctrl' && event.key === 'r' && commandWindowPreview?.kind === 'selector' && commandWindowPreview.trigger === 'resume')) return false
+    if (event.type !== 'up' && event.type !== 'down') return false
     if (!commandWindowPreview) return false
 
     const preview = commandWindowPreview
@@ -920,7 +1035,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (preview.kind === 'selector') {
       // Use the same navigation path as an open selector so the first arrow
       // both focuses the list and moves from the preview's highlighted row.
-      const action = handleSelectorControl(preview.state, event)
+      const action = handleSelectorControl(preview.state, event, renderer.termCols, renderer.termRows)
       if (action.kind !== 'update') return false
       overlay = { kind: 'selector', state: action.state }
     } else {
@@ -985,9 +1100,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   // Dashboard state
   let serverState: ServerState | null = null
-  try {
-    serverState = await tryStartServer(opts.serverPort, opts.envFile)
-  } catch { /* server start failed — continue without it */ }
 
   // Paste ref state
   const pastedChunks = new Map<number, string>()
@@ -1081,6 +1193,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
    * the reload actually moved.
    */
   function reloadAfterAuthChange(): boolean {
+    taskIdentity.refresh()
     const previousSpec = currentModelSpec(configInfo, appState.model)
     const hasModel = agent.reloadSelection()
     refreshConfigInfo()
@@ -1223,6 +1336,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       gitBranch: gitInfo.getBranch(),
       backgroundProcessCount: backgroundTerminals.runningCount(),
       backgroundStopHint,
+      backgroundStopPending: interaction.interruptPending,
     })
   }
 
@@ -1252,9 +1366,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (bannerCache.refresh(agent.cwd, agent.skillsDirs())) renderer.requestRender()
   }
   // Catch edits made by other sessions without filesystem work in buildFrame.
-  const bannerRefreshTimer = setInterval(refreshBannerData, 15_000)
-  resources.add(() => clearInterval(bannerRefreshTimer))
-  bannerRefreshTimer.unref?.()
+  resources.add(backgroundJobs.register({ name: 'banner', intervalMs: 15_000, immediate: false, run: refreshBannerData }))
 
   function currentBannerText(): string {
     return bannerCache.render({
@@ -2046,7 +2158,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     return { blocks, resolvedIds: new Set(resolved.map(r => r.id)) }
   }
 
-  async function runQuery(text: string, contentJson?: string, prebuiltStream?: QueryStream) {
+  async function runQuery(
+    text: string,
+    contentJson?: string,
+    prebuiltStream?: QueryStream,
+    hostToolExtension?: HostToolExtension,
+  ) {
     if (queryBlockedByCloudLogin()) return
     // Notification-only wakeups continue the same user task; don't hide its
     // newly completed background work when the engine reads the result.
@@ -2064,7 +2181,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     let completed = false
     try {
       const stream = prebuiltStream
-        ?? await agent.query(text, sessionId ?? undefined, planning ? 'planning_interactive' : 'interactive', contentJson, HOST_TOOL_SPECS_JSON)
+        ?? await agent.query(text, sessionId ?? undefined, planning ? 'planning_interactive' : 'interactive', contentJson, hostToolExtension?.specsJson ?? HOST_TOOL_SPECS_JSON)
       if (!ownsRun(generation)) {
         stream.abort()
         return
@@ -2086,7 +2203,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         if (!streamMachine) break
 
         if (isHostToolEvent(event)) {
-          const response = await dispatchHostToolCall(event.payload, collectAskUserAnswers)
+          const response = await dispatchHostToolCall(
+            event.payload,
+            collectAskUserAnswers,
+            hostToolExtension,
+          )
           if (ownsRun(generation)) await stream.respondHostTool(JSON.stringify(response))
           continue
         }
@@ -2379,6 +2500,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           && overlay.kind === 'selector'
           && isCommandSelector(overlay.state)
         if (overlay.kind === 'ask-user') resolvePendingAsk()
+        if (overlay.kind === 'selector' && overlay.state.owner === SELECTOR_OWNER.taskModel) {
+          resolvePendingTaskModel()
+        }
+        if (overlay.kind === 'selector' && overlay.state.owner === SELECTOR_OWNER.task) {
+          taskSession.invalidate()
+        }
         invalidateExplicitResumeSelector()
         overlay = { kind: 'none' }
         focusedCommandWindowGeneration = null
@@ -2440,10 +2567,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // and its rejected Promise must not later emit a second Interrupted/error
     // or clear a newer query that the user starts immediately afterward.
     revokeRun()
-    // If an ask/plan-review overlay is awaiting, resolve it as cancelled so the
-    // suspended host-tool dispatch in runQuery unblocks instead of hanging the
+    // If an interactive host-tool overlay is awaiting, resolve it as cancelled
+    // so the suspended dispatch in runQuery unblocks instead of hanging the
     // run loop forever.
     resolvePendingAsk()
+    resolvePendingTaskModel()
     const interruptedStream = streamRef
     streamRef = null
     interruptedStream?.abort()
@@ -3119,7 +3247,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       renderer.requestRender()
     }
 
-    if (name === '/compact') {
+    if (name === '/task') {
+      if (!args || args === 'list') {
+        taskSession.open()
+      } else {
+        taskSession.create(text.trim(), args)
+      }
+    } else if (name === '/compact') {
       await runManualCompaction(args)
     } else if (name === '/env') {
       await handleEnvCommand(replCommands, args)
@@ -3306,14 +3440,22 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     },
   }, CLOUD_SYNC_MS)
   resources.add(() => cloudSync.dispose())
-  const syncTimer = setInterval(() => {
-    void syncCloudNow()
-  }, CLOUD_SYNC_MS)
-  ;(syncTimer as unknown as { unref?: () => void }).unref?.()
-  resources.add(() => clearInterval(syncTimer))
-  const backgroundProcessTimer = setInterval(refreshBackgroundProcesses, 500)
-  ;(backgroundProcessTimer as unknown as { unref?: () => void }).unref?.()
-  resources.add(() => clearInterval(backgroundProcessTimer))
+  resources.add(backgroundJobs.register({ name: 'cloud-sync', intervalMs: CLOUD_SYNC_MS, initialDelayMs: 400, run: () => syncCloudNow() }))
+  resources.add(backgroundJobs.register({ name: 'processes', intervalMs: 500, immediate: false, run: refreshBackgroundProcesses }))
+  resources.add(backgroundJobs.register({ name: 'tasks', intervalMs: 10_000, immediate: false, run: () => taskSession.refreshIfVisible() }))
+  resources.add(registerDashboard(backgroundJobs, {
+    attempt: () => tryStartServer(opts.serverPort, opts.envFile),
+    stop: stopOwnedServer,
+    publish: state => {
+      const changed = serverState?.address !== state?.address
+      serverState = state
+      if (changed && !destroyed) {
+        refreshBannerData()
+        setTerminalTitle()
+        renderer.requestRender()
+      }
+    },
+  }))
 
   /** Adopt a cloud auth change made by another evot process. */
   function adoptExternalAuthChange(): void {
@@ -3385,19 +3527,21 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
-  // First pull as soon as the prompt is up, so ads/models aren't 30s stale.
-  const initialSyncTimer = setTimeout(() => { void syncCloudNow() }, 400)
-  initialSyncTimer.unref?.()
-  resources.add(() => clearTimeout(initialSyncTimer))
-
   function openModelSelector(): void {
     overlay = { kind: 'selector', state: createModelWindow(configInfo, agent.model, true) }
   }
 
-  /** Swap the open or previewed /model list in place after a catalog refresh.
-   *  Keeps the current query, focused row, and any adjusted effort tier so
-   *  neither typing nor a ←/→ adjustment is yanked around by a background sync. */
+  /** Swap an open model catalog in place after a cloud refresh. Both the live
+   *  /model picker and the Task-scoped picker keep their query, focused row,
+   *  and adjusted effort; Task ownership remains separate from the session. */
   function refreshOpenModelSelector(): boolean {
+    if (overlay.kind === 'selector' && overlay.state.owner === SELECTOR_OWNER.taskModel) {
+      overlay = {
+        kind: 'selector',
+        state: refreshTaskModelWindow(overlay.state, configInfo, agent.model),
+      }
+      return true
+    }
     const models = modelOptions(configInfo, agent.model)
     const activeSpec = currentModelSpec(configInfo, agent.model)
     const rebuilt = () => modelSelectorItems(models, activeSpec, configInfo?.thinkingLevel)
@@ -3706,9 +3850,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     await controller.load()
   }
 
+
   function handleSelectorKey(event: KeyEvent) {
     if (overlay.kind !== 'selector') return
-    const action = handleSelectorControl(overlay.state, event)
+    if (overlay.state.owner === SELECTOR_OWNER.task) {
+      void taskSession.handleKey(event)
+      return
+    }
+    const action = handleSelectorControl(overlay.state, event, renderer.termCols, renderer.termRows)
 
     switch (action.kind) {
       case 'update':
@@ -3743,6 +3892,24 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         resumeSession({ session_id: action.sessionId } as SessionMeta).then(() => renderer.requestRender())
         renderer.requestRender()
         return
+      case 'select-task-model': {
+        const selected = action.spec === TASK_RUNTIME_DEFAULT_MODEL
+          ? undefined
+          : selectModelOption(configInfo, action.spec)
+        overlay = { kind: 'none' }
+        resolvePendingTaskModel({
+          spec: action.spec,
+          ...(action.thinkingLevel !== undefined ? { thinkingLevel: action.thinkingLevel } : {}),
+          ...(selected ? {
+            model: selected.model,
+            label: formatModelOptionLabel(selected),
+            group: selected.group_label ?? selected.provider,
+            defaultThinkingLevel: selected.thinking_level ?? '',
+          } : {}),
+        })
+        renderer.requestRender()
+        return
+      }
       case 'select-model': {
         overlay = { kind: 'none' }
         focusedCommandWindowGeneration = null
@@ -3850,6 +4017,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const eventType = event.type === 'ctrl' && (event.key === 'n' || event.key === 'p')
       ? `ctrl+${event.key}`
       : event.type
+    const transient = overlay.state.transient === true
     const result = handleAskKeyEvent(overlay.state, eventType, extra)
 
     switch (result.action) {
@@ -3859,7 +4027,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         resolvePendingAsk()
         overlay = { kind: 'none' }
         unfreezeTerminalTitle()
-        commitSystem('sys-ask-cancel', '  ⏺ Cancelled.')
+        if (!transient) commitSystem('sys-ask-cancel', '  ⏺ Cancelled.')
         renderer.requestRender()
         return
       case 'submit':
@@ -3871,19 +4039,19 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           }
           overlay = { kind: 'none' }
           unfreezeTerminalTitle()
-          const answerLines: OutputLine[] = response.flatMap((r, i) => ([
-            {
-              id: `sys-ask-${i}-question`,
+          const answerLines: OutputLine[] = response.flatMap((r, i) => [
+            ...prefixedAskLines(r.question, '  • ').map((text, row) => ({
+              id: `sys-ask-${i}-question-${row}`,
               kind: 'system' as const,
-              text: `  • ${r.question}`,
-            },
-            {
-              id: `sys-ask-${i}-answer`,
+              text,
+            })),
+            ...prefixedAskLines(r.answer, '    → ').map((text, row) => ({
+              id: `sys-ask-${i}-answer-${row}`,
               kind: 'system' as const,
-              text: `    → ${r.answer}`,
-            },
-          ]))
-          commitLines(answerLines)
+              text,
+            })),
+          ])
+          if (!transient) commitLines(answerLines)
         }
         renderer.requestRender()
         return
@@ -3958,7 +4126,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   function cleanup() {
     if (destroyed) return
     destroyed = true
+    taskSession.dispose()
     queuedCompactionSubmissions = []
+    resolvePendingTaskModel()
     unfreezeTerminalTitle()
     manualCompaction.abort()
     streamRef?.abort()

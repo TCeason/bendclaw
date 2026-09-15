@@ -32,6 +32,8 @@ export function formatChord(keys: string | string[]): string {
 }
 
 export interface Hint {
+  /** Explicit armed confirmation, never inferred from action wording. */
+  confirmationPending?: boolean
   /** The key, or interchangeable keys, that trigger the action. */
   keys: string | string[]
   /** Verb phrase completing "<key> to …". */

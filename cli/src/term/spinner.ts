@@ -7,6 +7,7 @@ import { providerFailurePresentation } from '../provider/error-presentation.js'
 import { formatCacheHitPercent } from '../render/cache.js'
 import { resolveRunInteraction, type RunInteractionState } from './app/run-interaction.js'
 import { runStatusPresentation } from './viewmodel/run-status.js'
+import { confirmationHintAnsi } from './viewmodel/confirmation-hint.js'
 
 function getSpinnerChars(): string[] {
   if (process.env.TERM === 'xterm-ghostty') {
@@ -338,7 +339,7 @@ export function formatSpinnerLine(
     ? `waiting ${humanDuration(Math.max(0, now - state.recoveryStartedAt))}` : humanDuration(elapsed)
   label = presentation.label ?? label
   const tokenSuffix = presentation.showUsage ? formatSpinnerTokenSuffix(state, now, stats) : ''
-  const interruptHint = options.hideInteractionHint ? '' : presentation.hint
+  const interruptHint = options.hideInteractionHint ? '' : confirmationHintAnsi(presentation.hint, presentation.confirmationPending)
 
   if (slow) {
     return `\x1b[31m${char}\x1b[0m \x1b[31m${label}\x1b[0m\x1b[2m (${status}${tokenSuffix})${interruptHint}\x1b[0m`

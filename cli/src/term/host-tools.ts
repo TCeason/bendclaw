@@ -1,4 +1,9 @@
-/** Host-owned tool wiring for the interactive REPL. */
+/** Host-owned tool wiring for the interactive REPL.
+ *
+ *  This module knows one tool: `ask_user`. Feature-specific host tools register
+ *  themselves as a `HostToolExtension`, so a feature depends on the dispatcher
+ *  and never the other way round.
+ */
 
 export interface AskUserOption {
   label: string
@@ -33,7 +38,14 @@ export interface HostToolResponse {
   is_error: boolean
 }
 
-const ASK_USER_SPEC = {
+/** A feature's host tools: what to advertise, what to claim, how to run it. */
+export interface HostToolExtension {
+  specsJson: string
+  handles: (toolName: string) => boolean
+  dispatch: (call: HostToolCall) => Promise<HostToolResponse>
+}
+
+export const ASK_USER_SPEC = {
   name: 'ask_user',
   label: 'Ask User',
   description: `Ask the user one or more questions when input is required to proceed. Use this tool to clarify requirements, gather preferences, or confirm decisions. Batch related questions into one call.
@@ -56,7 +68,7 @@ Users can always provide a custom answer. If you recommend an option, put it fir
           additionalProperties: false,
           properties: {
             header: { type: 'string', description: 'Short tab label for this question.' },
-            question: { type: 'string', description: "Clear, specific question ending with '?'" },
+            question: { type: 'string', description: 'Clear, specific question ending with ?' },
             options: {
               type: 'array',
               minItems: 2,
@@ -89,7 +101,7 @@ function isAskUserName(name: string): boolean {
   return lower === ASK_USER_SPEC.name || lower === 'askuser'
 }
 
-function errorResponse(call: HostToolCall, text: string): HostToolResponse {
+export function errorResponse(call: HostToolCall, text: string): HostToolResponse {
   return {
     tool_call_id: call.tool_call_id,
     content: [{ type: 'text', text }],
@@ -97,25 +109,29 @@ function errorResponse(call: HostToolCall, text: string): HostToolResponse {
   }
 }
 
+export function textResponse(call: HostToolCall, text: string): HostToolResponse {
+  return {
+    tool_call_id: call.tool_call_id,
+    content: [{ type: 'text', text }],
+    is_error: false,
+  }
+}
+
 export async function dispatchHostToolCall(
   call: HostToolCall,
   collectAnswers: (params: AskUserParams) => Promise<AskUserAnswer[] | null>,
+  extension?: HostToolExtension,
 ): Promise<HostToolResponse> {
+  if (extension?.handles(call.tool_name)) return extension.dispatch(call)
   if (!isAskUserName(call.tool_name)) {
     return errorResponse(call, `Unknown host tool: ${call.tool_name}`)
   }
-
   try {
     const answers = await collectAnswers(call.arguments as unknown as AskUserParams)
     if (!answers) return errorResponse(call, 'User cancelled the question.')
-
     const lines = ['User answered your questions:']
     for (const answer of answers) lines.push(`- ${answer.question} → ${answer.answer}`)
-    return {
-      tool_call_id: call.tool_call_id,
-      content: [{ type: 'text', text: lines.join('\n') }],
-      is_error: false,
-    }
+    return textResponse(call, lines.join('\n'))
   } catch (error) {
     return errorResponse(call, error instanceof Error ? error.message : String(error))
   }

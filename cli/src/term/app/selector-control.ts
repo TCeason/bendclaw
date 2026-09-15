@@ -1,5 +1,6 @@
 import { editSessionName } from './session-rename-editor.js'
 import type { KeyEvent } from '../input.js'
+import { handleSplitPaneKey, resetPaneForSelection } from '../split-pane.js'
 import {
   selectorAdjustEffort,
   selectorBackspace,
@@ -25,13 +26,14 @@ export type SelectorControlAction =
   /** `thinkingLevel` is present only when the row carried an effort ladder, so
    *  a model with no selectable reasoning never names a tier. */
   | { kind: 'select-model'; spec: string; thinkingLevel?: string }
+  | { kind: 'select-task-model'; spec: string; thinkingLevel?: string }
   | { kind: 'delete-session'; sessionId: string; label: string; state: SelectorState }
   | { kind: 'queue-edit'; entry: ManagedQueuedPrompt }
   | { kind: 'queue-remove'; entry: ManagedQueuedPrompt; state: SelectorState }
   | { kind: 'rename-session'; sessionId: string; title: string; state: SelectorState }
   | { kind: 'none' }
 
-const RESUME_DELETE_CONFIRM = 'Press ctrl+d / delete again to delete'
+const RESUME_DELETE_CONFIRM = 'd confirm delete · esc cancel'
 
 /** Drop an armed delete so a stray confirming keypress cannot delete a session. */
 function disarmDelete(state: SelectorState): SelectorState {
@@ -40,7 +42,12 @@ function disarmDelete(state: SelectorState): SelectorState {
   return { ...state, pendingDeleteId: undefined, subtitle }
 }
 
-export function handleSelectorControl(state: SelectorState, event: KeyEvent): SelectorControlAction {
+export function handleSelectorControl(state: SelectorState, event: KeyEvent, columns = 80, rows = 24): SelectorControlAction {
+  const action = handleControl(state, event, columns, rows)
+  return action.kind === 'update' ? { ...action, state: resetPaneForSelection(state, action.state) } : action
+}
+
+function handleControl(state: SelectorState, event: KeyEvent, columns: number, rows: number): SelectorControlAction {
   if (state.owner === SELECTOR_OWNER.resume && state.rename) {
     const edit = editSessionName(state.rename, event)
     if (edit.kind === 'cancel') return { kind: 'update', state: { ...state, rename: undefined } }
@@ -49,7 +56,13 @@ export function handleSelectorControl(state: SelectorState, event: KeyEvent): Se
       ? { kind: 'rename-session', sessionId: edit.value.sessionId, title: edit.title, state: next }
       : { kind: 'update', state: next }
   }
-  if (event.type === 'ctrl' && event.key === 'r' && state.owner === SELECTOR_OWNER.resume) {
+  const paneAction = handleSplitPaneKey(state, event, columns, rows)
+  if (paneAction) return paneAction
+  const resumeListFocused = state.owner === SELECTOR_OWNER.resume && state.listFocused === true
+  if (resumeListFocused && event.type === 'char' && event.char === '/') {
+    return { kind: 'update', state: { ...disarmDelete(state), listFocused: false } }
+  }
+  if (resumeListFocused && event.type === 'char' && event.char === 'e') {
     const item = selectorSelect(state)
     if (!item?.id || item.header || item.focusable === false) return { kind: 'none' }
     const text = item.renameTitle ?? ''
@@ -76,11 +89,15 @@ export function handleSelectorControl(state: SelectorState, event: KeyEvent): Se
       return next === state ? { kind: 'none' } : { kind: 'update', state: next }
     }
     case 'char':
+      if (resumeListFocused && event.char === 'd') return deleteAction(state)
       // Lists that reserve bare letters for their own gestures never build a
       // filter query: doing so would silently drop rows with no filter line on
       // screen to explain why.
       if (state.noFilter || state.owner === SELECTOR_OWNER.queue) return { kind: 'none' }
       return { kind: 'update', state: selectorType(disarmDelete(state), event.char) }
+    case 'paste':
+      if (state.owner !== SELECTOR_OWNER.resume || state.noFilter) return { kind: 'none' }
+      return { kind: 'update', state: selectorType(disarmDelete(state), event.text.replace(/[\r\n]+/g, ' ')) }
     case 'backspace':
       if (state.noFilter) return { kind: 'none' }
       return { kind: 'update', state: selectorBackspace(disarmDelete(state)) }
@@ -105,6 +122,7 @@ function selectAction(state: SelectorState): SelectorControlAction {
   // Only explicitly owned actionable lists can dispatch business operations.
   // Skill/background/unknown lists must never fall through to model selection.
   if (state.owner !== SELECTOR_OWNER.model
+    && state.owner !== SELECTOR_OWNER.taskModel
     && state.owner !== SELECTOR_OWNER.resume
     && state.owner !== SELECTOR_OWNER.shares
     && state.owner !== SELECTOR_OWNER.queue) return { kind: 'none' }
@@ -123,7 +141,7 @@ function selectAction(state: SelectorState): SelectorControlAction {
 
   const level = selectorEffortLevel(selected)
   return {
-    kind: 'select-model',
+    kind: state.owner === SELECTOR_OWNER.taskModel ? 'select-task-model' : 'select-model',
     spec: selected.id ?? selected.label,
     ...(level !== undefined ? { thinkingLevel: level } : {}),
   }
