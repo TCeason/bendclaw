@@ -207,6 +207,7 @@ export class TaskSession {
     }
     const generation = this.#generation
     const identity = this.#identityGeneration
+    let queued = false
     this.#pending.set(id, kind === 'delete' ? 'Deleting…' : kind === 'toggle' ? 'Updating…' : 'Starting…')
     // Invalidate any list snapshot or detail started before this mutation.
     this.#revision++
@@ -224,7 +225,10 @@ export class TaskSession {
         if (!(await this.#confirmRun(task))) return
         if (this.#disposed || this.#host.destroyed() || generation !== this.#generation) return
         await this.#api.run(task.id)
+        // A run lives only on the server; refetch so the row turns Queued
+        // instead of sitting on the stale last run until the next poll.
         this.#loadedAt = 0
+        queued = true
       } else {
         await this.#api.delete(task.id)
         if (identity !== this.#identityGeneration) return
@@ -239,13 +243,21 @@ export class TaskSession {
       if (this.#detail?.id === id) this.#detail = undefined
     } catch (error) {
       this.#loadedAt = 0
+      const text = message(error)
       if (identity === this.#identityGeneration && !this.#disposed && !this.#host.destroyed()) {
-        this.#host.notifyError(`Task operation failed: ${message(error)}. Check task status before retrying.`)
+        // The server allows one active run per task; pressing run while it is
+        // queued or in flight is not a failure, it is just already committed.
+        this.#host.notifyError(
+          kind === 'run' && /busy|active run/i.test(text)
+            ? `“${task.name}” already has a run in flight — wait for it to finish.`
+            : `Task operation failed: ${text}. Check task status before retrying.`,
+        )
       }
     } finally {
       if (identity !== this.#identityGeneration) return
       this.#revision++
       this.#pending.delete(id)
+      if (queued) void this.#refresh()
       // Update any currently visible list from cache, but only the original
       // run confirmation may restore its temporarily hidden window.
       this.#paint(nextFocus, kind === 'run' && generation === this.#generation)

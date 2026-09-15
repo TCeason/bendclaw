@@ -105,6 +105,22 @@ describe('task window', () => {
     expect(preview.some(line => line.includes('Delivery failed'))).toBe(true)
   })
 
+  test('a queued run shows its age, and an unclaimed one names the missing executor', () => {
+    const stale: TaskRunSummary = {
+      id: 'run-pending', status: 'pending', source: 'manual', delivery_status: 'not_requested',
+      scheduled_for: now - 180_000, updated_at: now - 180_000,
+    }
+    const queued = { ...task, last_run: stale, recent_runs: [stale] }
+    const state = createTaskWindow({ ...response, tasks: [queued] })
+    expect(state.items[0]?.detail).toContain('Queued 3m')
+    const preview = state.items[0]?.preview ?? []
+    expect(preview.some(line => line.includes('Queued') && line.includes('awaiting an executor'))).toBe(true)
+    const fresh: TaskRunSummary = { ...stale, scheduled_for: now - 10_000, updated_at: now - 10_000 }
+    const freshState = createTaskWindow({ ...response, tasks: [{ ...task, last_run: fresh, recent_runs: [fresh] }] })
+    expect(freshState.items[0]?.detail).toContain('Queued')
+    expect((freshState.items[0]?.preview ?? []).some(line => line.includes('awaiting an executor'))).toBe(false)
+  })
+
   test('cold tasks show zero total and successful runs', () => {
     const cold: ScheduledTask = {
       ...task,

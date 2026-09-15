@@ -24,7 +24,7 @@ const list = (stale = false): TaskListResponse => ({ tasks: [task('a'), task('b'
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve() }
 const d = { type: 'char', char: 'd' } as const
 
-function harness(api: Partial<TaskSessionApi>) {
+function harness(api: Partial<TaskSessionApi>, hostOverrides: Partial<TaskSessionHost> = {}) {
   let overlay: SelectorState | null = null
   const errors: string[] = []
   const host: TaskSessionHost = {
@@ -35,6 +35,7 @@ function harness(api: Partial<TaskSessionApi>) {
     requestRender: () => {}, notifyError: error => { errors.push(error) },
     collectAnswers: async () => null, presentModelPicker: async () => null,
     runTaskTurn: () => {}, primeInput: () => {}, destroyed: () => false,
+    ...hostOverrides,
   }
   const session = new TaskSession(host, {
     list: async () => list(), get: async id => ({ ...task(id), runs: [] }),
@@ -132,6 +133,20 @@ test('deleting while navigating does not steal focus, and completion cannot reop
   expect(h.view()).toBeNull()
   h.session.open()
   expect(h.view()?.items.map(row => row.id)).toEqual(['b'])
+  h.session.dispose()
+})
+
+test('run now while a run is in flight reports queued, not a failure', async () => {
+  const h = harness(
+    { run: async () => { throw new Error('/v1/tasks/x/run: task already has an active run') } },
+    { collectAnswers: async questions => questions.map(q => ({ header: q.header, question: q.question, answer: 'Run now' })) },
+  )
+  h.session.open()
+  await flush()
+  await h.session.handleKey({ type: 'char', char: 'r' })
+  await flush()
+  expect(h.errors.some(e => e.includes('already has a run in flight'))).toBe(true)
+  expect(h.errors.some(e => e.includes('Task operation failed'))).toBe(false)
   h.session.dispose()
 })
 

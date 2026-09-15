@@ -63,7 +63,7 @@ function status(run: TaskRunSummary | null | undefined): string {
     case 'needs_attention': return 'Needs attention'
     case 'running':
     case 'claimed': return 'Running'
-    case 'pending': return 'Waiting'
+    case 'pending': return 'Queued'
     case 'unknown': return 'Unknown'
     case 'expired': return 'Expired'
     case 'cancelled': return 'Cancelled'
@@ -78,12 +78,20 @@ function statusIcon(run: TaskRunSummary): string {
   return '✗'
 }
 
+/** Minutes a run has occupied its current state, when that is worth saying. */
+function stateAge(run: TaskRunSummary): string {
+  const since = run.updated_at || run.scheduled_for
+  if (!since) return ''
+  const minutes = Math.floor((Date.now() - since) / 60_000)
+  return minutes >= 1 ? ` ${minutes}m` : ''
+}
+
 function taskState(task: ScheduledTask): string {
   if (!task.enabled) return 'Paused'
   const latest = task.last_run
   if (!latest) return 'Ready'
-  if (latest.status === 'running' || latest.status === 'claimed') return 'Running'
-  if (latest.status === 'pending') return 'Waiting'
+  if (latest.status === 'running' || latest.status === 'claimed') return `Running${stateAge(latest)}`
+  if (latest.status === 'pending') return `Queued${stateAge(latest)}`
   if (latest.status === 'failed' || latest.status === 'needs_attention') return 'Attention'
   return 'On'
 }
@@ -103,6 +111,11 @@ function recentRun(run: TaskRunSummary): string {
   const at = run.updated_at || run.scheduled_for
   const details = [
     run.source === 'manual' ? 'manual' : '',
+    // Dispatchers poll every few seconds, so a run still queued a minute later
+    // has no live owner: name that instead of looking merely busy.
+    run.status === 'pending' && run.scheduled_for && Date.now() - run.scheduled_for > 60_000
+      ? 'awaiting an executor'
+      : '',
     run.delivery_status === 'sent'
       ? 'sent'
       : run.delivery_status === 'failed'
