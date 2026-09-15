@@ -1,7 +1,4 @@
-import { startServerBackground } from '../../native/index.js'
 import { inspectConsole } from '../../channels/console-client.js'
-// @ts-ignore — generated native bindings
-import { stopServerBackground } from '../../native/binding.js'
 import type { BackgroundScheduler } from '../../background/scheduler.js'
 
 export interface ServerState {
@@ -16,6 +13,7 @@ let activePort: number | null = null
 let ownedSince: number | null = null
 
 export async function tryStartServer(port?: number, envFile?: string): Promise<ServerState | null> {
+  const { startServerBackground } = await import('../../native/index.js')
   const endpoint = await startServerBackground(port, undefined, envFile)
   if (endpoint === null) {
     activePort = null
@@ -67,6 +65,8 @@ export function registerDashboard(scheduler: BackgroundScheduler, host: Dashboar
 export async function stopOwnedServer(): Promise<void> {
   activePort = null
   ownedSince = null
+  // @ts-ignore — generated native bindings
+  const { stopServerBackground } = await import('../../native/binding.js')
   await stopServerBackground()
 }
 

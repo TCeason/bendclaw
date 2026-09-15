@@ -16,7 +16,6 @@ import {
   type HostToolExtension,
   type HostToolResponse,
 } from '../term/host-tools.js'
-import { createTask, updateTask } from './client.js'
 import {
   applySelection,
   pickerRequest,
@@ -417,6 +416,7 @@ async function create(
   idempotencyKey: string,
   defaults: TaskModelDefaults,
 ): Promise<string> {
+  const { createTask } = await import('./client.js')
   const created = await createTask(
     { ...patch, idempotency_key: idempotencyKey },
     defaults.env_file,
@@ -430,6 +430,7 @@ async function update(
   changes: string[],
   defaults: TaskModelDefaults,
 ): Promise<string> {
+  const { updateTask } = await import('./client.js')
   const { task_id, ...body } = patch
   const updated = await updateTask(String(task_id), body, defaults.env_file)
   return changes.length > 0

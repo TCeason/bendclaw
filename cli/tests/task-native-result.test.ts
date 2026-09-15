@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { decodeTaskNativeResult } from '../src/task/client.js'
+import { decodeTaskNativeResult } from '../src/task/native-result.js'
 
 describe('Task native result decoding', () => {
   test('decodes valid JSON results', () => {

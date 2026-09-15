@@ -1,3 +1,8 @@
+/** Native Task RPC adapter: the task operations cross the boundary as JSON
+ *  strings and are decoded by `native-result.ts`.
+ *
+ *  Importing this module loads the native addon, so host modules that only
+ *  need Task logic must not import it at module scope. */
 import {
   taskCreate as nativeCreate,
   taskDelete as nativeDelete,
@@ -14,27 +19,7 @@ import type {
   TaskListResponse,
   TaskRunSummary,
 } from './types.js'
-
-export function decodeTaskNativeResult<T>(raw: unknown, operation: string): T {
-  if (raw instanceof Error) throw raw
-  if (typeof raw !== 'string') {
-    const message = raw && typeof raw === 'object' && 'message' in raw
-      ? String((raw as { message: unknown }).message)
-      : ''
-    throw new Error(message || `${operation}: invalid native result`)
-  }
-  try {
-    return JSON.parse(raw) as T
-  } catch (error) {
-    const text = raw.trim()
-    if (/^(?:Error|NapiError|GenericFailure)\b/i.test(text)) throw new Error(text)
-    throw new Error(`${operation}: invalid native result`, { cause: error })
-  }
-}
-
-async function nativeJson<T>(operation: string, result: Promise<unknown>): Promise<T> {
-  return decodeTaskNativeResult<T>(await result, operation)
-}
+import { nativeJson } from './native-result.js'
 
 export async function taskDeliveryDefaults(envFile?: string): Promise<TaskDeliveryDefaults> {
   return nativeJson('Resolve task delivery', nativeDeliveryDefaults(envFile ?? null))

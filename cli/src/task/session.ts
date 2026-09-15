@@ -9,7 +9,9 @@ import type { ConfigInfo, ModelOption } from '../native/contracts/config-info.js
 import { selectorFocusOn, type SelectorState } from '../term/selector.js'
 import type { KeyEvent } from '../term/input.js'
 import type { AskUserAnswer, AskUserQuestion, HostToolExtension } from '../term/host-tools.js'
-import { deleteTask, getTask, listTasks, runTask, taskDeliveryDefaults, updateTask } from './client.js'
+/** Signatures of the real RPCs. Type-only, so importing this module still
+ *  loads no native addon — the calls below resolve it on first use. */
+import type { deleteTask, getTask, listTasks, runTask, updateTask } from './client.js'
 import { handleTaskKey } from './control.js'
 import { createTaskExtension } from './host-tool.js'
 import type { TaskModelDefaults, TaskModelPickerRequest, TaskModelSelection } from './model-picker.js'
@@ -30,7 +32,11 @@ export interface TaskSessionApi {
 }
 
 const taskApi: TaskSessionApi = {
-  list: listTasks, get: getTask, delete: deleteTask, update: updateTask, run: runTask,
+  list: async () => (await import('./client.js')).listTasks(),
+  get: async id => (await import('./client.js')).getTask(id),
+  delete: async id => (await import('./client.js')).deleteTask(id),
+  update: async (id, input, envFile) => (await import('./client.js')).updateTask(id, input, envFile),
+  run: async id => (await import('./client.js')).runTask(id),
 }
 
 export interface TaskSessionHost {
@@ -349,6 +355,7 @@ export class TaskSession {
   async #modelDefaults(): Promise<TaskModelDefaults> {
     const config = this.#host.configInfo()
     const activeSpec = this.#host.activeModelSpec()
+    const { taskDeliveryDefaults } = await import('./client.js')
     const delivery = await taskDeliveryDefaults(this.#host.envFile)
     return {
       model_spec: activeSpec,
