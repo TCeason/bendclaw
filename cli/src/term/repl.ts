@@ -302,7 +302,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const terminalTitle = new TerminalTitle(agent.cwd, () => serverState?.port ?? null)
   const setTerminalTitle = terminalTitle.set.bind(terminalTitle)
   const freezeTerminalTitle = terminalTitle.freeze.bind(terminalTitle)
-  const unfreezeTerminalTitle = terminalTitle.unfreeze.bind(terminalTitle)
+  // Releasing a '?' freeze must also repaint — unfreeze() only clears the
+  // flag, so the glyph would linger on the tab until the next title write.
+  // An in-flight run repaints its own frames; otherwise restore the idle
+  // marker the same way overlays like /sessions leave it.
+  const unfreezeTerminalTitle = () => {
+    terminalTitle.unfreeze()
+    if (!isLoading) setTerminalTitle(backgroundWaitSince !== null ? '◌ bg' : '✳')
+  }
   let shareSelector: ShareSelector | null = null
   const taskSession = new TaskSession({
     dimensions: () => ({ columns: renderer.termCols, rows: renderer.termRows }),
