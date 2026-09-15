@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import stripAnsi from 'strip-ansi'
 import { providerFailurePresentation } from '../src/provider/error-presentation.js'
+import { buildLlmCard } from '../src/render/output.js'
 import { createSpinnerState, formatSpinnerLine, setLongWait, setRetryWait } from '../src/term/spinner.js'
 
 test('provider failure vocabulary is reusable without terminal-specific output', () => {
@@ -8,7 +9,7 @@ test('provider failure vocabulary is reusable without terminal-specific output',
     ['Network error: tls handshake eof https://private.invalid/key', 'Connection interrupted'],
     ['request timed out', 'Request timed out'],
     ['DNS lookup failed', 'Unable to resolve service address'],
-    ['HTTP 529 overloaded', 'Service busy'], ['HTTP 429', 'Rate limited'],
+    ['HTTP 529 overloaded', 'Service temporarily overloaded. Please retry.'], ['HTTP 429', 'Rate limited'],
     ['invalid API key', 'Authentication failed'], ['insufficient_quota', 'Quota unavailable'],
   ]) {
     const copy = providerFailurePresentation({ error })
@@ -16,7 +17,7 @@ test('provider failure vocabulary is reusable without terminal-specific output',
     expect(copy.label).not.toContain('https:')
     expect(copy.label).not.toContain('\x1b')
   }
-  expect(providerFailurePresentation({ kind: 'busy', error: 'tls' }).label).toBe('Service busy')
+  expect(providerFailurePresentation({ kind: 'busy', error: 'tls' }).label).toBe('Service temporarily unavailable.')
 })
 
 test('input validation numbers are not mistaken for HTTP status codes', () => {
@@ -29,7 +30,7 @@ test('input validation numbers are not mistaken for HTTP status codes', () => {
   for (const detail of ['minimum of 512 pixels', 'image width 503', 'max 429 tokens', 'size 401 bytes']) {
     expect(providerFailurePresentation({ error: detail }).kind).toBe('unknown')
   }
-  for (const message of ['HTTP 503 unavailable', 'HTTP/1.1 502 Bad Gateway', 'status=504', 'status_code: 500', '503 overloaded']) {
+  for (const message of ['HTTP 503 unavailable', 'HTTP/1.1 502 Bad Gateway', 'status=504', 'status_code: 500']) {
     expect(providerFailurePresentation({ error: message }).kind).toBe('busy')
   }
   expect(providerFailurePresentation({ error: 'HTTP 400: connection parameter invalid' }).kind).toBe('invalid-request')
@@ -80,6 +81,35 @@ test('proxy configuration faults do not read as an outage', () => {
   // Genuine upstream failures keep the busy vocabulary and its retry path.
   for (const message of ['HTTP 503: upstream temporarily unavailable', 'HTTP 503: api_error: Internal server error']) {
     expect(providerFailurePresentation({ error: message }).kind).toBe('busy')
+  }
+})
+
+test('standard overload errors have fixed copy without provider details', () => {
+  for (const error of [
+    'Overloaded: HTTP 503: overloaded_error: PRIVATE_BACKEND is cooling down',
+    'HTTP 503: {"error":{"type":"server_error","code":"overloaded_error","message":"PRIVATE_BACKEND"}}',
+    'overloaded_error: PRIVATE_BACKEND',
+    'HTTP 529',
+  ]) {
+    const copy = providerFailurePresentation({ error })
+    expect(copy.kind).toBe('overloaded')
+    expect(copy.label).toBe('Service temporarily overloaded. Please retry.')
+    const card = buildLlmCard(`[LLM] ✗ · model · turn 3 · 1.4s\n    error     ${error}`)
+    const text = card.map(line => line.text).join('\n')
+    expect(text).toContain(copy.label)
+    expect(text).not.toContain('PRIVATE_BACKEND')
+    expect(text).not.toContain('Service busy')
+  }
+  for (const error of ['HTTP 502', 'HTTP 503: temporarily unavailable', 'HTTP 504']) {
+    expect(providerFailurePresentation({ error }).label).toBe('Service temporarily unavailable.')
+  }
+  for (const [error, kind] of [
+    ['HTTP 429: overloaded_error: rate limit', 'rate-limit'],
+    ['HTTP 401: overloaded_error', 'authentication'],
+    ['HTTP 400: prompt is too long: overloaded_error', 'context-overflow'],
+    ['HTTP 503: overloaded_error: quota exhausted', 'quota'],
+  ]) {
+    expect(providerFailurePresentation({ error }).kind).toBe(kind)
   }
 })
 

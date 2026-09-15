@@ -2,7 +2,7 @@
  * Consumers retain the original error separately for diagnostics. Prefer a
  * structured category; string matching is only for historical error events.
  */
-export type ProviderFailureKind = 'connection' | 'timeout' | 'dns' | 'busy' | 'rate-limit' | 'quota' | 'authentication' | 'invalid-request' | 'context-overflow' | 'configuration' | 'backend-version' | 'unknown'
+export type ProviderFailureKind = 'connection' | 'timeout' | 'dns' | 'busy' | 'overloaded' | 'rate-limit' | 'quota' | 'authentication' | 'invalid-request' | 'context-overflow' | 'configuration' | 'backend-version' | 'unknown'
 
 export function classifyProviderFailure(error: string): ProviderFailureKind {
   const text = error.toLowerCase()
@@ -22,18 +22,22 @@ export function classifyProviderFailure(error: string): ProviderFailureKind {
   if (/quota|insufficient_quota|credit balance/.test(text)) return 'quota'
   if (status === 401 || status === 403 || /unauthorized|invalid.api.key|authentication/.test(text)) return 'authentication'
   if (status === 429 || /rate.limit|too many requests/.test(text)) return 'rate-limit'
+  // Standard provider overload semantics, independent of gateway/vendor.
+  // Do not label every transport failure or unknown 5xx as overload.
+  if (status === 529 || /\boverloaded_error\b|\boverloaded\b/.test(text)) return 'overloaded'
   if (status >= 500 && status <= 599) return 'busy'
   if (status === 400 || status === 413 || status === 422 || /invalid_request_error/.test(text)) return 'invalid-request'
   if (/dns|enotfound|eai_again|failed to lookup|name resolution/.test(text)) return 'dns'
   if (/timed? ?out|timeout/.test(text)) return 'timeout'
   if (/tls|handshake|connection reset|econnreset|connection refused|econnrefused|network error|connect error/.test(text)) return 'connection'
-  if (/overloaded|server.error|service unavailable|bad gateway/.test(text)) return 'busy'
+  if (/server.error|service unavailable|bad gateway/.test(text)) return 'busy'
   return 'unknown'
 }
 
 const labels: Record<ProviderFailureKind, string> = {
   connection: 'Connection interrupted', timeout: 'Request timed out',
-  dns: 'Unable to resolve service address', busy: 'Service busy',
+  dns: 'Unable to resolve service address', busy: 'Service temporarily unavailable.',
+  overloaded: 'Service temporarily overloaded. Please retry.',
   'rate-limit': 'Rate limited', quota: 'Quota unavailable',
   authentication: 'Authentication failed', 'invalid-request': 'Invalid request',
   'context-overflow': 'Context limit exceeded',

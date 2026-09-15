@@ -183,7 +183,7 @@ describe('transcript conversion', () => {
     }]
 
     const rendered = messagesToOutputLines(messages).map(line => line.text).join('\n')
-    expect(rendered.split('Service busy').length - 1).toBe(1)
+    expect(rendered.split('Service temporarily overloaded. Please retry.').length - 1).toBe(1)
     expect(rendered).not.toContain(err)
     expect(rendered.split('✦ llm  retry').length - 1).toBe(1)
     // The storm is still visible as an event, just once.
@@ -207,7 +207,8 @@ describe('transcript conversion', () => {
     }]
 
     const rendered = messagesToOutputLines(messages).map(line => line.text).join('\n')
-    expect(rendered.split('Service busy').length - 1).toBe(2)
+    expect(rendered.split('Service temporarily overloaded. Please retry.').length - 1).toBe(1)
+    expect(rendered.split('Service temporarily unavailable.').length - 1).toBe(1)
     expect(rendered).toContain('turn 29')
   })
 })

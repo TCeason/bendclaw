@@ -1311,7 +1311,7 @@ describe('term stream machine', () => {
     state = first.state
     const firstText = first.commitLines.map(l => l.text).join('\n')
     expect(firstText).toContain('✦ llm  retry')
-    expect(firstText).toContain('Service busy')
+    expect(firstText).toContain('Service temporarily overloaded. Please retry.')
     expect(state.spinnerState.phase).toBe('retrying')
     expect(state.spinnerState.retryAttempt).toBe(1)
     expect(state.spinnerState.retryMaxAttempts).toBe(10)
@@ -1355,7 +1355,7 @@ describe('term stream machine', () => {
     }, { termRows: 24 })
 
     const text = [...failed.commitLines, ...retry.commitLines].map(l => l.text).join('\n')
-    expect(text.split('Service busy').length - 1).toBe(1)
+    expect(text.split('Service temporarily overloaded. Please retry.').length - 1).toBe(1)
     // Both cards still appear; only the repeated sentence is gone.
     expect(text).toContain('✦ llm  claude-opus-5')
     expect(text).toContain('✦ llm  retry')
@@ -1421,7 +1421,7 @@ describe('term stream machine', () => {
       kind: 'llm_call_completed',
       payload: { model: 'claude-opus-5', turn: 28, error: 'API error: HTTP 500', metrics: { duration_ms: 120 } },
     }, { termRows: 24 })
-    expect(failed.commitLines.map(l => l.text).join('\n')).toContain('Service busy')
+    expect(failed.commitLines.map(l => l.text).join('\n')).toContain('Service temporarily unavailable.')
   })
 
   test('overflow card preserves the diagnosis before compaction starts', () => {
@@ -1486,8 +1486,8 @@ describe('term stream machine', () => {
       payload: { message: err },
     }, { termRows: 24 })
     const visible = terminal.commitLines.map(l => l.text).join('\n')
-    expect(visible).toContain('Service busy')
-    expect(visible.split('Service busy').length - 1).toBe(1)
+    expect(visible).toContain('Service temporarily overloaded. Please retry.')
+    expect(visible.split('Service temporarily overloaded. Please retry.').length - 1).toBe(1)
     expect(terminal.writeLines.some(line => line.text.includes(err))).toBe(true)
   })
 
@@ -1503,7 +1503,7 @@ describe('term stream machine', () => {
     const tui = [...u1.commitLines, ...u2.commitLines].map(l => l.text).join('\n')
     // Message shows exactly once in the TUI (the llm card), and the redundant
     // standalone error line is routed to screen.log instead.
-    expect((tui.match(/Service busy/g) ?? []).length).toBe(1)
+    expect(tui.split('Service temporarily unavailable.').length - 1).toBe(1)
     expect(tui).toContain('✦ llm  claude-opus-4-6')
     expect(u2.writeLines.some(l => l.text.includes('HTTP 520'))).toBe(true)
   })
