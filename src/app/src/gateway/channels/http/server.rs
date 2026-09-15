@@ -168,6 +168,7 @@ impl Server {
 
     pub fn router(self: Arc<Self>) -> Router {
         let dashboard = super::dashboard::dashboard_router(self.agent.clone());
+        let channel_setup = super::channel_setup::router(self.config.clone());
         Router::new()
             .route(
                 "/api/chat",
@@ -296,6 +297,7 @@ impl Server {
             .with_state(self)
             .merge(super::assets::router())
             .merge(dashboard)
+            .merge(channel_setup)
             .layer(CorsLayer::permissive())
     }
 
@@ -354,9 +356,7 @@ impl Server {
         }
     }
 
-    /// Validate, persist, and apply a Feishu channel update. Persisting is
-    /// enough for the config, but the channel is spawned at startup, so the
-    /// response reports that a restart is needed to pick the change up.
+    /// Persist settings; the gateway supervisor applies transport changes live.
     fn update_feishu(&self, update: FeishuSettings) -> impl IntoResponse {
         match self
             .apply_and_persist(|candidate| crate::conf::apply_feishu_settings(candidate, &update))
@@ -365,7 +365,7 @@ impl Server {
                 axum::http::StatusCode::OK,
                 Json(serde_json::json!({
                     "ok": true,
-                    "restart_required": true,
+                    "restart_required": false,
                     "channel": crate::conf::feishu_snapshot(&self.config.read()),
                 })),
             )

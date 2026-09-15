@@ -64,6 +64,7 @@ fn sample_feishu() -> FeishuSettings {
         app_id: "cli_app".into(),
         app_secret: Some("feishu-secret".into()),
         mention_only: false,
+        default_chat_id: Some("oc_daily_report".into()),
     }
 }
 
@@ -99,6 +100,11 @@ fn settings_serialize_to_expected_env_keys() {
         map.get("EVOT_CHANNEL_FEISHU_MENTION_ONLY")
             .map(String::as_str),
         Some("false")
+    );
+    assert_eq!(
+        map.get("EVOT_CHANNEL_FEISHU_DEFAULT_CHAT_ID")
+            .map(String::as_str),
+        Some("oc_daily_report")
     );
 }
 
@@ -345,13 +351,17 @@ fn saving_models_leaves_feishu_untouched() -> TestResult {
     assert_eq!(feishu.app_id, "cli_app");
     assert_eq!(feishu.app_secret, "feishu-secret");
     assert!(!feishu.mention_only);
+    assert_eq!(feishu.default_chat_id, "oc_daily_report");
 
     // And the reverse: saving Feishu keeps providers and the active selection.
     apply_feishu_settings(&mut config, &FeishuSettings {
-        app_id: "cli_other".into(),
+        app_id: "cli_app".into(),
         app_secret: None,
         mention_only: true,
+        default_chat_id: None,
     })?;
+    let feishu = config.channels.feishu.as_ref().ok_or("feishu dropped")?;
+    assert_eq!(feishu.default_chat_id, "oc_daily_report");
     assert!(config.providers.contains_key("anthropic"));
     assert_eq!(config.llm.provider, "anthropic");
     assert_eq!(
@@ -365,6 +375,41 @@ fn saving_models_leaves_feishu_untouched() -> TestResult {
 }
 
 #[test]
+fn switching_feishu_app_requires_credentials_and_discards_old_bindings() -> TestResult {
+    let mut config = Config::new(std::env::temp_dir());
+    apply_feishu_settings(&mut config, &sample_feishu())?;
+    let mut update = sample_feishu();
+    update.app_id = "new_app".into();
+    update.app_secret = None;
+    assert!(apply_feishu_settings(&mut config, &update).is_err());
+    assert_eq!(
+        config
+            .channels
+            .feishu
+            .as_ref()
+            .ok_or("missing channel")?
+            .app_id,
+        "cli_app"
+    );
+    update.app_secret = Some("new_secret".into());
+    apply_feishu_settings(&mut config, &update)?;
+    let channel = config.channels.feishu.as_ref().ok_or("missing channel")?;
+    assert_eq!(channel.app_secret, "new_secret");
+    assert!(channel.default_chat_id.is_empty());
+    assert!(channel.allow_from.is_empty());
+    Ok(())
+}
+
+#[test]
+fn invalid_feishu_default_chat_id_is_rejected() {
+    let mut config = Config::new(std::env::temp_dir());
+    let mut settings = sample_feishu();
+    settings.default_chat_id = Some("invalid".into());
+    assert!(apply_feishu_settings(&mut config, &settings).is_err());
+    assert!(config.channels.feishu.is_none());
+}
+
+#[test]
 fn blank_feishu_app_id_unlinks_the_channel() -> TestResult {
     let mut config = Config::new(std::env::temp_dir());
     apply_feishu_settings(&mut config, &sample_feishu())?;
@@ -374,6 +419,7 @@ fn blank_feishu_app_id_unlinks_the_channel() -> TestResult {
         app_id: "   ".into(),
         app_secret: None,
         mention_only: true,
+        default_chat_id: Some(String::new()),
     })?;
     assert!(config.channels.feishu.is_none());
     let map = flat(&config_to_env_groups(&config));

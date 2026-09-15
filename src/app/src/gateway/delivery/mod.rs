@@ -1,3 +1,4 @@
+pub mod resolve;
 pub mod stream;
 pub mod traits;
 

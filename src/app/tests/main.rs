@@ -10,10 +10,14 @@ mod auth_recovery_test;
 mod auth_test;
 #[path = "auto_compact_test.rs"]
 mod auto_compact_test;
+#[path = "automation_delivery_test.rs"]
+mod automation_delivery_test;
+mod automation_lease_test;
 #[path = "background_reclaim_test.rs"]
 mod background_reclaim_test;
 #[path = "bootstrap_test.rs"]
 mod bootstrap_test;
+mod channel_supervisor_test;
 #[path = "channel_tasks_test.rs"]
 mod channel_tasks_test;
 #[path = "command_test.rs"]
@@ -40,6 +44,8 @@ mod favorites_atomic_test;
 mod feishu_message_test;
 #[path = "feishu_sink_test.rs"]
 mod feishu_sink_test;
+#[path = "feishu_state_test.rs"]
+mod feishu_state_test;
 #[path = "id_validation_test.rs"]
 mod id_validation_test;
 #[path = "manual_compact_llm_test.rs"]

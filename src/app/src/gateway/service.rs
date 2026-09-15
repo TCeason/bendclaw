@@ -1,7 +1,27 @@
+use std::sync::Arc;
+
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use crate::agent::Agent;
 use crate::conf::Config;
 use crate::error::Result;
+
+/// Spawn every long-lived background task a running evot instance needs:
+/// inbound channels (feishu, telegram, ...) plus the scheduled-task dispatcher.
+///
+/// Both the standalone server and the CLI's embedded server go through here, so
+/// runtime wiring cannot drift between the two entry points.
+pub fn spawn_runtime_tasks(
+    conf: &Config,
+    agent: Arc<Agent>,
+    cancel: CancellationToken,
+) -> Vec<JoinHandle<()>> {
+    vec![
+        super::supervisor::spawn(conf, agent.clone(), cancel.clone()),
+        crate::automation::dispatcher::spawn(conf, agent, cancel),
+    ]
+}
 
 pub async fn start(conf: Config) -> Result<()> {
     let llm = conf.active_llm().ok();
@@ -19,12 +39,10 @@ pub async fn start(conf: Config) -> Result<()> {
 
     let agent = crate::bootstrap::build_agent(&conf).await?;
     let cancel = CancellationToken::new();
+    let handles = spawn_runtime_tasks(&conf, agent.clone(), cancel.clone());
 
-    // Long-lived channels (feishu, telegram, ...)
-    let channel_handles = super::registry::spawn_all(&conf.channels, agent.clone(), cancel.clone());
-
-    let channels = super::channel_tasks::ChannelTasks::new(cancel, channel_handles);
-    print_banner(&conf, !channels.is_empty());
+    let channels = super::channel_tasks::ChannelTasks::new(cancel, handles);
+    print_banner(&conf);
 
     // Always stop channel tasks, including when HTTP binding/startup fails.
     let result = super::channels::http::Server::new(agent, conf.clone())
@@ -34,7 +52,7 @@ pub async fn start(conf: Config) -> Result<()> {
     result
 }
 
-fn print_banner(conf: &Config, has_channels: bool) {
+fn print_banner(conf: &Config) {
     let llm = conf.active_llm().ok();
     let addr = format!("{}:{}", conf.server.host, conf.server.port);
     let storage_backend = match conf.storage.backend {
@@ -70,11 +88,8 @@ fn print_banner(conf: &Config, has_channels: bool) {
         eprintln!("  base_url: {base_url}");
     }
     eprintln!("  storage:  {storage_backend} ({storage_target})");
-    if has_channels {
-        let mut names = Vec::new();
-        if conf.channels.feishu.is_some() {
-            names.push("feishu");
-        }
+    let names = super::registry::configured_names(&conf.channels);
+    if !names.is_empty() {
         eprintln!("  channels: {}", names.join(", "));
     }
     eprintln!("  ───────────────────────────────────");

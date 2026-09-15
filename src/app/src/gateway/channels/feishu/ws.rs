@@ -270,6 +270,13 @@ where
         .await
         .map_err(|e| EvotError::Run(format!("feishu ws connect: {e}")))?;
 
+    // Only a completed WebSocket handshake means the transport is connected.
+    let key = crate::gateway::health::credential_key(ctx.app_id, ctx.app_secret);
+    crate::gateway::health::set(
+        &key,
+        crate::gateway::health::ConnectionState::Connected,
+        "Connected",
+    );
     let (mut write, mut read) = ws_stream.split();
 
     let service_id: i32 = reqwest::Url::parse(&ws_url)

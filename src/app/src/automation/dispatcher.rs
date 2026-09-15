@@ -1,0 +1,305 @@
+//! Claim → run → heartbeat → report loop for cloud scheduled tasks.
+//!
+//! This module owns run lifecycle only. Where a result goes is decided by
+//! `super::delivery`, which resolves channels through the gateway.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
+use super::executor::ExecutorCapabilities;
+use super::model::ClaimedRun;
+use super::model::Task;
+use crate::agent::Agent;
+use crate::agent::QueryRequest;
+use crate::agent::RunEventPayload;
+use crate::agent::SubmitOutcome;
+use crate::agent::ToolMode;
+use crate::auth::AuthState;
+use crate::conf::Config;
+use crate::error::EvotError;
+use crate::error::Result;
+use crate::sessions::SessionLocator;
+
+const POLL_INTERVAL: Duration = Duration::from_secs(15);
+const RETRY_INTERVAL: Duration = Duration::from_secs(5);
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+/// Run timeout bounds enforced locally. The task tool schema advertises the same
+/// range, so a stored task can never quietly ask for a timeout we will not honor.
+pub const MIN_TIMEOUT_SECONDS: i64 = 30;
+pub const MAX_TIMEOUT_SECONDS: i64 = 3600;
+
+pub fn effective_timeout(timeout_seconds: i64) -> Duration {
+    Duration::from_secs(timeout_seconds.clamp(MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) as u64)
+}
+
+pub fn spawn(config: &Config, agent: Arc<Agent>, cancel: CancellationToken) -> JoinHandle<()> {
+    let instance_id = config.id.clone();
+    let env_file = config.env_file_path.to_string_lossy().to_string();
+    tokio::spawn(async move {
+        let mut claim_request_id = Uuid::new_v4().to_string();
+        let mut registered = String::new();
+        loop {
+            if cancel.is_cancelled() {
+                return;
+            }
+            let auth = match crate::auth::load_auth() {
+                Ok(Some(auth)) => auth,
+                Ok(None) => {
+                    wait(&cancel, RETRY_INTERVAL).await;
+                    continue;
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "task dispatcher could not load auth");
+                    wait(&cancel, RETRY_INTERVAL).await;
+                    continue;
+                }
+            };
+            // Reload per poll so console edits to channels or models take effect
+            // without restarting the process.
+            let config = match Config::load_with_env_file(Some(&env_file)) {
+                Ok(config) => config,
+                Err(error) => {
+                    tracing::warn!(%error, "task dispatcher could not load config");
+                    wait(&cancel, RETRY_INTERVAL).await;
+                    continue;
+                }
+            };
+            let executor_id = super::executor_id(instance_id.as_deref(), &auth.user.id);
+            let executor_name = super::executor_name(&executor_id);
+            let capabilities = ExecutorCapabilities::from_channels(&config.channels);
+            let fingerprint = capabilities.fingerprint(&auth.user.id, &executor_id, &executor_name);
+            if registered != fingerprint {
+                if let Err(error) =
+                    super::register_executor(&auth, &executor_id, &executor_name, &capabilities)
+                        .await
+                {
+                    tracing::warn!(%error, "task executor registration failed");
+                    wait(&cancel, RETRY_INTERVAL).await;
+                    continue;
+                }
+                registered = fingerprint;
+            }
+            match super::claim(&auth, &executor_id, &claim_request_id).await {
+                Ok(Some(run)) => {
+                    claim_request_id = Uuid::new_v4().to_string();
+                    let session_id =
+                        SessionLocator::new("automation", &format!("run:{}", run.id)).session_id();
+                    let result = super::lease::guard(
+                        execute(&auth, agent.clone(), &config, &run, cancel.clone()),
+                        || super::heartbeat(&auth, &run.id, &run.lease_token, &session_id),
+                        cancel.clone(),
+                        HEARTBEAT_INTERVAL,
+                    )
+                    .await;
+                    if let Err(error) = result {
+                        tracing::warn!(%error, run_id = %run.id, "task stopped without confirmed lease");
+                    }
+                }
+                Ok(None) => {
+                    claim_request_id = Uuid::new_v4().to_string();
+                    wait(&cancel, POLL_INTERVAL).await;
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "task claim failed");
+                    wait(&cancel, RETRY_INTERVAL).await;
+                }
+            }
+        }
+    })
+}
+
+async fn execute(
+    auth: &AuthState,
+    agent: Arc<Agent>,
+    config: &Config,
+    claimed: &ClaimedRun,
+    cancel: CancellationToken,
+) {
+    let task = &claimed.task_snapshot;
+    let locator = SessionLocator::new("automation", &format!("run:{}", claimed.id));
+    let session_id = locator.session_id();
+    let mut request = QueryRequest::text(&task.instruction)
+        .session_id(Some(session_id.clone()))
+        .mode(ToolMode::Headless)
+        .source("automation");
+    if !task.workspace_ref.trim().is_empty() {
+        request = request.cwd(task.workspace_ref.clone());
+    }
+    if task.model_policy == "fixed" {
+        match fixed_model(&agent, config, task) {
+            Ok(model) => request = request.llm(model),
+            Err(error) => {
+                finish(
+                    auth,
+                    claimed,
+                    "needs_attention",
+                    "",
+                    super::delivery::NOT_REQUESTED,
+                    &error.to_string(),
+                )
+                .await;
+                return;
+            }
+        }
+    }
+
+    let outcome = match agent.submit(request).await {
+        Ok(SubmitOutcome::Run(run)) => run,
+        Ok(SubmitOutcome::Command(message)) => {
+            finish(
+                auth,
+                claimed,
+                "failed",
+                "",
+                super::delivery::NOT_REQUESTED,
+                &message,
+            )
+            .await;
+            return;
+        }
+        Err(error) => {
+            finish(
+                auth,
+                claimed,
+                "failed",
+                "",
+                super::delivery::NOT_REQUESTED,
+                &error.to_string(),
+            )
+            .await;
+            return;
+        }
+    };
+
+    // Lease renewal is owned by the outer guard through report completion.
+    // Dropping collect(outcome) aborts the Run on lease loss or shutdown.
+    let timeout = effective_timeout(task.timeout_seconds);
+    let control = outcome.handle();
+    let result = tokio::select! {
+        _ = cancel.cancelled() => {
+            control.abort();
+            Err(EvotError::Run("task dispatcher stopped".into()))
+        },
+        result = tokio::time::timeout(timeout, collect(outcome)) => match result {
+            Ok(result) => result,
+            Err(_) => {
+                control.abort();
+                Err(EvotError::Run(format!("task timed out after {}s", timeout.as_secs())))
+            },
+        },
+    };
+
+    let text = match result {
+        Ok(text) => text,
+        Err(error) => {
+            finish(
+                auth,
+                claimed,
+                "failed",
+                "",
+                super::delivery::NOT_REQUESTED,
+                &error.to_string(),
+            )
+            .await;
+            return;
+        }
+    };
+
+    match super::delivery::deliver(
+        &config.channels,
+        &task.delivery_channel,
+        &task.delivery_target,
+        &text,
+    )
+    .await
+    {
+        Ok(status) => finish(auth, claimed, "succeeded", &text, status, "").await,
+        Err(error) => {
+            finish(
+                auth,
+                claimed,
+                "succeeded",
+                &text,
+                super::delivery::FAILED,
+                &error.to_string(),
+            )
+            .await
+        }
+    }
+}
+
+fn fixed_model(agent: &Agent, config: &Config, task: &Task) -> Result<crate::conf::LlmConfig> {
+    if task.model_spec.trim().is_empty() {
+        return Err(EvotError::Conf("fixed task has no model".into()));
+    }
+    let (provider, model) = config.resolve_model_spec(&task.model_spec)?;
+    let model = model.ok_or_else(|| EvotError::Conf("fixed task has no model".into()))?;
+    if !config.serves(&provider, &model) {
+        return Err(EvotError::Conf(format!(
+            "fixed task model is unavailable: {}",
+            task.model_spec
+        )));
+    }
+    agent.select_configured_model(
+        config,
+        &provider,
+        &model,
+        (!task.thinking_level.trim().is_empty()).then_some(task.thinking_level.as_str()),
+    )
+}
+
+async fn collect(mut run: crate::agent::Run) -> Result<String> {
+    let mut text = String::new();
+    while let Some(event) = run.next().await {
+        match event.payload {
+            RunEventPayload::RunFinished {
+                text: final_text, ..
+            } => text = final_text,
+            RunEventPayload::Error { message } => return Err(EvotError::Run(message)),
+            _ => {}
+        }
+    }
+    if text.trim().is_empty() {
+        return Err(EvotError::Run("task produced no result".into()));
+    }
+    Ok(text)
+}
+
+async fn finish(
+    auth: &AuthState,
+    claimed: &ClaimedRun,
+    status: &str,
+    summary: &str,
+    delivery_status: &str,
+    error: &str,
+) {
+    for attempt in 0..3 {
+        if super::report(
+            auth,
+            &claimed.id,
+            &claimed.lease_token,
+            status,
+            summary,
+            delivery_status,
+            error,
+        )
+        .await
+        .is_ok()
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_secs(attempt + 1)).await;
+    }
+    tracing::error!(run_id = %claimed.id, "task result report failed");
+}
+
+async fn wait(cancel: &CancellationToken, duration: Duration) {
+    tokio::select! {
+        _ = cancel.cancelled() => {},
+        _ = tokio::time::sleep(duration) => {},
+    }
+}

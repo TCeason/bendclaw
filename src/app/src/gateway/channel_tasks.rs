@@ -15,6 +15,10 @@ impl ChannelTasks {
         Self { cancel, handles }
     }
 
+    pub fn is_finished(&self) -> bool {
+        self.handles.iter().all(JoinHandle::is_finished)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.handles.is_empty()
     }

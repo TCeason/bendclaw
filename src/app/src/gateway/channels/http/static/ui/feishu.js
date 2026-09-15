@@ -4,9 +4,7 @@
  * down, only `app_secret_set` and a masked hint, so a blank field on save means
  * "keep what is stored". Clearing the app id unlinks the channel.
  *
- * The channel is spawned at startup, so a save persists the config but does not
- * take effect until evot restarts. The response says so and the page repeats it
- * rather than implying the bot is live.
+ * The gateway supervisor hot-loads saved transport settings.
  */
 import {
   esc,
@@ -36,26 +34,27 @@ function render() {
     '<div class="panel-head"><h3>Bot credentials</h3>' +
     '<div class="right"><span class="dot ' + (linked ? "on" : "off") + '"></span>' +
     '<span class="badge' + (linked ? " green" : "") + '">' +
-    (linked ? "linked" : "not linked") +
+    (linked ? "configured" : "not configured") +
     "</span></div></div>" +
     '<div class="panel-body"><div class="form">' +
     '<div class="field"><label for="f-appid">App ID</label>' +
     '<input id="f-appid" value="' + esc(linked ? f.app_id : "") +
     '" spellcheck="false" placeholder="cli_..." />' +
-    '<div class="help">Clear this field to unlink the bot.</div></div>' +
+    '</div>' +
     '<div class="field"><label for="f-secret">App secret</label>' +
     '<input id="f-secret" type="password" autocomplete="off" placeholder="' +
     esc(secretPlaceholder) + '" />' +
-    '<div class="help">Stored in your env file. Leave blank to keep the current secret.</div></div>' +
+    '</div></div>' +
+    '<details class="advanced"><summary>Advanced options</summary><div class="form">' +
+    '<div class="field full"><label for="f-default-chat">Default notification chat ID</label>' +
+    '<input id="f-default-chat" value="' + esc(linked ? f.default_chat_id || "" : "") +
+    '" spellcheck="false" placeholder="oc_..." />' +
+    '</div>' +
     '<div class="field full"><label class="check">' +
     '<input type="checkbox" id="f-mention"' +
     (!linked || f.mention_only ? " checked" : "") + " />" +
     "<span>Only reply when mentioned</span></label>" +
-    '<div class="help">Off means the bot answers every message in a group it belongs to.</div>' +
-    "</div></div></div>" +
-    '<div class="panel-foot"><span class="hint">Changes apply after evot restarts.</span></div>' +
-    "</div>" +
-    '<p class="envpath">Saved to <code>' + esc(state.env_file_path) + "</code></p>";
+    '</div></div></details></div></div>';
 }
 
 function buildPayload() {
@@ -63,6 +62,7 @@ function buildPayload() {
   return {
     app_id: document.getElementById("f-appid").value.trim(),
     app_secret: secret.length ? secret : null,
+    default_chat_id: document.getElementById("f-default-chat").value.trim(),
     mention_only: document.getElementById("f-mention").checked,
   };
 }
@@ -75,7 +75,7 @@ async function save() {
     // The response carries a fresh snapshot in the same shape as the GET.
     state = res.channel;
     render();
-    toast("Saved · restart evot to apply");
+    toast("Saved · applying automatically");
   } catch (err) {
     toast(String(err.message || err), "err");
   } finally {
@@ -87,7 +87,7 @@ async function save() {
 async function load() {
   const root = mountShell({
     title: "Feishu",
-    lede: "Link a Feishu bot so the agent can be reached from chat.",
+    lede: "",
     actions: '<button class="btn primary" id="save">Save changes</button>',
   });
   root.innerHTML = skeletonHtml(3, "form");

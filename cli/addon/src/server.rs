@@ -38,6 +38,34 @@ pub async fn start_server(
         .map_err(|e| Error::from_reason(format!("server error: {e}")))
 }
 
+struct EmbeddedServer {
+    info: String,
+    cancel: tokio_util::sync::CancellationToken,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+fn embedded_server() -> &'static tokio::sync::Mutex<Option<EmbeddedServer>> {
+    static SERVER: std::sync::OnceLock<tokio::sync::Mutex<Option<EmbeddedServer>>> =
+        std::sync::OnceLock::new();
+    SERVER.get_or_init(|| tokio::sync::Mutex::new(None))
+}
+
+#[napi]
+pub async fn stop_server_background() -> Result<()> {
+    let mut slot = embedded_server().lock().await;
+    if let Some(mut server) = slot.take() {
+        server.cancel.cancel();
+        if tokio::time::timeout(std::time::Duration::from_secs(5), &mut server.handle)
+            .await
+            .is_err()
+        {
+            server.handle.abort();
+            let _ = server.handle.await;
+        }
+    }
+    Ok(())
+}
+
 #[napi]
 pub async fn start_server_background(
     port: Option<u16>,
@@ -45,41 +73,67 @@ pub async fn start_server_background(
     env_file: Option<String>,
 ) -> Result<Option<String>> {
     init_tracing();
+    let mut slot = embedded_server().lock().await;
+    if let Some(server) = slot.as_ref() {
+        if !server.handle.is_finished() {
+            return Ok(Some(server.info.clone()));
+        }
+    }
+    *slot = None;
     let config = load_config(port, model, env_file)?;
-    let actual_port = config.server.port;
     let host = config.server.host.clone();
-    let addr = format!("{host}:{actual_port}");
+    let addr = format!("{host}:{}", config.server.port);
 
     let listener = match tokio::net::TcpListener::bind(&addr).await {
         Ok(l) => l,
-        Err(_) => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+            // Occupied is not owned. The host scheduler retries later; console
+            // discovery for setup is independent of dashboard ownership.
+            return Ok(None);
+        }
+        Err(error) => {
+            return Err(Error::from_reason(format!(
+                "settings server bind failed: {error}"
+            )))
+        }
     };
 
+    let actual_port = listener
+        .local_addr()
+        .map_err(|e| Error::from_reason(e.to_string()))?
+        .port();
+    let addr = format!("{host}:{actual_port}");
     let agent = evot::bootstrap::build_agent(&config)
         .await
         .map_err(|e| Error::from_reason(format!("agent init: {e}")))?;
 
     let cancel = tokio_util::sync::CancellationToken::new();
-    let channel_handles =
-        evot::gateway::registry::spawn_all(&config.channels, agent.clone(), cancel);
-
-    let mut channels = Vec::new();
-    if config.channels.feishu.is_some() {
-        channels.push("feishu");
-    }
+    let handles =
+        evot::gateway::service::spawn_runtime_tasks(&config, agent.clone(), cancel.clone());
+    let runtime = evot::gateway::channel_tasks::ChannelTasks::new(cancel.clone(), handles);
+    let channels = evot::gateway::registry::configured_names(&config.channels);
 
     let server = evot::gateway::channels::http::Server::new(agent, config.clone());
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, server.router()).await;
+    let shutdown = cancel.clone();
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, server.router())
+            .with_graceful_shutdown(shutdown.cancelled_owned())
+            .await;
+        runtime.shutdown(std::time::Duration::from_secs(5)).await;
     });
 
     let info = serde_json::json!({
         "port": actual_port,
         "address": format!("http://{addr}"),
         "channels": channels,
-        "channelCount": channel_handles.len(),
+        "channelCount": channels.len(),
     });
-    serde_json::to_string(&info)
-        .map(Some)
-        .map_err(|e| Error::from_reason(format!("serialize: {e}")))
+    let info =
+        serde_json::to_string(&info).map_err(|e| Error::from_reason(format!("serialize: {e}")))?;
+    *slot = Some(EmbeddedServer {
+        info: info.clone(),
+        cancel,
+        handle,
+    });
+    Ok(Some(info))
 }

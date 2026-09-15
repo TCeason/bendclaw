@@ -46,9 +46,20 @@ impl FeishuChannel {
         let agent = run_manager.agent().clone();
         let ch = Arc::new(Self::new(conf, run_manager));
         tokio::spawn(async move {
-            if let Err(e) = ch.run(agent, cancel).await {
-                tracing::error!(channel = "feishu", error = %e, "channel exited");
+            use crate::gateway::health::ConnectionState;
+            use crate::gateway::health::{self};
+            let key = health::credential_key(&ch.config.app_id, &ch.config.app_secret);
+            health::set(&key, ConnectionState::Connecting, "Connecting to Feishu");
+            tokio::select! {
+                _ = cancel.cancelled() => {},
+                result = ch.run(agent, cancel.clone()) => {
+                    if result.is_err() {
+                        health::set(&key, ConnectionState::Failed, "Connection failed. Check credentials, app permissions, and network.");
+                        return;
+                    }
+                }
             }
+            health::set(&key, ConnectionState::Stopped, "Connection stopped");
         })
     }
 
@@ -57,6 +68,20 @@ impl FeishuChannel {
         msg: super::message::ParsedMessage,
         bot_open_id: &str,
     ) {
+        if msg.chat_type == "p2p" {
+            if let Err(error) = super::state::remember_direct_chat(
+                &self.config.app_id,
+                &msg.sender_id,
+                &msg.chat_id,
+            ) {
+                tracing::warn!(
+                    channel = "feishu",
+                    error = %error,
+                    "failed to remember direct conversation"
+                );
+            }
+        }
+
         // Resolve thread_id for topic messages.
         // The websocket event may not include thread_id on the first reply,
         // but the GET message API always has it. Fetch it if missing.
@@ -438,18 +463,43 @@ impl Channel for FeishuChannel {
     // construction) which owns the Agent reference. The parameter is kept to
     // satisfy the generic Channel trait; this is a known trait-reuse trade-off.
     async fn run(self: Arc<Self>, _agent: Arc<Agent>, cancel: CancellationToken) -> Result<()> {
-        let bot_open_id = self
-            .bot_open_id
-            .get_or_try_init(|| async {
-                super::token::fetch_bot_open_id(
-                    &self.client,
-                    &self.config.app_id,
-                    &self.config.app_secret,
-                    &self.token_cache,
-                )
-                .await
-            })
-            .await?;
+        let mut initialization_attempt = 0u32;
+        let bot_open_id = loop {
+            let result = self
+                .bot_open_id
+                .get_or_try_init(|| async {
+                    super::token::fetch_bot_open_id(
+                        &self.client,
+                        &self.config.app_id,
+                        &self.config.app_secret,
+                        &self.token_cache,
+                    )
+                    .await
+                })
+                .await;
+            match result {
+                Ok(id) => break id,
+                Err(_) => {
+                    // Initialization can fail due to temporary transport errors,
+                    // not only bad credentials. Keep retry ownership in the
+                    // adapter so an unchanged config recovers without restart.
+                    initialization_attempt = initialization_attempt.saturating_add(1);
+                    let key = crate::gateway::health::credential_key(
+                        &self.config.app_id,
+                        &self.config.app_secret,
+                    );
+                    crate::gateway::health::set(&key, crate::gateway::health::ConnectionState::Retrying,
+                        "Could not initialize Feishu. Check credentials, permissions and network; retrying.");
+                    let delay = Duration::from_secs(
+                        2u64.saturating_pow(initialization_attempt.min(6)).min(60),
+                    );
+                    tokio::select! {
+                        _ = cancel.cancelled() => return Ok(()),
+                        _ = tokio::time::sleep(delay) => {},
+                    }
+                }
+            }
+        };
 
         let mut attempt: u32 = 0;
         loop {
@@ -485,6 +535,11 @@ impl Channel for FeishuChannel {
                     attempt = 0;
                 }
                 Err(e) => {
+                    let key = crate::gateway::health::credential_key(
+                        &self.config.app_id,
+                        &self.config.app_secret,
+                    );
+                    crate::gateway::health::set(&key, crate::gateway::health::ConnectionState::Retrying, "Reconnecting. Check persistent-connection event subscriptions and network.");
                     tracing::warn!(channel = "feishu", error = %e, attempt, "websocket error");
                     attempt = attempt.saturating_add(1);
                 }

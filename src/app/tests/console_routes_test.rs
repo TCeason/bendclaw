@@ -30,6 +30,42 @@ use tower::ServiceExt;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
+#[tokio::test]
+async fn setup_endpoint_observes_owning_console_without_exposing_credentials() -> TestResult {
+    let (app, env_path) = router_with_env("setup_observe")?;
+    // Persist the fixture through the real settings writer before observing it.
+    let (status, _, _) = post(
+        app.clone(),
+        "/api/channels/feishu",
+        serde_json::json!({"app_id": ""}),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, body) = read(
+        app.clone(),
+        Request::builder()
+            .uri("/api/channels/feishu/setup")
+            .body(Body::empty())?,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    let state: serde_json::Value = serde_json::from_str(&body)?;
+    assert_eq!(state["configured"], false);
+    assert!(state["chats"].is_array());
+    assert!(!body.contains("app_secret"));
+    let (status, _, _) = post(
+        app,
+        "/api/channels/feishu/setup",
+        serde_json::json!({
+            "revision": "stale", "chat_id": "oc_unseen"
+        }),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    std::fs::remove_file(env_path)?;
+    Ok(())
+}
+
 struct BlockingChatProvider {
     started: Arc<AtomicBool>,
     cancelled: Arc<AtomicBool>,
@@ -340,6 +376,7 @@ async fn saving_models_leaves_the_channel_alone() -> TestResult {
             "app_id": "cli_app",
             "app_secret": "feishu-secret",
             "mention_only": true,
+            "default_chat_id": "oc_daily_report",
         }),
     )
     .await?;
@@ -374,9 +411,11 @@ async fn saving_models_leaves_the_channel_alone() -> TestResult {
     let channel: serde_json::Value = serde_json::from_str(&channel)?;
     assert_eq!(channel["feishu"]["app_id"], "cli_app");
     assert_eq!(channel["feishu"]["app_secret_set"], true);
+    assert_eq!(channel["feishu"]["default_chat_id"], "oc_daily_report");
 
     let written = std::fs::read_to_string(&env_path)?;
     assert!(written.contains("EVOT_CHANNEL_FEISHU_APP_ID=cli_app"));
+    assert!(written.contains("EVOT_CHANNEL_FEISHU_DEFAULT_CHAT_ID=oc_daily_report"));
     assert!(written.contains("EVOT_LLM_THINKING_LEVEL=high"));
     let _ = std::fs::remove_file(&env_path);
     Ok(())
@@ -417,9 +456,9 @@ async fn saving_the_channel_leaves_models_alone() -> TestResult {
     )
     .await?;
     assert_eq!(status, StatusCode::OK, "channel save failed: {body}");
-    // Persisting is not enough to run the bot: it is spawned at startup.
+    // The supervisor applies saved transport settings without restarting evot.
     let parsed: serde_json::Value = serde_json::from_str(&body)?;
-    assert_eq!(parsed["restart_required"], true);
+    assert_eq!(parsed["restart_required"], false);
 
     let (_, _, models) = read(
         app,

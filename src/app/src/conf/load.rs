@@ -691,11 +691,18 @@ fn apply_env(config: &mut Config, vars: &[(String, String)]) -> Result<()> {
             .get("EVOT_CHANNEL_FEISHU_MENTION_ONLY")
             .map(|v| *v != "0" && v.to_lowercase() != "false")
             .unwrap_or(true);
+        let default_chat_id = vars_map
+            .get("EVOT_CHANNEL_FEISHU_DEFAULT_CHAT_ID")
+            .copied()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         config.channels.feishu = Some(FeishuChannelConfig {
             app_id: app_id.clone(),
             app_secret,
             mention_only,
             allow_from: Vec::new(),
+            default_chat_id,
         });
     }
 

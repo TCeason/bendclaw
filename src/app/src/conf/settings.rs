@@ -45,6 +45,8 @@ pub struct FeishuSettings {
     pub app_secret: Option<String>,
     #[serde(default = "default_true")]
     pub mention_only: bool,
+    #[serde(default)]
+    pub default_chat_id: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -141,6 +143,12 @@ pub fn config_to_env_groups(config: &Config) -> Vec<EnvGroup> {
             "EVOT_CHANNEL_FEISHU_MENTION_ONLY",
             if f.mention_only { "true" } else { "false" },
         );
+        if !f.default_chat_id.is_empty() {
+            g.push(
+                "EVOT_CHANNEL_FEISHU_DEFAULT_CHAT_ID",
+                f.default_chat_id.clone(),
+            );
+        }
         groups.push(g);
     }
 
@@ -282,16 +290,50 @@ pub fn apply_feishu_settings(config: &mut Config, update: &FeishuSettings) -> Re
         return Ok(());
     }
     let existing = config.channels.feishu.as_ref();
+    let switching_app = existing.is_some_and(|channel| channel.app_id != app_id);
+    if switching_app
+        && update
+            .app_secret
+            .as_deref()
+            .is_none_or(|secret| secret.trim().is_empty())
+    {
+        return Err(EvotError::Conf(
+            "Changing Feishu App ID requires the new app's secret.".into(),
+        ));
+    }
+    let existing = existing.filter(|_| !switching_app);
     let app_secret = match update.app_secret.as_deref().filter(|s| !s.is_empty()) {
         Some(secret) => secret.to_string(),
         None => existing.map(|e| e.app_secret.clone()).unwrap_or_default(),
     };
     let allow_from = existing.map(|e| e.allow_from.clone()).unwrap_or_default();
+    let default_chat_id = update
+        .default_chat_id
+        .as_deref()
+        .map(str::trim)
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            existing
+                .map(|channel| channel.default_chat_id.clone())
+                .unwrap_or_default()
+        });
+    // Even hidden form fields can retain the old app's destination. Reconfirm it.
+    let default_chat_id = if switching_app {
+        String::new()
+    } else {
+        default_chat_id
+    };
+    if !default_chat_id.is_empty() && !default_chat_id.starts_with("oc_") {
+        return Err(EvotError::Conf(
+            "Feishu default notification chat ID must start with 'oc_'".into(),
+        ));
+    }
     config.channels.feishu = Some(FeishuChannelConfig {
         app_id,
         app_secret,
         mention_only: update.mention_only,
         allow_from,
+        default_chat_id,
     });
     Ok(())
 }
@@ -409,6 +451,7 @@ pub fn feishu_snapshot(config: &Config) -> serde_json::Value {
                 "app_secret_set": !f.app_secret.trim().is_empty(),
                 "app_secret_hint": mask_secret(&f.app_secret),
                 "mention_only": f.mention_only,
+                "default_chat_id": f.default_chat_id,
             })
         });
 

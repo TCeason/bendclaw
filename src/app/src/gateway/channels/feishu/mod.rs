@@ -2,6 +2,10 @@ pub mod adapter;
 pub mod config;
 pub mod delivery;
 pub mod message;
+pub mod registration;
+pub mod setup;
+pub mod state;
+pub mod target;
 pub mod token;
 pub mod ws;
 

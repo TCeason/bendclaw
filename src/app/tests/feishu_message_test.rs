@@ -11,6 +11,7 @@ fn default_config() -> FeishuChannelConfig {
         app_secret: "app_secret".into(),
         mention_only: false,
         allow_from: vec![],
+        default_chat_id: String::new(),
     }
 }
 

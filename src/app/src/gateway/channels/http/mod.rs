@@ -1,4 +1,5 @@
 mod assets;
+mod channel_setup;
 pub mod dashboard;
 pub mod server;
 pub mod stream;

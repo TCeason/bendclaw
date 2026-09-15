@@ -13,6 +13,8 @@ pub struct FeishuChannelConfig {
     pub mention_only: bool,
     #[serde(default)]
     pub allow_from: Vec<String>,
+    #[serde(default)]
+    pub default_chat_id: String,
 }
 
 fn default_true() -> bool {
