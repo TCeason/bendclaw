@@ -6,6 +6,7 @@ const hints = [
   { keys: ['up', 'down'], action: 'select' },
   { keys: 'tab', action: 'details' },
   { keys: 'e', action: 'edit' },
+  { keys: 'r', action: 'run now' },
   { keys: 'd', action: 'delete' },
   { keys: 'escape', action: 'close' },
 ]

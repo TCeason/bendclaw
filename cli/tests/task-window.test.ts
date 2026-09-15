@@ -198,6 +198,7 @@ describe('task window', () => {
       { keys: ['up', 'down'], action: 'select' },
       { keys: 'tab', action: 'details' },
       { keys: 'e', action: 'edit' },
+      { keys: 'r', action: 'run now' },
       { keys: 'd', action: 'delete' },
       { keys: 'escape', action: 'close' },
     ])
@@ -212,6 +213,7 @@ describe('task window', () => {
       if (focused) expect(text).not.toContain('to delete')
       else {
         expect(text).toContain('to edit')
+        expect(text).toContain('to run now')
         expect(text).toContain('to delete')
       }
       expect(text).not.toContain('to history')
