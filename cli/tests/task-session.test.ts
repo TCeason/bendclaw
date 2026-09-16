@@ -42,7 +42,7 @@ function harness(api: Partial<TaskSessionApi>, hostOverrides: Partial<TaskSessio
     delete: async () => {}, update: async id => ({ task: task(id), next_runs: [] }),
     run: async () => {}, ...api,
   })
-  return { session, errors, view: () => overlay }
+  return { session, errors, view: () => overlay, hideOverlay: () => { overlay = null } }
 }
 
 test('cold open is immediate, shares one request, and Esc does not wait for I/O', async () => {
@@ -147,6 +147,23 @@ test('run now while a run is in flight reports queued, not a failure', async () 
   await flush()
   expect(h.errors.some(e => e.includes('already has a run in flight'))).toBe(true)
   expect(h.errors.some(e => e.includes('Task operation failed'))).toBe(false)
+  h.session.dispose()
+})
+
+test('run now restores focus on the acted-on row after the confirm overlay', async () => {
+  const h = harness({}, {
+    collectAnswers: async questions => {
+      h.hideOverlay() // the ask-user overlay replaces the task window
+      return questions.map(q => ({ header: q.header, question: q.question, answer: 'Run now' }))
+    },
+  })
+  h.session.open()
+  await flush()
+  await h.session.handleKey({ type: 'down' })
+  expect(h.view()?.items[h.view()!.focusIndex]?.id).toBe('b')
+  await h.session.handleKey({ type: 'char', char: 'r' })
+  await flush()
+  expect(h.view()?.items[h.view()!.focusIndex]?.id).toBe('b')
   h.session.dispose()
 })
 

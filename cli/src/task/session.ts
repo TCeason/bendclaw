@@ -259,8 +259,10 @@ export class TaskSession {
       this.#pending.delete(id)
       if (queued) void this.#refresh()
       // Update any currently visible list from cache, but only the original
-      // run confirmation may restore its temporarily hidden window.
-      this.#paint(nextFocus, kind === 'run' && generation === this.#generation)
+      // run confirmation may restore its temporarily hidden window. That
+      // confirm overlay replaces the list, so the selector can no longer
+      // report the selection — restore the acted-on row by id.
+      this.#paint(kind === 'run' ? id : nextFocus, kind === 'run' && generation === this.#generation)
     }
   }
 
