@@ -1,4 +1,4 @@
-use evot::auth;
+use evot::api::auth;
 use napi::Result as NapiResult;
 use napi_derive::napi;
 
@@ -57,11 +57,11 @@ pub async fn auth_sync_notices() -> NapiResult<String> {
     to_json(&notices)
 }
 
-async fn sync_models_inner() -> evot::error::Result<evot::auth::ModelsCache> {
+async fn sync_models_inner() -> evot::api::Result<evot::api::auth::ModelsCache> {
     let state =
-        auth::load_auth()?.ok_or_else(|| evot::error::EvotError::Conf("not logged in".into()))?;
+        auth::load_auth()?.ok_or_else(|| evot::api::EvotError::Conf("not logged in".into()))?;
     let response = auth::sync_models(&state).await?;
-    let cache = evot::auth::ModelsCache::new(now_ms(), response);
+    let cache = evot::api::auth::ModelsCache::new(now_ms(), response);
     auth::save_models_cache(&cache)?;
     Ok(cache)
 }
@@ -90,7 +90,7 @@ pub async fn auth_refresh_session() -> NapiResult<String> {
     };
     match auth::fetch_catalog(&state).await {
         auth::CatalogOutcome::Ready(response) => {
-            let cache = evot::auth::ModelsCache::new(now_ms(), response);
+            let cache = evot::api::auth::ModelsCache::new(now_ms(), response);
             auth::save_models_cache(&cache).map_err(to_napi)?;
             to_json(&serde_json::json!({ "status": "recovered", "user": state.user }))
         }
@@ -124,9 +124,9 @@ fn to_napi<E: std::fmt::Display>(error: E) -> napi::Error {
 
 use std::collections::HashMap;
 
-pub fn cloud_model_meta() -> HashMap<String, evot::auth::FreeModelOption> {
+pub fn cloud_model_meta() -> HashMap<String, evot::api::auth::FreeModelOption> {
     let mut map = HashMap::new();
-    if let Ok(Some(cache)) = evot::auth::load_models_cache() {
+    if let Ok(Some(cache)) = evot::api::auth::load_models_cache() {
         for model in cache.response.models {
             map.insert(model.id.clone(), model);
         }
@@ -138,7 +138,7 @@ pub fn cloud_model_meta() -> HashMap<String, evot::auth::FreeModelOption> {
 /// The server owns the heading and the ordering; the CLI only renders them.
 pub fn cloud_provider_groups() -> HashMap<String, (String, i64)> {
     let mut map = HashMap::new();
-    if let Ok(Some(cache)) = evot::auth::load_models_cache() {
+    if let Ok(Some(cache)) = evot::api::auth::load_models_cache() {
         for group in cache.response.providers {
             let name = group.name.clone();
             map.insert(name, (group.label, group.sort_order));
@@ -149,6 +149,6 @@ pub fn cloud_provider_groups() -> HashMap<String, (String, i64)> {
 
 #[napi]
 pub fn auth_notices() -> Option<String> {
-    let cache = evot::auth::load_models_cache().ok()??;
+    let cache = evot::api::auth::load_models_cache().ok()??;
     serde_json::to_string(&cache.response.notices).ok()
 }

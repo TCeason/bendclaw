@@ -12,16 +12,16 @@ use crate::conversation::convert::extract_content_text;
 use crate::conversation::convert::from_agent_messages;
 use crate::conversation::convert::total_usage;
 use crate::conversation::convert::transcript_from_agent_message;
-use crate::types::ContextCompactionStartedStats;
-use crate::types::LlmCallCompletedStats;
-use crate::types::LlmCallMetrics;
-use crate::types::LlmCallRetryStats;
-use crate::types::LlmCallStartedStats;
-use crate::types::ToolDef;
-use crate::types::ToolFinishedStats;
+use crate::observability::ContextCompactionStartedStats;
+use crate::observability::LlmCallCompletedStats;
+use crate::observability::LlmCallMetrics;
+use crate::observability::LlmCallRetryStats;
+use crate::observability::LlmCallStartedStats;
+use crate::observability::ToolDef;
+use crate::observability::ToolFinishedStats;
+use crate::observability::TranscriptStats;
+use crate::observability::UsageSummary;
 use crate::types::TranscriptItem;
-use crate::types::TranscriptStats;
-use crate::types::UsageSummary;
 
 // ---------------------------------------------------------------------------
 // RuntimeEvent — private orchestration signal
@@ -39,7 +39,7 @@ pub enum RuntimeEvent {
     },
     CompactionCompleted {
         reason: crate::types::CompactReason,
-        result: crate::types::CompactionResult,
+        result: crate::observability::CompactionResult,
         summary: Option<String>,
         messages: Vec<evot_engine::AgentMessage>,
         state: evot_engine::CompactionState,
@@ -529,7 +529,7 @@ pub fn map_agent_event(event: &evot_engine::AgentEvent) -> Vec<RuntimeEvent> {
             will_retry,
         } => {
             let result = if stats.messages_evicted > 0 || stats.current_run_reclaimed > 0 {
-                crate::types::CompactionResult::Compacted {
+                crate::observability::CompactionResult::Compacted {
                     before_message_count: stats.before_message_count,
                     after_message_count: stats.after_message_count,
                     before_tokens: stats.before_tokens,
@@ -541,7 +541,7 @@ pub fn map_agent_event(event: &evot_engine::AgentEvent) -> Vec<RuntimeEvent> {
                     fallback_reason: stats.fallback_reason.clone(),
                 }
             } else {
-                crate::types::CompactionResult::NoOp
+                crate::observability::CompactionResult::NoOp
             };
 
             let reason = map_compact_reason(*reason);

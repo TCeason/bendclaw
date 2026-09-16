@@ -3,7 +3,7 @@
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use super::traits::StreamEvent;
+use crate::provider::traits::StreamEvent;
 
 #[derive(Clone)]
 pub enum StreamSink {

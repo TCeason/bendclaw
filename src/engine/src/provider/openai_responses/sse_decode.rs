@@ -7,9 +7,9 @@ use crate::context::now_ms;
 use crate::provider::error::classify_stream_error;
 use crate::provider::error::ProviderError;
 use crate::provider::json_repair::try_repair_json;
-use crate::provider::sse::SseReader;
-use crate::provider::stream_http::SseEvent;
-use crate::provider::stream_sink::StreamSink;
+use crate::provider::stream::http::SseEvent;
+use crate::provider::stream::sink::StreamSink;
+use crate::provider::stream::sse::SseReader;
 use crate::provider::traits::*;
 use crate::types::*;
 

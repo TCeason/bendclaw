@@ -14,8 +14,8 @@ use super::json_fallback;
 use super::request;
 use super::sse_decode;
 use crate::provider::error::*;
-use crate::provider::stream_http::StreamResponseKind;
-use crate::provider::stream_http::{self};
+use crate::provider::stream::http::StreamResponseKind;
+use crate::provider::stream::http::{self};
 use crate::provider::traits::*;
 
 pub struct OpenAiCompatProvider;
@@ -30,7 +30,7 @@ impl StreamProvider for OpenAiCompatProvider {
     ) -> Result<StreamOutcome, ProviderError> {
         self.stream_sink(
             config,
-            crate::provider::stream_sink::StreamSink::Legacy(tx),
+            crate::provider::stream::sink::StreamSink::Legacy(tx),
             cancel,
         )
         .await
@@ -44,7 +44,7 @@ impl StreamProvider for OpenAiCompatProvider {
     ) -> Result<StreamOutcome, ProviderError> {
         self.stream_sink(
             config,
-            crate::provider::stream_sink::StreamSink::Bounded {
+            crate::provider::stream::sink::StreamSink::Bounded {
                 tx,
                 cancel: cancel.clone(),
             },
@@ -58,7 +58,7 @@ impl OpenAiCompatProvider {
     async fn stream_sink(
         &self,
         config: StreamConfig,
-        tx: crate::provider::stream_sink::StreamSink,
+        tx: crate::provider::stream::sink::StreamSink,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<StreamOutcome, ProviderError> {
         let model_config = config.model_config.as_ref().ok_or_else(|| {
@@ -93,11 +93,11 @@ impl OpenAiCompatProvider {
         let builder = builder.json(&body);
 
         // Send request and check HTTP status
-        let response = stream_http::send_stream_request(builder).await?;
-        let response = stream_http::check_error_status(response).await?;
+        let response = http::send_stream_request(builder).await?;
+        let response = http::check_error_status(response).await?;
 
         // Classify response by content-type
-        let kind = stream_http::classify_response(&response);
+        let kind = http::classify_response(&response);
         debug!("OpenAI compat response kind: {kind:?}");
 
         match kind {

@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod api;
 pub(crate) mod atomic_file;
 pub mod auth;
 pub mod automation;
@@ -8,9 +9,11 @@ pub mod compact;
 pub mod conf;
 pub mod contracts;
 pub mod conversation;
+pub mod delivery;
 pub mod error;
 pub mod gateway;
 pub mod models;
+pub mod observability;
 pub mod search;
 pub mod sessions;
 pub mod share;

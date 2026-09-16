@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use evot::agent::Agent;
-use evot::agent::BackgroundReason;
-use evot::agent::ForkRequest;
-use evot::agent::HostTools;
-use evot::agent::QueryRequest;
-use evot::agent::ToolMode;
-use evot::models::ModelSelection;
+use evot::api::Agent;
+use evot::api::BackgroundReason;
+use evot::api::ForkRequest;
+use evot::api::HostTools;
+use evot::api::ModelSelection;
+use evot::api::QueryRequest;
+use evot::api::ToolMode;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use tokio::sync::mpsc as tokio_mpsc;
@@ -37,13 +37,13 @@ impl NapiAgent {
     pub async fn create(model: Option<String>, env_file: Option<String>) -> Result<Self> {
         init_tracing();
 
-        let config = evot::conf::Config::load_with_env_file(env_file.as_deref())
+        let config = evot::api::Config::load_with_env_file(env_file.as_deref())
             .map_err(|e| Error::from_reason(format!("config load failed: {e}")))?
             .with_model(model)
             .map_err(|e| Error::from_reason(format!("config model: {e}")))?;
 
         let env_file_path = config.env_file_path.to_string_lossy().to_string();
-        let agent = evot::bootstrap::build_agent(&config)
+        let agent = evot::api::build_agent(&config)
             .await
             .map_err(|e| Error::from_reason(format!("agent init: {e}")))?;
 
@@ -149,12 +149,12 @@ impl NapiAgent {
             .map_err(|e| Error::from_reason(format!("query failed: {e}")))?;
 
         match outcome {
-            evot::agent::SubmitOutcome::Command(msg) => Ok(NapiSubmitOutcome {
+            evot::api::SubmitOutcome::Command(msg) => Ok(NapiSubmitOutcome {
                 kind: "command".into(),
                 run: std::sync::Mutex::new(None),
                 message: Some(msg),
             }),
-            evot::agent::SubmitOutcome::Run(run) => {
+            evot::api::SubmitOutcome::Run(run) => {
                 let sid = run.session_id.clone();
                 let handle = run.handle();
 
@@ -453,7 +453,7 @@ impl NapiAgent {
         let has_api_key = !llm.api_key.is_empty();
         let available = self.collect_models(&config);
         let thinking_level = ModelSelection::display_thinking_level_for(&llm);
-        let info = evot::contracts::ConfigInfo {
+        let info = evot::api::ConfigInfo {
             provider,
             protocol: llm.protocol.to_string(),
             env_path,
@@ -478,12 +478,12 @@ impl NapiAgent {
             .collect())
     }
 
-    fn load_config(&self) -> Result<evot::conf::Config> {
-        evot::conf::Config::load_with_env_file(Some(&self.env_file_path))
+    fn load_config(&self) -> Result<evot::api::Config> {
+        evot::api::Config::load_with_env_file(Some(&self.env_file_path))
             .map_err(|e| Error::from_reason(format!("config reload failed: {e}")))
     }
 
-    fn collect_models(&self, config: &evot::conf::Config) -> Vec<serde_json::Value> {
+    fn collect_models(&self, config: &evot::api::Config) -> Vec<serde_json::Value> {
         let llm = self.agent.llm();
         let free_meta = crate::cloud_model_meta();
         // The server names and orders its own groups; membership decides which
@@ -555,7 +555,7 @@ impl NapiAgent {
     /// all, so a legacy reader sees exactly what it saw before.
     fn attach_thinking_levels(
         entry: &mut serde_json::Value,
-        config: &evot::conf::Config,
+        config: &evot::api::Config,
         provider: &str,
         model: &str,
     ) {
@@ -613,7 +613,7 @@ impl NapiAgent {
         // config write fails; the default then falls back on next start.
         if let Ok(mut config) = self.load_config() {
             let provider = self.agent.llm().provider.clone();
-            let _ = evot::conf::persist_default_thinking_level(&mut config, &provider, level);
+            let _ = evot::api::persist_default_thinking_level(&mut config, &provider, level);
         }
         Some(ModelSelection::display_thinking_level_for(
             &self.agent.llm(),
@@ -628,7 +628,7 @@ impl NapiAgent {
     /// the live selection untouched rather than silently clamping.
     #[napi]
     pub fn set_thinking_level(&self, level: String) -> Option<String> {
-        let parsed = evot::conf::thinking_level_from_str(&level).ok()?;
+        let parsed = evot::api::thinking_level_from_str(&level).ok()?;
         if !self.agent.supported_thinking_levels().contains(&parsed) {
             return None;
         }
@@ -637,7 +637,7 @@ impl NapiAgent {
         // config write fails; the default then falls back on next start.
         if let Ok(mut config) = self.load_config() {
             let provider = self.agent.llm().provider.clone();
-            let _ = evot::conf::persist_default_thinking_level(&mut config, &provider, parsed);
+            let _ = evot::api::persist_default_thinking_level(&mut config, &provider, parsed);
         }
         Some(ModelSelection::display_thinking_level_for(
             &self.agent.llm(),

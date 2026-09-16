@@ -564,7 +564,7 @@ fn update_compact_seed(seed: &mut Option<evot_engine::CompactionState>, items: &
 /// resolve a span's payload from the nearest non-empty record (see the
 /// dashboard trace view).
 fn dedupe_llm_request_payload(last_hash: &mut Option<u64>, items: &mut [TranscriptItem]) {
-    use crate::types::observability::TranscriptStats;
+    use crate::observability::TranscriptStats;
 
     for item in items {
         let Some(TranscriptStats::LlmCallStarted(mut stats)) = TranscriptStats::try_from_item(item)
@@ -582,7 +582,7 @@ fn dedupe_llm_request_payload(last_hash: &mut Option<u64>, items: &mut [Transcri
     }
 }
 
-fn llm_payload_hash(system_prompt: &str, tools: &[crate::types::observability::ToolDef]) -> u64 {
+fn llm_payload_hash(system_prompt: &str, tools: &[crate::observability::ToolDef]) -> u64 {
     use std::hash::Hash;
     use std::hash::Hasher;
 

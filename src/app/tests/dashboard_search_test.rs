@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use evot::observability::UsageSummary;
 use evot::sessions::Session;
 use evot::storage::MemoryStorage;
 use evot::types::ListSessions;
@@ -292,8 +293,8 @@ async fn delete_session_removes_only_target() -> TestResult {
 /// recent list, armed delete, and highlighted match snippets.
 #[test]
 fn chat_page_embeds_session_navigation() {
-    let html = include_str!("../src/gateway/channels/http/static/index.html");
-    let js = include_str!("../src/gateway/channels/http/static/ui/chat.js");
+    let html = include_str!("../assets/console/index.html");
+    let js = include_str!("../assets/console/ui/chat.js");
     assert!(html.contains("id=\"recentSessions\""));
     assert!(html.contains("id=\"searchOverlay\""));
     assert!(html.contains("id=\"modelSelect\""));

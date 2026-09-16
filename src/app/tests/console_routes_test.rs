@@ -277,8 +277,8 @@ async fn settings_url_redirects_to_models() -> TestResult {
 
 #[test]
 fn models_page_has_only_cloud_and_custom_sections() {
-    let html = include_str!("../src/gateway/channels/http/static/ui/models.html");
-    let js = include_str!("../src/gateway/channels/http/static/ui/models.js");
+    let html = include_str!("../assets/console/ui/models.html");
+    let js = include_str!("../assets/console/ui/models.js");
 
     // These are the only top-level concepts on the page. Global thinking is a
     // compact header control rather than a third configuration section.
@@ -668,7 +668,7 @@ async fn chat_assets_are_served() -> TestResult {
     assert!(content_type.starts_with("text/javascript"));
     assert!(control.contains("export async function requestSteering"));
     assert!(!control.contains("document."));
-    let chat = include_str!("../src/gateway/channels/http/static/ui/chat.js");
+    let chat = include_str!("../assets/console/ui/chat.js");
     assert!(chat.contains("import { streamChat }"));
     assert!(!chat.contains("response.body.getReader()"));
     let (status, content_type, body) = get("/ui/chat.css").await?;
@@ -1483,7 +1483,7 @@ async fn session_detail_replays_transcript_nodes() -> TestResult {
                     },
                 ],
                 stop_reason: "stop".into(),
-                usage: evot::types::UsageSummary::default(),
+                usage: evot::observability::UsageSummary::default(),
                 model: "claude-sonnet-4-6".into(),
                 provider: "anthropic".into(),
                 timestamp: 1_700_000_000_000,
@@ -1491,34 +1491,38 @@ async fn session_detail_replays_transcript_nodes() -> TestResult {
             },
             // Stats never replay as nodes, so the readings must be folded
             // server-side from the raw entries instead.
-            evot::types::TranscriptStats::LlmCallCompleted(evot::types::LlmCallCompletedStats {
-                turn: 1,
-                attempt: 1,
-                usage: evot::types::UsageSummary {
-                    input: 900,
-                    output: 300,
-                    cache_read: 100,
-                    cache_write: 0,
+            evot::observability::TranscriptStats::LlmCallCompleted(
+                evot::observability::LlmCallCompletedStats {
+                    turn: 1,
+                    attempt: 1,
+                    usage: evot::observability::UsageSummary {
+                        input: 900,
+                        output: 300,
+                        cache_read: 100,
+                        cache_write: 0,
+                    },
+                    metrics: Some(evot::observability::LlmCallMetrics {
+                        duration_ms: 4_000,
+                        ttfb_ms: 200,
+                        ttft_ms: 400,
+                        streaming_ms: 3_000,
+                        chunk_count: 42,
+                    }),
+                    error: None,
+                    context_window: 10_000,
+                    stop_reason: "stop".into(),
                 },
-                metrics: Some(evot::types::LlmCallMetrics {
-                    duration_ms: 4_000,
-                    ttfb_ms: 200,
-                    ttft_ms: 400,
-                    streaming_ms: 3_000,
-                    chunk_count: 42,
-                }),
-                error: None,
-                context_window: 10_000,
-                stop_reason: "stop".into(),
-            })
+            )
             .to_item(),
-            evot::types::TranscriptStats::ToolFinished(evot::types::ToolFinishedStats {
-                tool_call_id: "tc-1".into(),
-                tool_name: "read".into(),
-                result_tokens: 12,
-                duration_ms: 80,
-                is_error: false,
-            })
+            evot::observability::TranscriptStats::ToolFinished(
+                evot::observability::ToolFinishedStats {
+                    tool_call_id: "tc-1".into(),
+                    tool_name: "read".into(),
+                    result_tokens: 12,
+                    duration_ms: 80,
+                    is_error: false,
+                },
+            )
             .to_item(),
         ])
         .await?;

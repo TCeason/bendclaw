@@ -18,7 +18,7 @@ use std::sync::Arc;
 use evot::agent::run::RunEvent;
 use evot::agent::run::RunEventPayload;
 use evot::agent::Run;
-use evot::types::UsageSummary;
+use evot::observability::UsageSummary;
 use tokio::sync::mpsc;
 
 /// Helper: create a run_finished RunEvent.

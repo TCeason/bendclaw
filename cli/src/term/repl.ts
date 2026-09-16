@@ -29,9 +29,9 @@ import { assistantToolCalls } from './app/assistant-content.js'
 import type { UIAssistantBlock } from './app/types.js'
 import { assistantMessageToOutputLines } from '../render/assistant.js'
 import { HistoryManager } from '../session/history.js'
-import { ScreenLog } from '../session/screen-log.js'
+import { ScreenLog } from './diagnostics/screen-log.js'
 import { SessionHook } from '../session/hook.js'
-import { RendererTrace } from '../session/renderer-trace.js'
+import { RendererTrace } from './diagnostics/renderer-trace.js'
 import { findLastAssistantMarkdown, findLastAssistantTurn } from '../session/assistant-markdown.js'
 import { isSlashCommand, resolveCommand, buildHardenPrompt } from '../commands/index.js'
 import { BannerCache } from './banner-cache.js'
@@ -103,24 +103,12 @@ import { extractPlanItems, type PlanModeItem } from './plan-mode.js'
 import { currentModelSpec, formatModelLabel, formatModelOptionLabel, hasPremiumModel, isCloudModel, modelOptions, modelSelectorItems, selectModelOption } from './app/provider.js'
 import chalk from 'chalk'
 import {
-  shouldCollapse,
-  cleanPastedText,
-  formatPastedTextRef,
-  formatImageRef,
   parsePasteRefs,
   resolveHistoryText,
   deleteRefBackspace,
   resolveSubmitText,
 } from './input/paste_refs.js'
-import {
-  probeClipboardImage,
-  readClipboardImage,
-  MAX_IMAGE_SIZE_BYTES,
-} from './input/clipboard_image.js'
-import { getTextFromClipboard } from './input/clipboard_text.js'
 import { InputImageHistory } from './input/image-history.js'
-import { storeImage, formatImageSourceText } from './input/image_store.js'
-import type { ContentBlock } from '../native/index.js'
 import { tryStartServer, registerDashboard, stopOwnedServer, type ServerState } from './app/server.js'
 import { BackgroundScheduler } from '../background/scheduler.js'
 import { inspectConsole } from '../channels/console-client.js'
@@ -148,13 +136,12 @@ import { RunInteraction, type RunInteractionInput } from './app/run-interaction.
 import { ManualCompaction } from './app/manual-compaction.js'
 import { busySubmissionAction } from './app/busy-submission.js'
 import { PendingImages } from './app/pending-images.js'
-import { mergeQueuedIntoEditorText } from './app/queue-restore.js'
+import { createPasteHandlers, createPasteStore } from './app/paste-input.js'
+import { createQueueEdit } from './app/queue-edit.js'
 import { BackgroundTerminals } from './app/background-terminals.js'
 import { isBackgroundPanelShortcut } from './app/background-panel.js'
 import {
-  createQueueSelectorState,
   isQueueManageShortcut,
-  type ManagedQueuedPrompt,
 } from './app/queue-manage.js'
 import { FileCompletion } from './app/file-completion.js'
 import { extractAtPrefix, completeAtFile } from '../commands/file-completion.js'
@@ -201,7 +188,7 @@ import {
 
 const SPINNER_INTERVAL_MS = 100
 
-import { readPromptQueues, visibleQueueEntries, reconcilePromptQueue, type QueuedUserMessage } from './app/prompt-queue.js'
+import { type QueuedUserMessage } from './app/prompt-queue.js'
 type QueuedCompactionSubmission = { displayText: string; expandedText: string; contentJson?: string }
 type CommandWindowPreview =
   | { kind: 'selector'; trigger: 'model' | 'resume' | 'skill'; sourceText: string; generation: number; state: SelectorState }
@@ -577,8 +564,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   // committed to history when steering consumes them at the next safe boundary,
   // so they never render above the still-streaming reply.
   let queuedUserMessages: QueuedUserMessage[] = []
-  let editingQueuedPrompt: ManagedQueuedPrompt | null = null
-  let stashedQueueEditDraft = ''
   let expanded = false
   // Rendered-history cache — see HistoryRenderCache. Committed history is
   // append-only (or fully cleared), never mutated in place, so the flattened
@@ -938,7 +923,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   function refreshCommandWindowPreview(allowMount: boolean): void {
-    if (overlay.kind !== 'none' || isLoading || editingQueuedPrompt) {
+    if (overlay.kind !== 'none' || isLoading || queueEdit.editingEntry()) {
       // A promoted command window continues to own its generation so an
       // in-flight resume load can update the focused selector. Other overlays
       // invalidate any stale preview request.
@@ -1109,12 +1094,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let serverState: ServerState | null = null
 
   // Paste ref state
-  const pastedChunks = new Map<number, string>()
-  const pastedImages = new Map<number, { id: number; base64: string; mediaType: string; filePath?: string }>()
+  const pasteStore = createPasteStore()
+  const { chunks: pastedChunks, images: pastedImages } = pasteStore
   // Images whose bytes are still being extracted. The ref is already visible in
   // the composer, so a submit has to await these before reading pastedImages.
   const pendingImages = new PendingImages()
-  let nextPasteId = 1
 
   // Update info
   let updateAvailable: { version: string } | null = null
@@ -1163,7 +1147,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   const historyMgr = new HistoryManager(agent.cwd)
   const inputImageHistory = new InputImageHistory()
-  const entries = historyMgr.load().map(text => inputImageHistory.deserialize(text, () => nextPasteId++))
+  const entries = historyMgr.load().map(text => inputImageHistory.deserialize(text, () => pasteStore.allocId()))
   historyState = createHistoryState(entries)
 
   let configInfo: ConfigInfo | undefined
@@ -2021,149 +2005,22 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   ;(backgroundWaitTimer as unknown as { unref?: () => void }).unref?.()
   resources.add(() => clearInterval(backgroundWaitTimer))
 
-  /** Insert pasted text, collapsing large pastes into refs. */
-  function insertPaste(raw: string) {
-    const cleaned = cleanPastedText(raw)
-    if (shouldCollapse(cleaned)) {
-      const id = nextPasteId++
-      const numLines = (cleaned.match(/\n/g) || []).length
-      pastedChunks.set(id, cleaned)
-      const ref = formatPastedTextRef(id, numLines)
-      mutateEditor(state => insertText(state, ref))
-    } else {
-      mutateEditor(state => insertText(state, cleaned))
-    }
-  }
-
-  /**
-   * Show the ref for a detected clipboard image, then load its bytes in the
-   * background. Extracting a large image costs hundreds of milliseconds, so
-   * waiting for it before drawing made the composer look frozen.
-   */
-  function beginImagePaste(): void {
-    const id = nextPasteId++
-    const ref = formatImageRef(id)
-    mutateEditor(state => insertText(state, ref))
-    renderer.requestRender()
-
-    const load = (async () => {
-      const img = await readClipboardImage()
-      // The ref can be gone by now: deleted, cleared, or already submitted.
-      // Dropping the bytes is correct, and re-adding them would resurrect an
-      // image the user removed.
-      if (!getEditorText(editor).includes(ref)) return
-      if (!img) {
-        removeImageRef(id, ref)
-        return
-      }
-      // Store to disk immediately so images survive past session memory
-      const filePath = await storeImage(img.base64, img.mediaType)
-      if (!getEditorText(editor).includes(ref)) return
-      pastedImages.set(id, {
-        id,
-        base64: img.base64,
-        mediaType: img.mediaType,
-        filePath: filePath ?? undefined,
-      })
-    })()
-
-    pendingImages.track(id, load)
-  }
-
-  /** Drop a ref whose bytes never arrived, leaving no dead placeholder behind. */
-  function removeImageRef(id: number, ref: string): void {
-    pastedImages.delete(id)
-    mutateEditor(state => {
-      // A ref never spans lines, so exactly one line changes.
-      const lineIndex = state.lines.findIndex(line => line.includes(ref))
-      if (lineIndex === -1) return state
-      const line = state.lines[lineIndex]!
-      const start = line.indexOf(ref)
-      const lines = [...state.lines]
-      lines[lineIndex] = line.slice(0, start) + line.slice(start + ref.length)
-      // Text after the ref slides left; a cursor sitting there must follow it.
-      const cursorCol = state.cursorLine === lineIndex && state.cursorCol > start
-        ? Math.max(start, state.cursorCol - ref.length)
-        : state.cursorCol
-      return { ...state, lines, cursorCol, preferredVisualCol: undefined }
-    })
-    renderer.requestRender()
-  }
-
-  /** Try to paste image from clipboard (Ctrl+V). */
-  async function tryPasteImage() {
-    const probe = await probeClipboardImage()
-    if (!probe) return
-    if (probe.byteLength !== null && probe.byteLength > MAX_IMAGE_SIZE_BYTES) return
-    beginImagePaste()
-  }
-
-  /** Paste clipboard contents (Cmd+V). Image wins when both are present. */
-  async function tryPasteClipboard() {
-    const probe = await probeClipboardImage()
-    if (probe) {
-      if (probe.byteLength !== null && probe.byteLength > MAX_IMAGE_SIZE_BYTES) return
-      beginImagePaste()
-      return
-    }
-    const text = await getTextFromClipboard()
-    if (text) {
-      insertPaste(text)
-      renderer.requestRender()
-    }
-  }
-
-  /**
-   * Run a submit once every image in the draft has its bytes. Submitting while
-   * a load is in flight would silently send the ref as plain text.
-   */
-  function withDraftImages(submit: () => void): void {
-    pendingImages.gate(
-      getEditorText(editor),
-      () => {
-        if (destroyed) return
-        submit()
-      },
-      () => renderer.requestRender(),
-    )
-  }
-
-  /** Build content blocks for images. Returns blocks and resolved image IDs. */
-  function buildImageContentBlocks(): { blocks: ContentBlock[]; resolvedIds: Set<number> } | null {
-    const displayText = getDisplayText()
-    const imageRefs = parsePasteRefs(displayText).filter(r => r.type === 'image')
-    const resolved: { id: number; base64: string; mediaType: string; filePath?: string }[] = []
-    const unresolvedIds = new Set<number>()
-    for (const ref of imageRefs) {
-      const img = pastedImages.get(ref.id)
-      if (img) {
-        resolved.push(img)
-      } else {
-        unresolvedIds.add(ref.id)
-      }
-    }
-    if (resolved.length === 0) return null
-    const blocks: ContentBlock[] = []
-    // Only strip resolved image refs from text — unresolved ones stay as [Image #N]
-    const text = getExpandedText(new Set(resolved.map(r => r.id)))
-    // Annotate with image source paths so the model can reference files on disk
-    const sourceAnnotations = resolved
-      .filter(r => r.filePath)
-      .map(r => formatImageSourceText(r.id, r.filePath!))
-      .join('\n')
-    const fullText = sourceAnnotations ? `${text}\n${sourceAnnotations}` : text
-    if (fullText) blocks.push({ type: 'text', text: fullText })
-    for (const img of resolved) {
-      blocks.push({
-        type: 'image',
-        mimeType: img.mediaType,
-        source: img.filePath
-          ? { type: 'path', path: img.filePath }
-          : { type: 'base64', data: img.base64 },
-      })
-    }
-    return { blocks, resolvedIds: new Set(resolved.map(r => r.id)) }
-  }
+  const {
+    insertPaste,
+    tryPasteImage,
+    tryPasteClipboard,
+    withDraftImages,
+    buildImageContentBlocks,
+  } = createPasteHandlers({
+    store: pasteStore,
+    pendingImages,
+    getEditor: () => editor,
+    mutateEditor,
+    isDestroyed: () => destroyed,
+    requestRender: () => renderer.requestRender(),
+    getDisplayText,
+    getExpandedText,
+  })
 
   async function runQuery(
     text: string,
@@ -2336,7 +2193,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   function handleKey(event: KeyEvent) {
-    if (event.type !== 'escape' || overlay.kind !== 'none' || editor.completion || editingQueuedPrompt) {
+    if (event.type !== 'escape' || overlay.kind !== 'none' || editor.completion || queueEdit.editingEntry()) {
       runInteraction.clear()
     }
     // Typing keeps focus in the composer while refreshing the formal window
@@ -2370,7 +2227,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       renderer.invalidateRowsFrom(liveRegionStartRow)
     }
 
-    if (editingQueuedPrompt) {
+    if (queueEdit.editingEntry()) {
       if (event.type === 'escape' || (event.type === 'ctrl' && event.key === 'c')) {
         cancelQueueEdit()
         return
@@ -2598,117 +2455,32 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     sessionHook.settleRun()
   }
 
-  function managedQueueEntries(): ManagedQueuedPrompt[] {
-    if (!streamRef) return []
-    return visibleQueueEntries(readPromptQueues(streamRef), queuedUserMessages)
-  }
+  const queueEdit = createQueueEdit({
+    getStream: () => streamRef,
+    getQueued: () => queuedUserMessages,
+    setQueued: messages => { queuedUserMessages = messages },
+    getEditor: () => editor,
+    setEditor: next => { editor = next },
+    getOverlay: () => overlay,
+    setOverlay: next => { overlay = next },
+    commitSystem,
+    commitLines,
+    clearAll,
+    requestRender: () => renderer.requestRender(),
+  })
+  const {
+    managedQueueEntries,
+    openQueueSelector,
+    editQueuedPrompt,
+    finishQueueEdit,
+    cancelQueueEdit,
+    saveQueueEdit,
+    removeQueuedPrompt,
+    restoreLastQueuedUserMessageToEditor,
+    restoreQueuedUserMessagesToEditor,
+    reconcileQueuedUserMessages,
+  } = queueEdit
 
-  function openQueueSelector() {
-    let entries: ManagedQueuedPrompt[]
-    try {
-      entries = managedQueueEntries()
-    } catch (err) {
-      commitSystem('sys-queue-err', `  Queue read failed: ${errorText(err)}`, 'error')
-      renderer.requestRender()
-      return
-    }
-    if (entries.length === 0) {
-      overlay = { kind: 'none' }
-      commitSystem('sys-queue-empty', '  No queued prompts.')
-      return
-    }
-    overlay = { kind: 'selector', state: createQueueSelectorState(entries) }
-    renderer.requestRender()
-  }
-
-  function editQueuedPrompt(entry: ManagedQueuedPrompt) {
-    if (!streamRef) return
-    editingQueuedPrompt = entry
-    stashedQueueEditDraft = getEditorText(editor)
-    clearAll()
-    editor = insertText(editor, entry.text)
-    overlay = { kind: 'none' }
-    commitSystem('sys-queue-edit', '  Editing queued prompt · Enter save · Esc discard')
-    renderer.requestRender()
-  }
-
-  function finishQueueEdit() {
-    editingQueuedPrompt = null
-    clearAll()
-    editor = insertText(editor, stashedQueueEditDraft)
-    stashedQueueEditDraft = ''
-    renderer.requestRender()
-  }
-
-  function cancelQueueEdit() {
-    finishQueueEdit()
-    commitSystem('sys-queue-edit-cancel', '  Queue edit discarded.')
-  }
-
-  function saveQueueEdit(text: string) {
-    if (!streamRef || !editingQueuedPrompt || !text.trim()) return
-    const entry = editingQueuedPrompt
-    try {
-      const updated = streamRef.updateQueuedPrompt(entry.queue, entry.id, entry.version, text)
-      queuedUserMessages = queuedUserMessages.map(message => message.id === entry.id
-        ? { ...message, version: updated.version, text }
-        : message)
-      finishQueueEdit()
-      commitSystem('sys-queue-edit-save', '  Queued prompt updated.')
-    } catch (err) {
-      try {
-        const current = managedQueueEntries().find(candidate => candidate.id === entry.id)
-        if (current) editingQueuedPrompt = { ...current, text }
-        else finishQueueEdit()
-      } catch {
-        // Failed refresh is not proof the entry was consumed. Retain the edit
-        // and its draft so the user can retry or explicitly discard it.
-      }
-      commitSystem('sys-queue-err', chalk.red(`  Queue edit failed: ${errorText(err)}`))
-      renderer.requestRender()
-    }
-  }
-
-  function removeQueuedPrompt(entry: ManagedQueuedPrompt) {
-    if (!streamRef) return
-    try {
-      streamRef.removeQueuedPrompt(entry.queue, entry.id, entry.version)
-      queuedUserMessages = queuedUserMessages.filter(message => message.id !== entry.id)
-      openQueueSelector()
-    } catch (err) {
-      reconcileQueuedUserMessages()
-      commitSystem('sys-queue-err', chalk.red(`  Queue remove failed: ${errorText(err)}`))
-      openQueueSelector()
-    }
-  }
-
-  /** Pull the newest queued prompt back into the editor without
-   *  aborting the active run. Native optimistic version matching prevents an
-   *  already-consumed prompt from being silently edited. */
-  function restoreLastQueuedUserMessageToEditor() {
-    if (!streamRef || queuedUserMessages.length === 0) return
-    const queued = queuedUserMessages[queuedUserMessages.length - 1]!
-    try {
-      streamRef.removeQueuedPrompt(queued.queue, queued.id, queued.version)
-      queuedUserMessages = queuedUserMessages.slice(0, -1)
-      const next = mergeQueuedIntoEditorText([queued.text], getEditorText(editor))
-      editor = insertText(clearEditor(editor), next)
-      renderer.requestRender()
-    } catch {
-      // The engine already consumed it at a turn boundary; normal event handling
-      // will commit the visible copy to history.
-    }
-  }
-
-  /** Move mid-stream queued messages into the input box after an interrupt. */
-  function restoreQueuedUserMessagesToEditor() {
-    if (queuedUserMessages.length === 0) return
-    const messages = queuedUserMessages.map(message => message.text)
-    queuedUserMessages = []
-    const next = mergeQueuedIntoEditorText(messages, getEditorText(editor))
-    editor = insertText(clearEditor(editor), next)
-    renderer.requestRender()
-  }
 
   function handleLoadingEnter() {
     const displayText = getDisplayText()
@@ -2721,7 +2493,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
     const action = busySubmissionAction({
       displayText, expandedText, hasImages: imageBlocks !== null,
-      compacting: manualCompaction.active, editingQueue: editingQueuedPrompt !== null,
+      compacting: manualCompaction.active, editingQueue: queueEdit.editingEntry() !== null,
       hasRun: streamRef !== null,
     })
     if (manualCompaction.active) {
@@ -2809,26 +2581,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   /** Commit queued prompts that are no longer present in either native queue. */
-  function reconcileQueuedUserMessages() {
-    if (queuedUserMessages.length === 0 || !streamRef) return
-    let reconciliation: ReturnType<typeof reconcilePromptQueue>
-    try {
-      reconciliation = reconcilePromptQueue(readPromptQueues(streamRef), queuedUserMessages)
-    } catch {
-      return
-    }
-    const { ids: remainingIds, remaining, consumed } = reconciliation
-    for (const message of consumed) commitLines(buildUserMessage(message.text))
-    queuedUserMessages = remaining
-    if (remaining.length === 0 && overlay.kind === 'selector' && overlay.state.owner === SELECTOR_OWNER.queue) {
-      overlay = { kind: 'none' }
-    }
-    if (editingQueuedPrompt && !remainingIds.has(editingQueuedPrompt.id)) {
-      finishQueueEdit()
-      commitSystem('sys-queue-edit-consumed', '  Queued prompt was already consumed; edit closed.')
-    }
-  }
-
   function refreshFileCompletions(acceptSingle: boolean): void {
     const beforeCursor = editor.lines[editor.cursorLine]?.slice(0, editor.cursorCol) ?? ''
     if (!extractAtPrefix(beforeCursor)) return

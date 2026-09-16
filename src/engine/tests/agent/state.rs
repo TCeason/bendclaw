@@ -112,11 +112,11 @@ async fn test_agent_builder_pattern() {
         .with_thinking(ThinkingLevel::Medium)
         .with_max_tokens(4096);
 
-    assert_eq!(agent.system_prompt, "sys");
-    assert_eq!(agent.model, "test-model");
-    assert_eq!(agent.api_key, "key123");
-    assert_eq!(agent.thinking_level, ThinkingLevel::Medium);
-    assert_eq!(agent.max_tokens, Some(4096));
+    assert_eq!(agent.system_prompt(), "sys");
+    assert_eq!(agent.model(), "test-model");
+    assert_eq!(agent.api_key(), "key123");
+    assert_eq!(agent.thinking_level(), ThinkingLevel::Medium);
+    assert_eq!(agent.max_tokens(), Some(4096));
 }
 
 // ---------------------------------------------------------------------------

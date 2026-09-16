@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { isSlashCommand } from '../src/commands/index.js'
 import shapes from './fixtures/contracts/command-shapes.json'
-import { isQueuedCommand, requestSteering } from '../../src/app/src/gateway/channels/http/static/ui/chat-control.js'
+import { isQueuedCommand, requestSteering } from '../../src/app/assets/console/ui/chat-control.js'
 
 test('TUI and Web use the same command boundary without swallowing paths', () => {
   for (const fixture of shapes) {
@@ -30,7 +30,7 @@ test('failed or malformed responses retain uncertainty and never retry', async (
 })
 
 test('console serves the transport and keeps unconfirmed text copyable', async () => {
-  const source = await Bun.file(new URL('../../src/app/src/gateway/channels/http/static/ui/chat.js', import.meta.url)).text()
+  const source = await Bun.file(new URL('../../src/app/assets/console/ui/chat.js', import.meta.url)).text()
   expect(source).toContain('requestSteering(postJson, sessionId, text)')
   expect(source).toContain('Delivery unconfirmed · copy to retry')
   const assets = await Bun.file(new URL('../../src/app/src/gateway/channels/http/assets.rs', import.meta.url)).text()

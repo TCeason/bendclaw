@@ -1,5 +1,5 @@
 use evot::agent::run::observability::StatsAggregator;
-use evot::types::observability::*;
+use evot::observability::*;
 use evot::types::*;
 
 // ---------------------------------------------------------------------------
@@ -111,7 +111,7 @@ fn aggregator_ingests_compaction_completed() {
     agg.ingest(&TranscriptStats::ContextCompactionCompleted(
         ContextCompactionCompletedStats {
             reason: evot::types::CompactReason::Threshold,
-            result: evot::types::CompactionResult::Compacted {
+            result: evot::observability::CompactionResult::Compacted {
                 before_message_count: 20,
                 after_message_count: 10,
                 before_tokens: 50000,
@@ -138,7 +138,7 @@ fn aggregator_ignores_noop_compaction() {
     agg.ingest(&TranscriptStats::ContextCompactionCompleted(
         ContextCompactionCompletedStats {
             reason: evot::types::CompactReason::Threshold,
-            result: evot::types::CompactionResult::NoOp,
+            result: evot::observability::CompactionResult::NoOp,
             context_window: 0,
             will_retry: false,
         },
@@ -152,7 +152,7 @@ fn aggregator_ingests_run_once_cleared_compaction() {
     agg.ingest(&TranscriptStats::ContextCompactionCompleted(
         ContextCompactionCompletedStats {
             reason: evot::types::CompactReason::Threshold,
-            result: evot::types::CompactionResult::Compacted {
+            result: evot::observability::CompactionResult::Compacted {
                 before_message_count: 8,
                 after_message_count: 6,
                 before_tokens: 80000,
@@ -179,7 +179,7 @@ fn aggregator_compaction_action_map_positions() {
     agg.ingest(&TranscriptStats::ContextCompactionCompleted(
         ContextCompactionCompletedStats {
             reason: evot::types::CompactReason::Threshold,
-            result: evot::types::CompactionResult::Compacted {
+            result: evot::observability::CompactionResult::Compacted {
                 before_message_count: 10,
                 after_message_count: 8,
                 before_tokens: 40000,

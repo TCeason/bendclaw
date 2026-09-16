@@ -8,7 +8,7 @@ use super::request;
 use super::sse_decode;
 use crate::provider::error::ProviderError;
 use crate::provider::model::ModelConfig;
-use crate::provider::stream_http;
+use crate::provider::stream::http;
 use crate::provider::traits::*;
 
 pub struct OpenAiResponsesProvider;
@@ -23,7 +23,7 @@ impl StreamProvider for OpenAiResponsesProvider {
     ) -> Result<StreamOutcome, ProviderError> {
         self.stream_sink(
             config,
-            crate::provider::stream_sink::StreamSink::Legacy(tx),
+            crate::provider::stream::sink::StreamSink::Legacy(tx),
             cancel,
         )
         .await
@@ -37,7 +37,7 @@ impl StreamProvider for OpenAiResponsesProvider {
     ) -> Result<StreamOutcome, ProviderError> {
         self.stream_sink(
             config,
-            crate::provider::stream_sink::StreamSink::Bounded {
+            crate::provider::stream::sink::StreamSink::Bounded {
                 tx,
                 cancel: cancel.clone(),
             },
@@ -51,7 +51,7 @@ impl OpenAiResponsesProvider {
     async fn stream_sink(
         &self,
         config: StreamConfig,
-        tx: crate::provider::stream_sink::StreamSink,
+        tx: crate::provider::stream::sink::StreamSink,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<StreamOutcome, ProviderError> {
         let model_config = config.model_config.as_ref().ok_or_else(|| {
@@ -88,17 +88,17 @@ impl OpenAiResponsesProvider {
             }
         }
 
-        let response = stream_http::check_error_status(response).await?;
-        match stream_http::classify_response(&response) {
-            stream_http::StreamResponseKind::Streaming => {
+        let response = http::check_error_status(response).await?;
+        match http::classify_response(&response) {
+            http::StreamResponseKind::Streaming => {
                 sse_decode::decode_sse_stream(response, tx, cancel, &config).await
             }
-            stream_http::StreamResponseKind::Json => Err(ProviderError::Api(
+            http::StreamResponseKind::Json => Err(ProviderError::Api(
                 "OpenAI Responses returned JSON for a streaming request".into(),
             )),
-            stream_http::StreamResponseKind::Other(content_type) => Err(ProviderError::Api(
-                format!("Unexpected content type from OpenAI Responses endpoint: {content_type}"),
-            )),
+            http::StreamResponseKind::Other(content_type) => Err(ProviderError::Api(format!(
+                "Unexpected content type from OpenAI Responses endpoint: {content_type}"
+            ))),
         }
     }
 }
@@ -123,5 +123,5 @@ async fn send(
     for (key, value) in model_config.headers() {
         builder = builder.header(key, value);
     }
-    stream_http::send_stream_request(builder.json(body)).await
+    http::send_stream_request(builder.json(body)).await
 }

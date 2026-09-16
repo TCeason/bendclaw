@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { describe, expect, test } from 'bun:test'
-import { ScreenLog } from '../src/session/screen-log.js'
+import { ScreenLog } from '../src/term/diagnostics/screen-log.js'
 
 describe('ScreenLog', () => {
   test('writes rendered screen output without creating a markdown trace', () => {

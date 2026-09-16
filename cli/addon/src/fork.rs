@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use evot::agent::ForkedAgent;
+use evot::api::ForkedAgent;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use tokio::sync::mpsc as tokio_mpsc;

@@ -14,11 +14,11 @@ use serde::Deserialize;
 
 use crate::error::EvotError;
 use crate::error::Result;
+use crate::observability::UsageSummary;
 use crate::types::CompactDetails;
 use crate::types::CompactReason;
 use crate::types::TranscriptEntry;
 use crate::types::TranscriptItem;
-use crate::types::UsageSummary;
 
 #[derive(Deserialize)]
 struct StoredEntry {

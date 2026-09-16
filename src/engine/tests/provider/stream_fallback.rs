@@ -1,6 +1,6 @@
 //! Tests for the shared FallbackEmitter.
 
-use evotengine::provider::stream_fallback::FallbackEmitter;
+use evotengine::provider::stream::fallback::FallbackEmitter;
 use evotengine::provider::StreamEvent;
 use evotengine::types::*;
 

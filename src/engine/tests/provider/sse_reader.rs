@@ -1,4 +1,4 @@
-use evotengine::provider::sse::SseReader;
+use evotengine::provider::stream::sse::SseReader;
 use futures::stream;
 use tokio_util::sync::CancellationToken;
 

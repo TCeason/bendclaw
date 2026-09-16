@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { streamChat } from '../../src/app/src/gateway/channels/http/static/ui/chat-transport.js'
+import { streamChat } from '../../src/app/assets/console/ui/chat-transport.js'
 
 function response(text: string, split: number) {
   const bytes = new TextEncoder().encode(text)

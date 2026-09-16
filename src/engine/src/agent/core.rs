@@ -23,11 +23,11 @@ use crate::types::*;
 /// The main Agent. Owns state, tools, and provider.
 pub struct Agent {
     // State
-    pub system_prompt: String,
-    pub model: String,
-    pub api_key: String,
-    pub thinking_level: ThinkingLevel,
-    pub max_tokens: Option<u32>,
+    pub(super) system_prompt: String,
+    pub(super) model: String,
+    pub(super) api_key: String,
+    pub(super) thinking_level: ThinkingLevel,
+    pub(super) max_tokens: Option<u32>,
     pub(super) model_config: Option<ModelConfig>,
     pub(super) messages: Vec<AgentMessage>,
     pub(super) tools: Vec<Box<dyn AgentTool>>,
@@ -44,7 +44,7 @@ pub struct Agent {
     pub(super) follow_up_mode: QueueMode,
 
     // Context, limits & caching
-    pub context_config: Option<ContextConfig>,
+    pub(super) context_config: Option<ContextConfig>,
     /// Optional dedicated local summary model. Provider-native remote
     /// compaction still uses the active request model.
     pub(super) compaction_context: Option<crate::context::SummarizerContext>,
@@ -52,11 +52,11 @@ pub struct Agent {
     /// Cross-compaction state restored from a persisted session.
     pub(super) compaction_state: Option<crate::context::CompactionState>,
     pub(super) context_management_disabled: bool,
-    pub execution_limits: Option<ExecutionLimits>,
-    pub cache_config: CacheConfig,
-    pub prompt_cache_key: Option<String>,
-    pub tool_execution: ToolExecutionStrategy,
-    pub retry_policy: crate::retry::RetryPolicy,
+    pub(super) execution_limits: Option<ExecutionLimits>,
+    pub(super) cache_config: CacheConfig,
+    pub(super) prompt_cache_key: Option<String>,
+    pub(super) tool_execution: ToolExecutionStrategy,
+    pub(super) retry_policy: crate::retry::RetryPolicy,
 
     // Lifecycle callbacks
     pub(super) before_turn: Option<BeforeTurnFn>,
@@ -241,6 +241,26 @@ impl Agent {
     }
 
     // -- State access --
+
+    pub fn system_prompt(&self) -> &str {
+        &self.system_prompt
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
+    pub fn thinking_level(&self) -> ThinkingLevel {
+        self.thinking_level
+    }
+
+    pub fn max_tokens(&self) -> Option<u32> {
+        self.max_tokens
+    }
 
     pub fn messages(&self) -> &[AgentMessage] {
         &self.messages

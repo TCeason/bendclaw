@@ -3,12 +3,12 @@ use evot::compact::orchestrator::compact_session;
 use evot::compact::orchestrator::CompactSettings;
 use evot::compact::orchestrator::ManualCompactRequest;
 use evot::conf::StorageConfig;
+use evot::observability::UsageSummary;
 use evot::sessions::Session;
 use evot::storage::open_storage;
 use evot::types::AssistantBlock;
 use evot::types::CompactReason;
 use evot::types::TranscriptItem;
-use evot::types::UsageSummary;
 use tempfile::TempDir;
 
 const KEEP_RECENT_TOKENS: usize = 1;

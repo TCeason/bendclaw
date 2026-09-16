@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
-import { ChatStreamState } from '../../src/app/src/gateway/channels/http/static/ui/chat-stream-state.js'
-import { ChatState } from '../../src/app/src/gateway/channels/http/static/ui/chat-state.js'
+import { ChatStreamState } from '../../src/app/assets/console/ui/chat-stream-state.js'
+import { ChatState } from '../../src/app/assets/console/ui/chat-state.js'
 
 test('streamed content keeps block order and resets across compaction', () => {
   const state = new ChatStreamState()

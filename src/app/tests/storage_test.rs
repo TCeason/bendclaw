@@ -1,4 +1,5 @@
 use evot::conf::StorageConfig;
+use evot::observability::UsageSummary;
 use evot::storage::open_storage;
 use evot::types::*;
 use tempfile::TempDir;

@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 
 use crate::agent::RunEvent;
-use crate::conversation::projection as chat;
+use crate::conversation::chat_projection as chat;
 use crate::types::SessionMeta;
 
 pub type SseEvent = std::result::Result<axum::response::sse::Event, Infallible>;

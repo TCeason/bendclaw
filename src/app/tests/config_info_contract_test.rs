@@ -94,7 +94,7 @@ fn query_event_envelope_round_trips_shared_fixtures() -> TestResult {
     let host: evot::contracts::HostEvent = serde_json::from_value(fixtures[2].clone())?;
     assert_eq!(serde_json::to_value(host)?, fixtures[2]);
     let source = include_str!("../../../cli/addon/src/host.rs");
-    assert!(source.contains("evot::contracts::HostEvent::ToolCall"));
+    assert!(source.contains("evot::api::HostEvent::ToolCall"));
     Ok(())
 }
 
@@ -164,7 +164,7 @@ fn config_info_writer_and_reader_use_the_contract_boundary() {
         assert!(source.contains("CancellationToken"));
     }
     let addon = include_str!("../../../cli/addon/src/agent.rs");
-    assert!(addon.contains("let info = evot::contracts::ConfigInfo"));
+    assert!(addon.contains("let info = evot::api::ConfigInfo"));
     let native = include_str!("../../../cli/src/native/index.ts");
     assert!(native.contains("decodeConfigInfo(this.raw.configInfo())"));
     assert!(!native.contains("as ConfigInfo"));

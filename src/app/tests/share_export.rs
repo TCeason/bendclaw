@@ -159,7 +159,7 @@ fn legacy_settings_and_current_stats_contracts_remain_readable(
         export_session(&meta, &legacy, "test").data["entries"][0]["thinkingLevel"],
         "high"
     );
-    let old: evot::types::LlmCallStartedStats = serde_json::from_value(json!({
+    let old: evot::observability::LlmCallStartedStats = serde_json::from_value(json!({
         "turn":0,"attempt":0,"model":"m","message_count":1,"message_bytes":10,"system_prompt_tokens":1
     }))?;
     assert!(old.thinking_level.is_empty());
@@ -171,10 +171,12 @@ fn legacy_settings_and_current_stats_contracts_remain_readable(
         kind: String,
         data: Value,
     }
-    let current = evot::types::TranscriptStats::LlmCallStarted(evot::types::LlmCallStartedStats {
-        thinking_level: "high".into(),
-        ..old
-    })
+    let current = evot::observability::TranscriptStats::LlmCallStarted(
+        evot::observability::LlmCallStartedStats {
+            thinking_level: "high".into(),
+            ..old
+        },
+    )
     .to_item();
     let decoded: Legacy = serde_json::from_value(serde_json::to_value(current)?)?;
     assert_eq!(decoded.r#type, "stats");

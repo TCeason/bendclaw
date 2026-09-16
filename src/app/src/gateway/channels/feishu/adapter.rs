@@ -13,9 +13,9 @@ use crate::agent::Agent;
 use crate::agent::QueryRequest;
 use crate::agent::ToolMode;
 use crate::conf::channels::FeishuChannelConfig;
+use crate::delivery::stream as stream_delivery;
+use crate::delivery::stream::StreamDeliveryConfig;
 use crate::error::Result;
-use crate::gateway::delivery::stream as stream_delivery;
-use crate::gateway::delivery::stream::StreamDeliveryConfig;
 use crate::gateway::Channel;
 use crate::sessions::SessionLocator;
 
@@ -399,12 +399,8 @@ impl FeishuChannel {
                     } else {
                         sink
                     };
-                    let _ = crate::gateway::delivery::MessageSink::send_text(
-                        &sink,
-                        &msg.chat_id,
-                        &text,
-                    )
-                    .await;
+                    let _ =
+                        crate::delivery::MessageSink::send_text(&sink, &msg.chat_id, &text).await;
                 }
                 Ok(SendOutcome::Started(mut run)) => {
                     let sink = FeishuMessageSink::new(
@@ -441,7 +437,7 @@ impl FeishuChannel {
                     } else {
                         sink
                     };
-                    let _ = crate::gateway::delivery::MessageSink::send_text(
+                    let _ = crate::delivery::MessageSink::send_text(
                         &sink,
                         &msg.chat_id,
                         &format!("Error: {e}"),

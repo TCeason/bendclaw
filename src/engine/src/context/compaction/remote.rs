@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::summarizer::mode::SummarizerContext;
 use crate::context::sanitize::sanitize_tool_pairs;
-use crate::provider::stream_http;
+use crate::provider::stream::http;
 use crate::provider::StreamConfig;
 use crate::types::AgentMessage;
 use crate::types::Content;
@@ -255,10 +255,10 @@ pub async fn compact(
     }
 
     let send = async {
-        let response = stream_http::send_stream_request(builder.json(&body))
+        let response = http::send_stream_request(builder.json(&body))
             .await
             .map_err(|e| RemoteError::Failed(e.to_string()))?;
-        let response = stream_http::check_error_status(response)
+        let response = http::check_error_status(response)
             .await
             .map_err(|e| RemoteError::Failed(e.to_string()))?;
         response

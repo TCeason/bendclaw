@@ -1,12 +1,13 @@
 //! Channel-agnostic result delivery for scheduled tasks.
 //!
 //! Automation knows only "a channel name plus a target". Which sink that maps
-//! to, and which concrete chats a target expands into, is the gateway's job.
+//! to, and which concrete chats a target expands into, is the delivery layer's
+//! job — the channel registrations are passed in by the caller.
 
 use crate::conf::ChannelsConfig;
+use crate::delivery::resolve::resolve_delivery;
 use crate::error::EvotError;
 use crate::error::Result;
-use crate::gateway::delivery::resolve::resolve_delivery;
 
 /// Delivery status reported back to the cloud.
 pub const NOT_REQUESTED: &str = "not_requested";
@@ -23,7 +24,12 @@ pub async fn deliver(
     if channel.trim().is_empty() {
         return Ok(NOT_REQUESTED);
     }
-    let resolved = resolve_delivery(channels, channel, target)?;
+    let resolved = resolve_delivery(
+        crate::gateway::registry::delivery_registrations(),
+        channels,
+        channel,
+        target,
+    )?;
     let total = resolved.targets.len();
     let mut sent = 0usize;
     let mut last_error = None;

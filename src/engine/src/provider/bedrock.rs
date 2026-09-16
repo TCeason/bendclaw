@@ -34,7 +34,7 @@ impl StreamProvider for BedrockProvider {
         tx: mpsc::UnboundedSender<StreamEvent>,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<StreamOutcome, ProviderError> {
-        self.stream_sink(config, super::stream_sink::StreamSink::Legacy(tx), cancel)
+        self.stream_sink(config, super::stream::sink::StreamSink::Legacy(tx), cancel)
             .await
     }
     async fn stream_bounded(
@@ -45,7 +45,7 @@ impl StreamProvider for BedrockProvider {
     ) -> Result<StreamOutcome, ProviderError> {
         self.stream_sink(
             config,
-            super::stream_sink::StreamSink::Bounded {
+            super::stream::sink::StreamSink::Bounded {
                 tx,
                 cancel: cancel.clone(),
             },
@@ -58,7 +58,7 @@ impl BedrockProvider {
     async fn stream_sink(
         &self,
         config: StreamConfig,
-        tx: super::stream_sink::StreamSink,
+        tx: super::stream::sink::StreamSink,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<StreamOutcome, ProviderError> {
         let model_config = config

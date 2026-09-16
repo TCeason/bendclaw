@@ -12,7 +12,6 @@ async-trait.workspace = true
 axum.workspace = true
 base64 = "0.22"
 chrono.workspace = true
-clap.workspace = true
 futures.workspace = true
 fs2 = "=0.4.3"
 indexmap.workspace = true
@@ -22,7 +21,6 @@ regex = "1"
 reqwest.workspace = true
 similar = { workspace = true }
 serde.workspace = true
-serde_ignored.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 sha2 = "0.10"
@@ -35,7 +33,6 @@ toml.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-unicode-width = "0.2"
 uuid.workspace = true
 tempfile = "3"
 hostname = "0.4"
@@ -44,6 +41,11 @@ hostname = "0.4"
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }.tar.gz"
 bin-dir = "bin/{ bin }{ binary-ext }"
 pkg-fmt = "tgz"
+
+[features]
+default = ["web", "code-search"]
+web = ["evot-engine/web"]
+code-search = ["evot-engine/code-search"]
 
 [lints.clippy]
 module_inception = "allow"

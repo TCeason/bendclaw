@@ -39,13 +39,13 @@ describe('module dependency boundaries', () => {
 
   test('Web clients are independent of DOM and UI modules', async () => {
     for (const file of ['chat-transport', 'chat-control', 'chat-state', 'chat-stream-state', 'json-client']) {
-      const text = await source(`../../src/app/src/gateway/channels/http/static/ui/${file}.js`)
+      const text = await source(`../../src/app/assets/console/ui/${file}.js`)
       for (const forbidden of ['document.', 'window.', 'from "./app.js"', 'from "./chat.js"']) expect(text).not.toContain(forbidden)
     }
   })
 
   test('Web runtime state owns run and navigation generations, not DOM code', async () => {
-    const host = await source('../../src/app/src/gateway/channels/http/static/ui/chat.js')
+    const host = await source('../../src/app/assets/console/ui/chat.js')
     expect(host).toContain('runtime.begin(currentSessionId)')
     expect(host).toContain('runtime.ownsNavigation(navigation)')
     expect(host).toContain('runtime.canRestoreSubmission(generation, input.value)')
@@ -98,7 +98,7 @@ describe('module dependency boundaries', () => {
   })
 
   test('busy submission and queue projections are independent of terminal side effects', async () => {
-    for (const file of ['busy-submission', 'prompt-queue', 'manual-compaction', 'file-completion']) {
+    for (const file of ['busy-submission', 'prompt-queue', 'manual-compaction', 'file-completion', 'queue-edit']) {
       const text = await source(`../src/term/app/${file}.ts`)
       for (const forbidden of ['binding.js', 'renderer', 'process.', 'setTimeout', 'setInterval', ' as any']) {
         expect(text).not.toContain(forbidden)
@@ -106,7 +106,9 @@ describe('module dependency boundaries', () => {
     }
     const host = await source('../src/term/repl.ts')
     expect(host).toContain('busySubmissionAction(')
-    expect(host).toContain('reconcilePromptQueue(')
+    expect(host).toContain('reconcileQueuedUserMessages(')
+    const queueEdit = await source('../src/term/app/queue-edit.ts')
+    expect(queueEdit).toContain('reconcilePromptQueue(')
     expect(host).not.toContain('function queueEntryText(')
     expect(host).toContain('await manualCompaction.run(')
     expect(host).not.toContain('compactionTask = agent.compact(')

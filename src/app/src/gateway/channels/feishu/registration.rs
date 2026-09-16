@@ -14,7 +14,10 @@ pub const REGISTRATION: ChannelRegistration = ChannelRegistration {
     name: "feishu",
     configured: |channels| channels.feishu.is_some(),
     prepare,
-    resolve_delivery,
+    delivery: crate::delivery::DeliveryRegistration {
+        name: "feishu",
+        resolve: resolve_delivery,
+    },
 };
 
 /// Hash all inbound-transport settings, including the secret value, not merely
@@ -36,7 +39,7 @@ pub fn revision(config: &FeishuChannelConfig) -> String {
 fn resolve_delivery(
     channels: &ChannelsConfig,
     target: &str,
-) -> crate::error::Result<crate::gateway::delivery::resolve::ResolvedDelivery> {
+) -> crate::error::Result<crate::delivery::resolve::ResolvedDelivery> {
     use crate::error::EvotError;
     let config = channels
         .feishu
@@ -47,7 +50,7 @@ fn resolve_delivery(
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|error| EvotError::Run(format!("Feishu client: {error}")))?;
-    Ok(crate::gateway::delivery::resolve::ResolvedDelivery {
+    Ok(crate::delivery::resolve::ResolvedDelivery {
         targets,
         sink: Box::new(super::delivery::FeishuMessageSink::new(
             client,

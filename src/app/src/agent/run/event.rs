@@ -4,12 +4,12 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::observability::CompactRecord;
+use crate::observability::CompactionResult;
+use crate::observability::LlmCallMetrics;
+use crate::observability::UsageSummary;
 use crate::types::AssistantBlock;
 use crate::types::CompactReason;
-use crate::types::CompactRecord;
-use crate::types::CompactionResult;
-use crate::types::LlmCallMetrics;
-use crate::types::UsageSummary;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

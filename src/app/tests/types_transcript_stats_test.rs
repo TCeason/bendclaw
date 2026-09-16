@@ -1,4 +1,4 @@
-use evot::types::observability::*;
+use evot::observability::*;
 use evot::types::*;
 
 // ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ fn stats_context_compaction_started_round_trip() {
 fn stats_context_compaction_completed_round_trip() {
     let stats = TranscriptStats::ContextCompactionCompleted(ContextCompactionCompletedStats {
         reason: evot::types::CompactReason::Threshold,
-        result: evot::types::CompactionResult::Compacted {
+        result: evot::observability::CompactionResult::Compacted {
             before_message_count: 20,
             after_message_count: 8,
             before_tokens: 50000,
@@ -158,7 +158,7 @@ fn stats_context_compaction_completed_round_trip() {
     let decoded = TranscriptStats::try_from_item(&item);
     if let Some(TranscriptStats::ContextCompactionCompleted(s)) = decoded {
         match s.result {
-            evot::types::CompactionResult::Compacted {
+            evot::observability::CompactionResult::Compacted {
                 before_tokens,
                 after_tokens,
                 messages_evicted,

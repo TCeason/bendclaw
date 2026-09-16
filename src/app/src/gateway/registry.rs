@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent::RunManager;
 use crate::conf::ChannelsConfig;
+use crate::delivery::DeliveryRegistration;
 
 /// A configured adapter's opaque lifecycle description. The revision must
 /// change whenever transport configuration changes; never expose raw secrets.
@@ -21,14 +22,16 @@ pub struct ChannelRegistration {
     pub name: &'static str,
     pub configured: fn(&ChannelsConfig) -> bool,
     pub prepare: fn(&ChannelsConfig, Arc<RunManager>) -> Option<PreparedChannel>,
-    pub resolve_delivery: fn(
-        &ChannelsConfig,
-        &str,
-    )
-        -> crate::error::Result<super::delivery::resolve::ResolvedDelivery>,
+    /// Outbound delivery capability for this channel.
+    pub delivery: DeliveryRegistration,
 }
 
 pub const CHANNELS: &[ChannelRegistration] = &[super::channels::feishu::registration::REGISTRATION];
+
+/// Delivery registrations across all channels, for `delivery::resolve`.
+pub fn delivery_registrations() -> impl Iterator<Item = DeliveryRegistration> {
+    CHANNELS.iter().map(|entry| entry.delivery)
+}
 
 pub fn prepare_all(conf: &ChannelsConfig, manager: Arc<RunManager>) -> Vec<PreparedChannel> {
     CHANNELS

@@ -907,7 +907,7 @@ impl Server {
         match self.agent.sessions().find(id).await {
             Ok(Some(meta)) => {
                 let nodes = match self.agent.sessions().resume_transcript(id).await {
-                    Ok(items) => crate::conversation::projection::replay_nodes(&items),
+                    Ok(items) => crate::conversation::chat_projection::replay_nodes(&items),
                     Err(error) => {
                         tracing::warn!(session_id = %id, "chat: failed to load transcript: {error}");
                         Vec::new()
@@ -917,10 +917,10 @@ impl Server {
                 // context), so the whole-session readings are folded here from
                 // the raw entries instead.
                 let stats = match self.agent.storage().load_active_entries(id).await {
-                    Ok(entries) => crate::conversation::projection::session_stats(&entries),
+                    Ok(entries) => crate::conversation::chat_projection::session_stats(&entries),
                     Err(error) => {
                         tracing::warn!(session_id = %id, "chat: failed to load stats: {error}");
-                        crate::conversation::projection::ChatStats::default()
+                        crate::conversation::chat_projection::ChatStats::default()
                     }
                 };
                 Json(serde_json::json!({

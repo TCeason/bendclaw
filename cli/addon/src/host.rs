@@ -56,7 +56,7 @@ impl HostBridge for NapiHostBridge {
             .acquire()
             .await
             .map_err(|_| HostError::Closed)?;
-        let event = evot::contracts::HostEvent::ToolCall {
+        let event = evot::api::HostEvent::ToolCall {
             tool_name: call.tool_name,
             tool_call_id: call.tool_call_id.clone(),
             arguments: call.arguments,

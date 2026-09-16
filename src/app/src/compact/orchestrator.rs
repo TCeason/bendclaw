@@ -92,6 +92,67 @@ pub enum ManualCompactionOutcome {
     Cancelled,
 }
 
+impl ManualCompactionOutcome {
+    pub fn describe(&self) -> String {
+        match self {
+            ManualCompactionOutcome::Compacted {
+                tokens_before,
+                tokens_after,
+                messages_before,
+                messages_after,
+                context_window,
+                used_fallback,
+                method,
+                remote_blob_bytes,
+                fallback_reason,
+                ..
+            } => {
+                let mut line = format!(
+                    "Session compacted: {tokens_before} → {tokens_after} tokens, {messages_before} → {messages_after} messages."
+                );
+                if *used_fallback {
+                    line.push_str(
+                        "\nNote: the LLM summary was unavailable; a deterministic fallback summary was used.",
+                    );
+                }
+                match method {
+                    Some(evot_engine::CompactionMethod::Remote) => {
+                        line.push_str("\nProvider-native remote compaction was used.");
+                        if let Some(bytes) = remote_blob_bytes {
+                            line.push_str(&format!(" Native blob: {bytes} bytes."));
+                        }
+                    }
+                    Some(evot_engine::CompactionMethod::RemoteFailedLocal) => {
+                        line.push_str(
+                            "\nProvider-native remote compaction failed; local summarization was used.",
+                        );
+                        if let Some(reason) = fallback_reason {
+                            line.push_str(&format!(" Reason: {reason}"));
+                        }
+                    }
+                    Some(evot_engine::CompactionMethod::Local) if fallback_reason.is_some() => {
+                        if let Some(reason) = fallback_reason {
+                            line.push_str(&format!(
+                                "\nProvider-native remote compaction was unavailable; local summarization was used. Reason: {reason}"
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
+                if *context_window > 0 && tokens_after >= context_window {
+                    line.push_str(&format!(
+                        "\nWarning: context is still {tokens_after} tokens, above this model's {context_window}-token window. \
+                         Switch to a larger-context model or start a new session to continue."
+                    ));
+                }
+                line
+            }
+            ManualCompactionOutcome::NothingToCompact => "Nothing to compact.".into(),
+            ManualCompactionOutcome::Cancelled => "Compaction cancelled.".into(),
+        }
+    }
+}
+
 /// Result from the compaction orchestrator. `status` distinguishes cancellation
 /// from an ordinary no-op so callers never report Esc as "Nothing to compact".
 #[derive(Debug, PartialEq, Eq)]

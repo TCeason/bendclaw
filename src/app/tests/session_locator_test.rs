@@ -6,12 +6,12 @@
 
 use std::sync::Arc;
 
+use evot::observability::UsageSummary;
 use evot::sessions::Session;
 use evot::sessions::SessionLocator;
 use evot::storage::MemoryStorage;
 use evot::types::AssistantBlock;
 use evot::types::TranscriptItem;
-use evot::types::UsageSummary;
 
 #[test]
 fn locator_identity_is_stable_and_scoped() {

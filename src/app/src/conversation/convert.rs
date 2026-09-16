@@ -1,10 +1,10 @@
 //! Message conversion — between engine AgentMessages and TranscriptItems.
 
+use crate::observability::UsageSummary;
 use crate::types::AssistantBlock;
 use crate::types::TranscriptImageSource;
 use crate::types::TranscriptItem;
 use crate::types::TranscriptUserContent;
-use crate::types::UsageSummary;
 
 /// Extract text content from engine Content blocks.
 pub fn extract_content_text(content: &[evot_engine::Content]) -> String {

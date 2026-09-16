@@ -4,7 +4,15 @@ use std::time::Duration;
 
 use parking_lot::RwLock;
 
+use super::dump::build_prompt_dump;
+use super::dump::resolve_dump_path;
+use super::fork::ForkRequest;
+use super::fork::ForkedAgent;
 use super::processes::ProcessRegistry;
+use super::request::expand_prompt_command;
+use super::request::ExecutionLimits;
+use super::request::QueryRequest;
+use super::request::SubmitOutcome;
 use super::run::engine::EngineOptions;
 use super::run::policy::ExecutionBudget;
 use super::run::registry::RunRegistry;
@@ -12,15 +20,17 @@ use super::run::run::Run;
 use super::run::runtime;
 use super::run::runtime::TurnFactory;
 use super::tools::build_tools;
-use super::tools::HostTools;
 use super::tools::ToolMode;
+use super::turn_factory::AgentTurnFactory;
+use super::turn_factory::TurnBuildRequest;
 use super::variables::Variables;
+use crate::agent::prompt::bind_workspace_sections;
 use crate::agent::prompt::dynamic_sections;
-use crate::agent::prompt::format_skills_for_prompt;
+use crate::agent::prompt::load_turn_skills;
+use crate::agent::prompt::prompt_mode;
+use crate::agent::prompt::skills_prompt_section;
 use crate::agent::prompt::DynamicContext;
-use crate::agent::prompt::PromptMode;
 use crate::agent::prompt::Section;
-use crate::agent::prompt::SkillSpec;
 use crate::conf::Config;
 use crate::conf::LlmConfig;
 use crate::conf::Protocol;
@@ -36,158 +46,7 @@ use crate::sessions::SessionService;
 use crate::storage::open_storage;
 use crate::storage::MemoryStorage;
 use crate::storage::Storage;
-use crate::types::PromptDump;
-use crate::types::SectionDump;
 use crate::types::SessionMeta;
-use crate::types::SystemPromptDump;
-use crate::types::TokenTotals;
-use crate::types::ToolDump;
-
-// ---------------------------------------------------------------------------
-// ExecutionLimits
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-pub struct ExecutionLimits {
-    pub max_turns: u32,
-    pub max_total_tokens: u64,
-    pub max_duration_secs: u64,
-}
-
-impl Default for ExecutionLimits {
-    fn default() -> Self {
-        Self {
-            max_turns: 512,
-            max_total_tokens: 100_000_000,
-            max_duration_secs: 3600,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// QueryRequest
-// ---------------------------------------------------------------------------
-
-pub struct QueryRequest {
-    pub input: Vec<evot_engine::Content>,
-    pub session_id: Option<String>,
-    pub mode: ToolMode,
-    pub source: String,
-    /// Optional per-run model snapshot. `submit` fills this from the agent when
-    /// omitted, so every run uses one stable selection across all turns.
-    pub llm: Option<LlmConfig>,
-    /// Host-owned tools (ask_user, …) to attach to this run. `None` when the
-    /// caller has no host bridge (e.g. gateway/headless callers).
-    pub host_tools: Option<HostTools>,
-    /// Workspace for a *new* session. Existing sessions always keep the cwd
-    /// persisted on `SessionMeta`; this field is ignored on resume.
-    pub cwd: Option<String>,
-}
-
-impl QueryRequest {
-    pub fn text(prompt: impl Into<String>) -> Self {
-        Self {
-            input: vec![evot_engine::Content::Text {
-                text: prompt.into(),
-            }],
-            session_id: None,
-            mode: ToolMode::Headless,
-            source: String::new(),
-            llm: None,
-            host_tools: None,
-            cwd: None,
-        }
-    }
-
-    pub fn with_input(input: Vec<evot_engine::Content>) -> Self {
-        Self {
-            input,
-            session_id: None,
-            mode: ToolMode::Headless,
-            source: String::new(),
-            llm: None,
-            host_tools: None,
-            cwd: None,
-        }
-    }
-
-    /// Extract plain text from input content (for transcript, titles, logs).
-    pub fn input_text(&self) -> String {
-        crate::conversation::convert::extract_content_text(&self.input)
-    }
-
-    pub fn session_id(mut self, id: Option<String>) -> Self {
-        self.session_id = id;
-        self
-    }
-
-    pub fn mode(mut self, mode: ToolMode) -> Self {
-        self.mode = mode;
-        self
-    }
-
-    /// Pin a resolved model selection to this run. Useful for callers such as
-    /// Chat that expose a per-message model picker.
-    pub fn llm(mut self, llm: LlmConfig) -> Self {
-        self.llm = Some(llm);
-        self
-    }
-
-    /// Attach host-owned tools (the host bridge plus its registered specs).
-    pub fn host_tools(mut self, host_tools: Option<HostTools>) -> Self {
-        self.host_tools = host_tools;
-        self
-    }
-
-    pub fn source(mut self, source: impl Into<String>) -> Self {
-        self.source = source.into();
-        self
-    }
-
-    /// Bind a workspace directory for a newly created session. Resume always
-    /// keeps the persisted session cwd, so this is a no-op once a session id
-    /// already exists.
-    pub fn cwd(mut self, cwd: impl Into<String>) -> Self {
-        self.cwd = Some(cwd.into());
-        self
-    }
-}
-
-/// Expand `/clip all` into a prompt with the memory workflow loaded.
-/// Non-command input passes through unchanged.
-fn expand_prompt_command(
-    mut request: QueryRequest,
-    skills_dirs: &[PathBuf],
-) -> Result<QueryRequest> {
-    use crate::command::clip_session_prompt;
-    use crate::command::parse_command;
-    use crate::command::Command;
-
-    if !matches!(
-        parse_command(&request.input_text()),
-        Some(Command::ClipSession)
-    ) {
-        return Ok(request);
-    }
-    let memory = crate::agent::prompt::skill::load_skill(skills_dirs, "memory")
-        .map_err(|error| EvotError::Agent(format!("cannot load memory skill: {error}")))?;
-    let instructions = crate::agent::prompt::skill::load_skill_instructions(&memory)
-        .map_err(|error| EvotError::Agent(format!("cannot read memory skill: {error}")))?;
-    let text = clip_session_prompt(&instructions);
-    request.input = vec![evot_engine::Content::Text { text }];
-    Ok(request)
-}
-
-// ---------------------------------------------------------------------------
-// SubmitOutcome — result of a submit: either a Run or a handled command
-// ---------------------------------------------------------------------------
-
-pub enum SubmitOutcome {
-    /// Normal agent run.
-    Run(Run),
-    /// A gateway command was handled; carry this text back to the caller.
-    Command(String),
-}
 
 // ---------------------------------------------------------------------------
 // Agent
@@ -727,7 +586,7 @@ impl Agent {
                         )))
                     }
                 };
-                let msg = format_manual_compaction_outcome(&outcome);
+                let msg = outcome.describe();
                 Ok(Some(SubmitOutcome::Command(msg)))
             }
             Command::Dump { target } => {
@@ -1148,9 +1007,9 @@ impl Agent {
     async fn handle_resume_search(&self, query: &str) -> Result<String> {
         let sessions = self
             .storage
-            .list_sessions_with_text(crate::agent::resume_search::SESSION_LIMIT)
+            .list_sessions_with_text(crate::search::resume_search::SESSION_LIMIT)
             .await?;
-        if let Some(results) = crate::agent::resume_search::literal_results(query, &sessions) {
+        if let Some(results) = crate::search::resume_search::literal_results(query, &sessions) {
             return Ok(results);
         }
 
@@ -1160,11 +1019,11 @@ impl Agent {
                 "Semantic session search needs a configured LLM provider.".to_string(),
             ));
         }
-        let ctx = crate::agent::resume_search::RankContext {
+        let ctx = crate::search::resume_search::RankContext {
             provider: self.llm_provider(&llm.protocol),
             llm,
         };
-        crate::agent::resume_search::rank_sessions(&ctx, query, &sessions).await
+        crate::search::resume_search::rank_sessions(&ctx, query, &sessions).await
     }
 
     /// Build a structured snapshot of what evot would send to the LLM right
@@ -1235,7 +1094,7 @@ impl Agent {
         }
     }
 
-    async fn build_turn(
+    pub(super) async fn build_turn(
         &self,
         llm: &LlmConfig,
         mode: ToolMode,
@@ -1381,323 +1240,5 @@ impl Agent {
             session,
             transcript_seq,
         })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// AgentTurnFactory — bridges Agent's per-turn build to the runtime
-// ---------------------------------------------------------------------------
-
-struct TurnBuildRequest {
-    input: Vec<evot_engine::Content>,
-    host_tools: Option<HostTools>,
-    consume_process_notifications: bool,
-}
-
-struct AgentTurnFactory {
-    agent: Arc<Agent>,
-    session: Arc<Session>,
-    mode: ToolMode,
-    session_id: String,
-    llm: LlmConfig,
-    host_tools: Option<HostTools>,
-}
-
-#[async_trait::async_trait]
-impl TurnFactory for AgentTurnFactory {
-    async fn build(&self, input: Vec<evot_engine::Content>) -> Result<runtime::TurnInput> {
-        self.agent
-            .build_turn(
-                &self.llm,
-                self.mode,
-                Arc::clone(&self.session),
-                &self.session_id,
-                TurnBuildRequest {
-                    input,
-                    host_tools: self.host_tools.clone(),
-                    consume_process_notifications: true,
-                },
-            )
-            .await
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-fn format_manual_compaction_outcome(
-    outcome: &crate::compact::orchestrator::ManualCompactionOutcome,
-) -> String {
-    match outcome {
-        crate::compact::orchestrator::ManualCompactionOutcome::Compacted {
-            tokens_before,
-            tokens_after,
-            messages_before,
-            messages_after,
-            context_window,
-            used_fallback,
-            method,
-            remote_blob_bytes,
-            fallback_reason,
-            ..
-        } => {
-            let mut line = format!(
-                "Session compacted: {tokens_before} → {tokens_after} tokens, {messages_before} → {messages_after} messages."
-            );
-            if *used_fallback {
-                line.push_str(
-                    "\nNote: the LLM summary was unavailable; a deterministic fallback summary was used.",
-                );
-            }
-            match method {
-                Some(evot_engine::CompactionMethod::Remote) => {
-                    line.push_str("\nProvider-native remote compaction was used.");
-                    if let Some(bytes) = remote_blob_bytes {
-                        line.push_str(&format!(" Native blob: {bytes} bytes."));
-                    }
-                }
-                Some(evot_engine::CompactionMethod::RemoteFailedLocal) => {
-                    line.push_str(
-                        "\nProvider-native remote compaction failed; local summarization was used.",
-                    );
-                    if let Some(reason) = fallback_reason {
-                        line.push_str(&format!(" Reason: {reason}"));
-                    }
-                }
-                Some(evot_engine::CompactionMethod::Local) if fallback_reason.is_some() => {
-                    if let Some(reason) = fallback_reason {
-                        line.push_str(&format!(
-                            "\nProvider-native remote compaction was unavailable; local summarization was used. Reason: {reason}"
-                        ));
-                    }
-                }
-                _ => {}
-            }
-            if *context_window > 0 && tokens_after >= context_window {
-                line.push_str(&format!(
-                    "\nWarning: context is still {tokens_after} tokens, above this model's {context_window}-token window. \
-                     Switch to a larger-context model or start a new session to continue."
-                ));
-            }
-            line
-        }
-        crate::compact::orchestrator::ManualCompactionOutcome::NothingToCompact => {
-            "Nothing to compact.".into()
-        }
-        crate::compact::orchestrator::ManualCompactionOutcome::Cancelled => {
-            "Compaction cancelled.".into()
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Prompt dump helpers
-// ---------------------------------------------------------------------------
-
-/// Conservative whitespace-based proxy for token count. Avoids a tokenizer
-/// dependency in the dump path — for prompt-budget sanity checks it's fine,
-/// and replay tooling can re-tokenize the text directly. Roughly
-/// `len / 4` is the rule of thumb.
-fn rough_tokens(s: &str) -> usize {
-    let chars = s.chars().count();
-    chars.div_ceil(4)
-}
-
-fn mode_label(mode: ToolMode) -> &'static str {
-    match mode {
-        ToolMode::Interactive => "Interactive",
-        ToolMode::Headless => "Headless",
-        ToolMode::Planning => "Planning",
-        ToolMode::Readonly => "Readonly",
-    }
-}
-
-fn load_turn_skills(dirs: &[PathBuf], names: Option<&[String]>) -> Result<Vec<SkillSpec>> {
-    match names {
-        Some(names) => crate::agent::prompt::skill::load_skills_by_name(dirs, names),
-        None => crate::agent::prompt::skill::load_skills(dirs),
-    }
-    .map_err(|error| EvotError::Agent(format!("failed to load skills: {error}")))
-}
-
-fn skills_prompt_section(skills: &[SkillSpec]) -> Option<Section> {
-    let text = format_skills_for_prompt(skills);
-    if text.is_empty() {
-        None
-    } else {
-        Some(Section {
-            name: "skills",
-            text,
-        })
-    }
-}
-
-fn prompt_mode(mode: ToolMode) -> PromptMode {
-    match mode {
-        ToolMode::Interactive => PromptMode::Interactive,
-        ToolMode::Planning => PromptMode::Planning,
-        ToolMode::Headless => PromptMode::Headless,
-        ToolMode::Readonly => PromptMode::Readonly,
-    }
-}
-
-fn build_prompt_dump(mode: ToolMode, turn: &runtime::TurnInput) -> PromptDump {
-    let opts = &turn.options;
-
-    // System prompt sections — sourced from the turn (includes planning,
-    // variables, sandbox, skills). Falls back to a single section if empty.
-    let section_dumps = if opts.system_prompt_sections.is_empty() {
-        vec![SectionDump {
-            name: "system_prompt".into(),
-            text: opts.system_prompt.clone(),
-            tokens: rough_tokens(&opts.system_prompt),
-        }]
-    } else {
-        opts.system_prompt_sections
-            .iter()
-            .map(|s| SectionDump {
-                name: s.name.to_string(),
-                text: s.text.clone(),
-                tokens: rough_tokens(&s.text),
-            })
-            .collect()
-    };
-
-    let system_tokens = rough_tokens(&opts.system_prompt);
-    let system_prompt = SystemPromptDump {
-        text: opts.system_prompt.clone(),
-        tokens: system_tokens,
-        sections: section_dumps,
-    };
-
-    // Tool definitions
-    let mut tool_dumps: Vec<ToolDump> = opts
-        .tools
-        .iter()
-        .map(|t| {
-            let name = t.name().to_string();
-            let description = t.description().to_string();
-            let parameters = t.parameters_schema();
-            let serialized = format!("{name}\n{description}\n{parameters}");
-            ToolDump {
-                name,
-                description,
-                parameters,
-                tokens: rough_tokens(&serialized),
-            }
-        })
-        .collect();
-    tool_dumps.sort_by(|a, b| a.name.cmp(&b.name));
-    let tool_tokens: usize = tool_dumps.iter().map(|t| t.tokens).sum();
-
-    PromptDump {
-        evot_version: env!("CARGO_PKG_VERSION").to_string(),
-        cwd: opts.cwd.display().to_string(),
-        mode: mode_label(mode).into(),
-        model: opts.model.clone(),
-        thinking_level: opts.thinking_level.as_str().into(),
-        system_prompt,
-        tools: tool_dumps,
-        totals: TokenTotals {
-            system_prompt_tokens: system_tokens,
-            tool_definition_tokens: tool_tokens,
-            grand_total: system_tokens + tool_tokens,
-        },
-    }
-}
-
-fn resolve_dump_path(target: Option<&str>) -> Result<PathBuf> {
-    if let Some(t) = target {
-        return Ok(PathBuf::from(t));
-    }
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| EvotError::Agent("HOME not set; cannot pick default dump path".into()))?;
-    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    Ok(PathBuf::from(home)
-        .join(".evotai")
-        .join("dumps")
-        .join(format!("prompt-{stamp}.json")))
-}
-
-fn bind_workspace_sections(sections: &mut Vec<Section>, cwd: &str) {
-    use crate::agent::prompt::SystemPrompt;
-    for section in sections.iter_mut() {
-        match section.name {
-            "environment" => section.text = SystemPrompt::environment_text(cwd),
-            "project_context" => {
-                section.text = SystemPrompt::project_context_text(cwd).unwrap_or_default();
-            }
-            _ => {}
-        }
-    }
-    if !sections.iter().any(|section| section.name == "environment") {
-        let insert_at = sections
-            .iter()
-            .position(|section| section.name == "dynamic_boundary")
-            .unwrap_or(sections.len());
-        sections.insert(insert_at, Section {
-            name: "environment",
-            text: SystemPrompt::environment_text(cwd),
-        });
-    }
-    if let Some(text) = SystemPrompt::project_context_text(cwd) {
-        if let Some(section) = sections
-            .iter_mut()
-            .find(|section| section.name == "project_context")
-        {
-            if section.text.is_empty() {
-                section.text = text;
-            }
-        } else {
-            let insert_at = sections
-                .iter()
-                .position(|section| matches!(section.name, "environment" | "dynamic_boundary"))
-                .unwrap_or(sections.len());
-            sections.insert(insert_at, Section {
-                name: "project_context",
-                text,
-            });
-        }
-    }
-    sections.retain(|section| !(section.name == "project_context" && section.text.is_empty()));
-}
-
-// ---------------------------------------------------------------------------
-// ForkRequest / ForkedAgent
-// ---------------------------------------------------------------------------
-
-pub struct ForkRequest {
-    pub system_prompt: String,
-}
-
-/// Handle for a forked conversation.
-///
-/// Wraps an ephemeral `Agent` backed by `MemoryStorage`. Multi-turn context
-/// is maintained in-memory by `Session`. Drop to discard — nothing is persisted.
-pub struct ForkedAgent {
-    agent: Arc<Agent>,
-    session_id: Option<String>,
-}
-
-impl ForkedAgent {
-    pub async fn query(&mut self, prompt: &str) -> Result<Run> {
-        let request = QueryRequest::text(prompt)
-            .session_id(self.session_id.clone())
-            .mode(ToolMode::Readonly);
-        let outcome = self.agent.submit(request).await?;
-        match outcome {
-            SubmitOutcome::Run(run) => {
-                if self.session_id.is_none() {
-                    self.session_id = Some(run.session_id.clone());
-                }
-                Ok(run)
-            }
-            SubmitOutcome::Command(_) => Err(EvotError::Run(
-                "commands not supported in forked agent".into(),
-            )),
-        }
     }
 }

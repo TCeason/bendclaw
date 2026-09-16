@@ -9,11 +9,11 @@ use crate::agent::AssistantContentType;
 use crate::agent::RunEvent;
 use crate::agent::RunEventPayload;
 use crate::agent::ToolCallStreamPhase;
+use crate::observability::LlmCallMetrics;
+use crate::observability::UsageSummary;
 use crate::types::AssistantBlock;
-use crate::types::LlmCallMetrics;
 use crate::types::SessionMeta;
 use crate::types::TranscriptItem;
-use crate::types::UsageSummary;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -535,7 +535,7 @@ pub fn map_run_event(event: &RunEvent) -> Vec<ChatNode> {
             let mut node = ChatNode::new(ChatNodeKind::Compact);
             node.reason = Some(format!("{reason:?}").to_lowercase());
             node.summary = summary.clone();
-            if let crate::types::CompactionResult::Compacted {
+            if let crate::observability::CompactionResult::Compacted {
                 before_tokens,
                 after_tokens,
                 ..
@@ -593,7 +593,7 @@ pub struct ChatStats {
 }
 
 pub fn session_stats(entries: &[crate::types::TranscriptEntry]) -> ChatStats {
-    use crate::types::TranscriptStats;
+    use crate::observability::TranscriptStats;
 
     let mut stats = ChatStats::default();
     let mut turns = std::collections::HashSet::new();

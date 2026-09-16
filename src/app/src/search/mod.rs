@@ -1,4 +1,5 @@
 mod matcher;
+pub mod resume_search;
 mod session_search;
 
 pub use matcher::TextMatcher;

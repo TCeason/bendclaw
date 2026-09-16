@@ -8,8 +8,8 @@ fn load_config(
     port: Option<u16>,
     model: Option<String>,
     env_file: Option<String>,
-) -> Result<evot::conf::Config> {
-    let mut config = evot::conf::Config::load_with_env_file(env_file.as_deref())
+) -> Result<evot::api::Config> {
+    let mut config = evot::api::Config::load_with_env_file(env_file.as_deref())
         .map_err(|e| Error::from_reason(format!("config load failed: {e}")))?
         .with_model(model)
         .map_err(|e| Error::from_reason(format!("config model: {e}")))?;
@@ -33,7 +33,7 @@ pub async fn start_server(
 ) -> Result<()> {
     init_tracing();
     let config = load_config(port, model, env_file)?;
-    evot::gateway::service::start(config)
+    evot::api::start(config)
         .await
         .map_err(|e| Error::from_reason(format!("server error: {e}")))
 }
@@ -103,17 +103,16 @@ pub async fn start_server_background(
         .map_err(|e| Error::from_reason(e.to_string()))?
         .port();
     let addr = format!("{host}:{actual_port}");
-    let agent = evot::bootstrap::build_agent(&config)
+    let agent = evot::api::build_agent(&config)
         .await
         .map_err(|e| Error::from_reason(format!("agent init: {e}")))?;
 
     let cancel = tokio_util::sync::CancellationToken::new();
-    let handles =
-        evot::gateway::service::spawn_runtime_tasks(&config, agent.clone(), cancel.clone());
-    let runtime = evot::gateway::channel_tasks::ChannelTasks::new(cancel.clone(), handles);
-    let channels = evot::gateway::registry::configured_names(&config.channels);
+    let handles = evot::api::spawn_runtime_tasks(&config, agent.clone(), cancel.clone());
+    let runtime = evot::api::ChannelTasks::new(cancel.clone(), handles);
+    let channels = evot::api::configured_names(&config.channels);
 
-    let server = evot::gateway::channels::http::Server::new(agent, config.clone());
+    let server = evot::api::Server::new(agent, config.clone());
     let shutdown = cancel.clone();
     let handle = tokio::spawn(async move {
         let _ = axum::serve(listener, server.router())

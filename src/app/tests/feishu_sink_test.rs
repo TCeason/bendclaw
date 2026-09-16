@@ -1,6 +1,6 @@
+use evot::delivery::MessageSink;
 use evot::gateway::channels::feishu::delivery::FeishuMessageSink;
 use evot::gateway::channels::feishu::token::TokenCache;
-use evot::gateway::delivery::MessageSink;
 
 fn make_sink() -> FeishuMessageSink {
     FeishuMessageSink::new(

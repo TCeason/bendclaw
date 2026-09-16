@@ -8,8 +8,8 @@ use super::json_fallback;
 use super::request;
 use super::sse_decode;
 use crate::provider::error::*;
-use crate::provider::stream_http::StreamResponseKind;
-use crate::provider::stream_http::{self};
+use crate::provider::stream::http::StreamResponseKind;
+use crate::provider::stream::http::{self};
 use crate::provider::traits::*;
 
 const API_VERSION: &str = "2023-06-01";
@@ -26,7 +26,7 @@ impl StreamProvider for AnthropicProvider {
     ) -> Result<StreamOutcome, ProviderError> {
         self.stream_sink(
             config,
-            crate::provider::stream_sink::StreamSink::Legacy(tx),
+            crate::provider::stream::sink::StreamSink::Legacy(tx),
             cancel,
         )
         .await
@@ -40,7 +40,7 @@ impl StreamProvider for AnthropicProvider {
     ) -> Result<StreamOutcome, ProviderError> {
         self.stream_sink(
             config,
-            crate::provider::stream_sink::StreamSink::Bounded {
+            crate::provider::stream::sink::StreamSink::Bounded {
                 tx,
                 cancel: cancel.clone(),
             },
@@ -54,7 +54,7 @@ impl AnthropicProvider {
     async fn stream_sink(
         &self,
         config: StreamConfig,
-        tx: crate::provider::stream_sink::StreamSink,
+        tx: crate::provider::stream::sink::StreamSink,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<StreamOutcome, ProviderError> {
         let is_oauth = config.api_key.contains("sk-ant-oat");
@@ -117,11 +117,11 @@ impl AnthropicProvider {
         let builder = builder.json(&body);
 
         // Send request and check HTTP status
-        let response = stream_http::send_stream_request(builder).await?;
-        let response = stream_http::check_error_status(response).await?;
+        let response = http::send_stream_request(builder).await?;
+        let response = http::check_error_status(response).await?;
 
         // Classify response by content-type
-        let kind = stream_http::classify_response(&response);
+        let kind = http::classify_response(&response);
         debug!("Anthropic response kind: {kind:?}");
 
         match kind {

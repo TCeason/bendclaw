@@ -1,4 +1,4 @@
-use evotengine::provider::stream_sink::StreamSink;
+use evotengine::provider::stream::sink::StreamSink;
 use evotengine::provider::StreamEvent;
 use tokio_util::sync::CancellationToken;
 

@@ -1,10 +1,10 @@
+use evot::observability::UsageSummary;
 use evot::search::SessionSearcher;
 use evot::search::TextMatcher;
 use evot::types::AssistantBlock;
 use evot::types::SessionMeta;
 use evot::types::TranscriptEntry;
 use evot::types::TranscriptItem;
-use evot::types::UsageSummary;
 
 #[test]
 fn text_matcher_empty_matches_everything() {

@@ -99,3 +99,13 @@ pub fn dynamic_sections(ctx: &DynamicContext) -> Vec<Section> {
 
     sections
 }
+
+pub(crate) fn prompt_mode(mode: crate::agent::tools::ToolMode) -> PromptMode {
+    use crate::agent::tools::ToolMode;
+    match mode {
+        ToolMode::Interactive => PromptMode::Interactive,
+        ToolMode::Planning => PromptMode::Planning,
+        ToolMode::Headless => PromptMode::Headless,
+        ToolMode::Readonly => PromptMode::Readonly,
+    }
+}

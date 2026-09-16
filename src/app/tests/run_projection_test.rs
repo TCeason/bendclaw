@@ -93,12 +93,12 @@ fn compaction_rebase_precedes_public_completion_even_for_noop() {
     });
     assert!(matches!(projected.as_slice(), [
         RuntimeEvent::CompactionCompleted {
-            result: evot::types::CompactionResult::NoOp,
+            result: evot::observability::CompactionResult::NoOp,
             will_retry: true,
             ..
         },
         RuntimeEvent::Public(RunEventPayload::ContextCompactionCompleted {
-            result: evot::types::CompactionResult::NoOp,
+            result: evot::observability::CompactionResult::NoOp,
             will_retry: true,
             ..
         }),

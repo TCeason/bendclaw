@@ -2,6 +2,7 @@ use evot::agent::*;
 use evot::conf::Protocol;
 use evot::conf::ProviderProfile;
 use evot::conf::StorageConfig;
+use evot::observability::UsageSummary;
 use evot::sessions::Session;
 use evot::storage::open_storage;
 use evot::types::*;
@@ -1755,11 +1756,11 @@ async fn stats_items_persisted_but_filtered_on_resume() -> TestResult {
     .await?;
 
     // Write a mix of conversation items and stats
-    let stats_item =
-        evot::types::TranscriptStats::LlmCallCompleted(evot::types::LlmCallCompletedStats {
+    let stats_item = evot::observability::TranscriptStats::LlmCallCompleted(
+        evot::observability::LlmCallCompletedStats {
             turn: 1,
             attempt: 0,
-            usage: evot::types::UsageSummary {
+            usage: evot::observability::UsageSummary {
                 input: 100,
                 output: 50,
                 cache_read: 0,
@@ -1769,8 +1770,9 @@ async fn stats_items_persisted_but_filtered_on_resume() -> TestResult {
             error: None,
             context_window: 0,
             stop_reason: "stop".into(),
-        })
-        .to_item();
+        },
+    )
+    .to_item();
 
     session
         .write_items(vec![
@@ -1853,10 +1855,10 @@ async fn stats_after_compact_filtered_on_resume() -> TestResult {
         .await?;
 
     // Write compact + stats + new message
-    let compact_stats = evot::types::TranscriptStats::ContextCompactionCompleted(
-        evot::types::ContextCompactionCompletedStats {
+    let compact_stats = evot::observability::TranscriptStats::ContextCompactionCompleted(
+        evot::observability::ContextCompactionCompletedStats {
             reason: evot::types::CompactReason::Threshold,
-            result: evot::types::CompactionResult::Compacted {
+            result: evot::observability::CompactionResult::Compacted {
                 before_message_count: 10,
                 after_message_count: 4,
                 before_tokens: 30000,
@@ -2141,7 +2143,7 @@ fn marker_item_is_not_context() {
 // ---------------------------------------------------------------------------
 
 fn llm_started_item(prompt: &str) -> TranscriptItem {
-    use evot::types::observability::*;
+    use evot::observability::*;
     TranscriptStats::LlmCallStarted(LlmCallStartedStats {
         turn: 1,
         attempt: 0,
@@ -2159,7 +2161,7 @@ fn llm_started_item(prompt: &str) -> TranscriptItem {
 
 #[tokio::test]
 async fn llm_request_payload_is_delta_persisted() -> TestResult {
-    use evot::types::observability::TranscriptStats;
+    use evot::observability::TranscriptStats;
 
     let dir = TempDir::new()?;
     let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;

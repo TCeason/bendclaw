@@ -24,13 +24,13 @@ use super::projection::RuntimeEvent;
 use super::run::Run;
 use crate::conversation::convert::from_agent_messages;
 use crate::error::Result;
+use crate::observability::CompactRecord;
+use crate::observability::ContextCompactionCompletedStats;
+use crate::observability::RunFinishedStats;
+use crate::observability::TranscriptStats;
+use crate::observability::UsageSummary;
 use crate::sessions::Session;
-use crate::types::CompactRecord;
-use crate::types::ContextCompactionCompletedStats;
-use crate::types::RunFinishedStats;
 use crate::types::TranscriptItem;
-use crate::types::TranscriptStats;
-use crate::types::UsageSummary;
 
 // ---------------------------------------------------------------------------
 // TurnInput — prepared by agent, executed by runtime
@@ -323,7 +323,10 @@ async fn drive_one_turn(
                     outcome.compact_records.push(record);
                 }
 
-                if matches!(result, crate::types::CompactionResult::Compacted { .. }) {
+                if matches!(
+                    result,
+                    crate::observability::CompactionResult::Compacted { .. }
+                ) {
                     match flush(
                         &session,
                         &turn_transcripts,
@@ -472,14 +475,14 @@ async fn drive_one_turn(
 
 fn automatic_compact_item(
     reason: crate::types::CompactReason,
-    result: &crate::types::CompactionResult,
+    result: &crate::observability::CompactionResult,
     summary: Option<String>,
     messages: Vec<TranscriptItem>,
     engine_messages: Vec<evot_engine::AgentMessage>,
     state: evot_engine::CompactionState,
 ) -> TranscriptItem {
     let (messages_before, messages_after, tokens_before, tokens_after) = match result {
-        crate::types::CompactionResult::Compacted {
+        crate::observability::CompactionResult::Compacted {
             before_message_count,
             after_message_count,
             before_tokens,
@@ -491,26 +494,26 @@ fn automatic_compact_item(
             *before_tokens,
             *after_tokens,
         ),
-        crate::types::CompactionResult::NoOp => (0, 0, 0, 0),
+        crate::observability::CompactionResult::NoOp => (0, 0, 0, 0),
     };
     let details = crate::types::CompactDetails {
         read_files: state.file_ops.read_only().into_iter().cloned().collect(),
         modified_files: state.file_ops.modified().into_iter().cloned().collect(),
         method: match result {
-            crate::types::CompactionResult::Compacted { method, .. } => *method,
-            crate::types::CompactionResult::NoOp => None,
+            crate::observability::CompactionResult::Compacted { method, .. } => *method,
+            crate::observability::CompactionResult::NoOp => None,
         },
         remote_blob_bytes: match result {
-            crate::types::CompactionResult::Compacted {
+            crate::observability::CompactionResult::Compacted {
                 remote_blob_bytes, ..
             } => *remote_blob_bytes,
-            crate::types::CompactionResult::NoOp => None,
+            crate::observability::CompactionResult::NoOp => None,
         },
         fallback_reason: match result {
-            crate::types::CompactionResult::Compacted {
+            crate::observability::CompactionResult::Compacted {
                 fallback_reason, ..
             } => fallback_reason.clone(),
-            crate::types::CompactionResult::NoOp => None,
+            crate::observability::CompactionResult::NoOp => None,
         },
     };
     TranscriptItem::Compact {
@@ -552,6 +555,8 @@ fn emit_persistence_error(
     );
 }
 
-fn compact_record_from_result(result: &crate::types::CompactionResult) -> Option<CompactRecord> {
+fn compact_record_from_result(
+    result: &crate::observability::CompactionResult,
+) -> Option<CompactRecord> {
     crate::agent::run::observability::compact_record_from_result(result)
 }

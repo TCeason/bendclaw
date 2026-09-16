@@ -480,6 +480,8 @@ fn run_event_deserialize_rejects_missing_fields() {
 
 use evot::gateway::channels::http::stream::map_run_event_json;
 use evot::gateway::channels::http::stream::session_event_json;
+use evot::observability::LlmCallMetrics;
+use evot::observability::UsageSummary;
 
 #[test]
 fn sse_session_event_identifies_follow_up_session() {

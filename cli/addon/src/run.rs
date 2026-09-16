@@ -9,7 +9,7 @@ use crate::convert::parse_content_blocks;
 use crate::host::HostResponders;
 
 /// Serialize a RunEvent to JSON string.
-fn serialize_event(event: evot::agent::RunEvent) -> Result<Option<String>> {
+fn serialize_event(event: evot::api::RunEvent) -> Result<Option<String>> {
     serde_json::to_string(&event)
         .map(Some)
         .map_err(|e| Error::from_reason(format!("serialize event: {e}")))
@@ -81,8 +81,8 @@ impl NapiSubmitOutcome {
 
 #[napi]
 pub struct NapiRun {
-    pub(crate) inner: Mutex<evot::agent::Run>,
-    pub(crate) handle: evot::agent::RunControl,
+    pub(crate) inner: Mutex<evot::api::Run>,
+    pub(crate) handle: evot::api::RunControl,
     pub(crate) cached_session_id: String,
     pub(crate) abort_signal: CancellationToken,
     pub(crate) host_event_rx: Mutex<Option<tokio_mpsc::Receiver<String>>>,

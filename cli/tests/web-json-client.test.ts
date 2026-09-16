@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { createJsonClient } from '../../src/app/src/gateway/channels/http/static/ui/json-client.js'
+import { createJsonClient } from '../../src/app/assets/console/ui/json-client.js'
 
 describe('console JSON transport', () => {
   test('GET success balances activity hooks and decodes the body', async () => {

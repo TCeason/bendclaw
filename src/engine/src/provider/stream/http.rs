@@ -8,7 +8,7 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use super::error::ProviderError;
+use crate::provider::error::ProviderError;
 
 const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 const MAX_ERROR_DETAIL_CHARS: usize = 4096;
@@ -200,7 +200,7 @@ pub async fn read_json_body(
 /// `Provider returned error` message. That field is part of the envelope, not
 /// a rewrite of it: append `raw` when it is not already in the display string.
 pub fn extract_json_error_message(value: &serde_json::Value) -> Option<String> {
-    let error_obj = Some(super::error_semantics::error_node(value));
+    let error_obj = Some(crate::provider::error_semantics::error_node(value));
 
     let error_kind = error_obj
         .and_then(|error| error.get("type").or_else(|| error.get("code")))

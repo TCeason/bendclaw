@@ -11,8 +11,8 @@ import {
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { describe, expect, test } from 'bun:test'
-import { RendererTrace } from '../src/session/renderer-trace.js'
-import { RollingLogWriter } from '../src/session/rolling-log.js'
+import { RendererTrace } from '../src/term/diagnostics/renderer-trace.js'
+import { RollingLogWriter } from '../src/term/diagnostics/rolling-log.js'
 import { TermRenderer, type RendererTraceEntry } from '../src/term/renderer.js'
 import { Writable } from 'node:stream'
 

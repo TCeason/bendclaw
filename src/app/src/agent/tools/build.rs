@@ -76,6 +76,7 @@ pub(crate) fn build_tools(
             Box::new(ReadFileTool::default()),
             Box::new(GrepTool::new()),
             Box::new(GlobTool::new()),
+            #[cfg(feature = "code-search")]
             Box::new(SearchTool::new()),
         ];
     }
@@ -112,6 +113,7 @@ pub(crate) fn build_tools(
     }
 
     // evot-specific tools, appended after the pi-aligned core set.
+    #[cfg(feature = "web")]
     if policy.web_fetch {
         t.push(Box::new(WebFetchTool::new()));
     }

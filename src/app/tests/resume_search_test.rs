@@ -1,11 +1,11 @@
-use evot::agent::resume_search::build_rank_prompt;
-use evot::agent::resume_search::format_results;
-use evot::agent::resume_search::literal_results;
 use evot::agent::Agent;
 use evot::agent::QueryRequest;
 use evot::agent::SubmitOutcome;
 use evot::conf::Protocol;
 use evot::conf::ProviderProfile;
+use evot::search::resume_search::build_rank_prompt;
+use evot::search::resume_search::format_results;
+use evot::search::resume_search::literal_results;
 use evot::search::SessionWithText;
 use evot::types::SessionMeta;
 use tempfile::TempDir;

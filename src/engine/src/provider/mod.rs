@@ -10,10 +10,7 @@ pub mod openai_compat;
 pub mod openai_responses;
 pub mod registry;
 pub mod route;
-pub mod sse;
-pub mod stream_fallback;
-pub mod stream_http;
-pub mod stream_sink;
+pub mod stream;
 mod system_prompt;
 pub mod traits;
 
@@ -41,5 +38,11 @@ pub use route::OpenAiCompat;
 pub use route::RouteCapabilities;
 pub use route::RouteCapabilityOverrides;
 pub use route::ThinkingFormat;
+// Compatibility re-exports: the streaming helpers moved under `stream/`.
+// Keep the old `provider::{sse,stream_*}` paths alive for existing callers.
+pub use stream::fallback as stream_fallback;
+pub use stream::http as stream_http;
+pub use stream::sink as stream_sink;
+pub use stream::sse;
 pub use system_prompt::SYSTEM_PROMPT_DYNAMIC_BOUNDARY;
 pub use traits::*;

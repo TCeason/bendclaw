@@ -1,7 +1,7 @@
 //! Claim → run → heartbeat → report loop for cloud scheduled tasks.
 //!
 //! This module owns run lifecycle only. Where a result goes is decided by
-//! `super::delivery`, which resolves channels through the gateway.
+//! `super::delivery`, which resolves channels through the delivery layer.
 
 use std::sync::Arc;
 use std::time::Duration;

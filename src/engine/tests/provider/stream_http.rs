@@ -1,9 +1,9 @@
 //! Tests for shared stream HTTP helpers.
 
-use evotengine::provider::stream_http::check_error_status;
-use evotengine::provider::stream_http::classify_json_error;
-use evotengine::provider::stream_http::extract_json_error_message;
-use evotengine::provider::stream_http::StreamResponseKind;
+use evotengine::provider::stream::http::check_error_status;
+use evotengine::provider::stream::http::classify_json_error;
+use evotengine::provider::stream::http::extract_json_error_message;
+use evotengine::provider::stream::http::StreamResponseKind;
 use evotengine::provider::ProviderError;
 
 #[test]

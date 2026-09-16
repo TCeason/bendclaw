@@ -1,10 +1,10 @@
 use evot::agent::RunEvent;
 use evot::agent::RunEventPayload;
-use evot::conversation::projection::map_run_event;
-use evot::conversation::projection::replay_nodes;
+use evot::conversation::chat_projection::map_run_event;
+use evot::conversation::chat_projection::replay_nodes;
+use evot::observability::UsageSummary;
 use evot::types::AssistantBlock;
 use evot::types::TranscriptItem;
-use evot::types::UsageSummary;
 
 #[test]
 fn conversation_live_completion_and_replay_share_content_semantics() {
@@ -53,9 +53,9 @@ fn conversation_live_completion_and_replay_share_content_semantics() {
 
 #[test]
 fn conversation_projection_does_not_depend_on_http_transport() {
-    let projection = include_str!("../src/conversation/projection.rs");
+    let projection = include_str!("../src/conversation/chat_projection.rs");
     assert!(!projection.contains("axum"));
     assert!(!projection.contains("crate::gateway"));
     let stream = include_str!("../src/gateway/channels/http/stream.rs");
-    assert!(stream.contains("crate::conversation::projection"));
+    assert!(stream.contains("crate::conversation::chat_projection"));
 }

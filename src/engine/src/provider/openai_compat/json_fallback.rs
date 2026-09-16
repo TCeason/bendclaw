@@ -10,8 +10,8 @@ use tracing::debug;
 use super::types::*;
 use crate::provider::error::ProviderError;
 use crate::provider::route::OpenAiCompat;
-use crate::provider::stream_fallback::FallbackEmitter;
-use crate::provider::stream_http;
+use crate::provider::stream::fallback::FallbackEmitter;
+use crate::provider::stream::http;
 use crate::provider::traits::StreamConfig;
 use crate::provider::traits::StreamEvent;
 use crate::types::*;
@@ -26,12 +26,12 @@ pub(crate) async fn handle_json_response(
     config: &StreamConfig,
     compat: &OpenAiCompat,
 ) -> Result<Message, ProviderError> {
-    let value = stream_http::read_json_body(response).await?;
+    let value = http::read_json_body(response).await?;
 
     // Check for error-shaped JSON first
     if value.get("error").is_some() {
         debug!("OpenAI-compat JSON fallback: error response detected");
-        return Err(stream_http::classify_json_error(&value));
+        return Err(http::classify_json_error(&value));
     }
 
     debug!("OpenAI-compat JSON fallback: parsing as success completion");
@@ -143,7 +143,7 @@ fn parse_success_response(
 /// JSON fallback is one finite response, not an unbounded streaming producer.
 pub(crate) async fn handle_json_response_sink(
     response: reqwest::Response,
-    tx: crate::provider::stream_sink::StreamSink,
+    tx: crate::provider::stream::sink::StreamSink,
     config: &StreamConfig,
     compat: &OpenAiCompat,
 ) -> Result<Message, ProviderError> {

@@ -5,10 +5,10 @@ use super::config::FEISHU_MAX_MESSAGE_LEN;
 use super::token::get_token;
 use super::token::is_token_error;
 use super::token::TokenCache;
+use crate::delivery::DeliveryCapabilities;
+use crate::delivery::MessageSink;
 use crate::error::EvotError;
 use crate::error::Result;
-use crate::gateway::delivery::DeliveryCapabilities;
-use crate::gateway::delivery::MessageSink;
 
 /// Send a text message to a Feishu chat, with automatic token retry.
 pub async fn send_text(

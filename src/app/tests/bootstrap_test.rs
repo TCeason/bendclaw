@@ -86,7 +86,7 @@ fn bootstrap_dependency_boundary() {
         include_str!("../../../cli/addon/src/agent.rs"),
         include_str!("../../../cli/addon/src/server.rs"),
     ] {
-        assert!(adapter.contains("evot::bootstrap::build_agent"));
+        assert!(adapter.contains("evot::api::build_agent"));
         assert!(!adapter.contains("evot::gateway::service::build_agent"));
     }
 }

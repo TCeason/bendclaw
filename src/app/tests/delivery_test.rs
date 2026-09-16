@@ -12,11 +12,11 @@ use evot::agent::AssistantContentType;
 use evot::agent::Run;
 use evot::agent::RunEvent;
 use evot::agent::RunEventPayload;
+use evot::delivery::stream as stream_delivery;
+use evot::delivery::stream::StreamDeliveryConfig;
+use evot::delivery::traits::DeliveryCapabilities;
+use evot::delivery::traits::MessageSink;
 use evot::error::Result;
-use evot::gateway::delivery::stream as stream_delivery;
-use evot::gateway::delivery::stream::StreamDeliveryConfig;
-use evot::gateway::delivery::traits::DeliveryCapabilities;
-use evot::gateway::delivery::traits::MessageSink;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 

@@ -453,3 +453,26 @@ fn escape_xml(value: &str) -> String {
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
 }
+
+pub(crate) fn load_turn_skills(
+    dirs: &[PathBuf],
+    names: Option<&[String]>,
+) -> crate::error::Result<Vec<SkillSpec>> {
+    match names {
+        Some(names) => load_skills_by_name(dirs, names),
+        None => load_skills(dirs),
+    }
+    .map_err(|error| crate::error::EvotError::Agent(format!("failed to load skills: {error}")))
+}
+
+pub(crate) fn skills_prompt_section(skills: &[SkillSpec]) -> Option<super::Section> {
+    let text = format_skills_for_prompt(skills);
+    if text.is_empty() {
+        None
+    } else {
+        Some(super::Section {
+            name: "skills",
+            text,
+        })
+    }
+}

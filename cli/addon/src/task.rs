@@ -1,9 +1,9 @@
-use evot::automation::ExecutorCapabilities;
+use evot::api::ExecutorCapabilities;
 use napi::Result as NapiResult;
 use napi_derive::napi;
 
-fn auth() -> NapiResult<evot::auth::AuthState> {
-    evot::auth::load_auth()
+fn auth() -> NapiResult<evot::api::auth::AuthState> {
+    evot::api::auth::load_auth()
         .map_err(to_napi)?
         .ok_or_else(|| napi::Error::from_reason("not logged in"))
 }
@@ -28,10 +28,13 @@ struct DeliveryDefaults {
     feishu_target: String,
 }
 
-fn executor(auth: &evot::auth::AuthState, env_file: Option<&str>) -> NapiResult<ExecutorContext> {
-    let config = evot::conf::Config::load_with_env_file(env_file).map_err(to_napi)?;
-    let id = evot::automation::executor_id(&auth.user.id);
-    let name = evot::automation::executor_name(&id);
+fn executor(
+    auth: &evot::api::auth::AuthState,
+    env_file: Option<&str>,
+) -> NapiResult<ExecutorContext> {
+    let config = evot::api::Config::load_with_env_file(env_file).map_err(to_napi)?;
+    let id = evot::api::executor_id(&auth.user.id);
+    let name = evot::api::executor_name(&id);
     let delivery_target = config
         .channels
         .feishu
@@ -47,11 +50,11 @@ fn executor(auth: &evot::auth::AuthState, env_file: Option<&str>) -> NapiResult<
 }
 
 async fn ensure_executor(
-    auth: &evot::auth::AuthState,
+    auth: &evot::api::auth::AuthState,
     env_file: Option<&str>,
 ) -> NapiResult<ExecutorContext> {
     let executor = executor(auth, env_file)?;
-    evot::automation::register_executor(auth, &executor.id, &executor.name, &executor.capabilities)
+    evot::api::register_executor(auth, &executor.id, &executor.name, &executor.capabilities)
         .await
         .map_err(to_napi)?;
     Ok(executor)
@@ -70,17 +73,13 @@ pub async fn task_delivery_defaults(env_file: Option<String>) -> NapiResult<Stri
 
 #[napi]
 pub async fn task_list() -> NapiResult<String> {
-    json(
-        &evot::automation::list_tasks(&auth()?)
-            .await
-            .map_err(to_napi)?,
-    )
+    json(&evot::api::list_tasks(&auth()?).await.map_err(to_napi)?)
 }
 
 #[napi]
 pub async fn task_get(task_id: String) -> NapiResult<String> {
     json(
-        &evot::automation::get_task(&auth()?, &task_id)
+        &evot::api::get_task(&auth()?, &task_id)
             .await
             .map_err(to_napi)?,
     )
@@ -94,7 +93,7 @@ pub async fn task_create(body_json: String, env_file: Option<String>) -> NapiRes
     body["executor_id"] = serde_json::json!(executor.id.clone());
     bind_default_delivery(&mut body, &executor)?;
     json(
-        &evot::automation::create_task(&auth, &body)
+        &evot::api::create_task(&auth, &body)
             .await
             .map_err(to_napi)?,
     )
@@ -111,7 +110,7 @@ pub async fn task_update(
     let executor = executor(&auth, env_file.as_deref())?;
     bind_default_delivery(&mut body, &executor)?;
     json(
-        &evot::automation::update_task(&auth, &task_id, &body)
+        &evot::api::update_task(&auth, &task_id, &body)
             .await
             .map_err(to_napi)?,
     )
@@ -152,14 +151,14 @@ fn bind_default_delivery(
 
 #[napi]
 pub async fn task_delete(task_id: String) -> NapiResult<()> {
-    evot::automation::delete_task(&auth()?, &task_id)
+    evot::api::delete_task(&auth()?, &task_id)
         .await
         .map_err(to_napi)
 }
 
 #[napi]
 pub async fn task_run(task_id: String, request_id: String) -> NapiResult<()> {
-    evot::automation::run_task(&auth()?, &task_id, &request_id)
+    evot::api::run_task(&auth()?, &task_id, &request_id)
         .await
         .map_err(to_napi)
 }

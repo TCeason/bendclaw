@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use evot::agent::Agent;
+use evot::api::Agent;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use tokio::task::JoinHandle;
@@ -24,21 +24,18 @@ impl NapiCompaction {
         let task_cancel = cancel.clone();
         let phase = Arc::new(Mutex::new("planning".to_string()));
         let observer_phase = Arc::clone(&phase);
-        let observer: evot::compact::orchestrator::ManualCompactionObserver =
-            Arc::new(move |next| {
-                let value = match next {
-                    evot::compact::orchestrator::ManualCompactionPhase::Planning => "planning",
-                    evot::compact::orchestrator::ManualCompactionPhase::Remote => "remote",
-                    evot::compact::orchestrator::ManualCompactionPhase::LocalFallback => {
-                        "local_fallback"
-                    }
-                    evot::compact::orchestrator::ManualCompactionPhase::Local => "local",
-                    evot::compact::orchestrator::ManualCompactionPhase::Complete => "complete",
-                };
-                if let Ok(mut current) = observer_phase.lock() {
-                    *current = value.to_string();
-                }
-            });
+        let observer: evot::api::ManualCompactionObserver = Arc::new(move |next| {
+            let value = match next {
+                evot::api::ManualCompactionPhase::Planning => "planning",
+                evot::api::ManualCompactionPhase::Remote => "remote",
+                evot::api::ManualCompactionPhase::LocalFallback => "local_fallback",
+                evot::api::ManualCompactionPhase::Local => "local",
+                evot::api::ManualCompactionPhase::Complete => "complete",
+            };
+            if let Ok(mut current) = observer_phase.lock() {
+                *current = value.to_string();
+            }
+        });
         let handle = tokio::spawn(async move {
             let outcome = agent
                 .compact_with_observer(

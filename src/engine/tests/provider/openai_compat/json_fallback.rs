@@ -1,7 +1,7 @@
 //! Tests for OpenAI-compatible JSON fallback handling.
 
-use evotengine::provider::stream_fallback::FallbackEmitter;
-use evotengine::provider::stream_http::classify_json_error;
+use evotengine::provider::stream::fallback::FallbackEmitter;
+use evotengine::provider::stream::http::classify_json_error;
 use evotengine::provider::ProviderError;
 use evotengine::provider::StreamEvent;
 use evotengine::types::*;

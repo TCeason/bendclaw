@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use evot::observability::UsageSummary;
 use evot::sessions::Session;
 use evot::storage::MemoryStorage;
 use evot::types::*;

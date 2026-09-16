@@ -233,3 +233,45 @@ impl SystemPrompt {
         (text, sections)
     }
 }
+
+pub(crate) fn bind_workspace_sections(sections: &mut Vec<Section>, cwd: &str) {
+    for section in sections.iter_mut() {
+        match section.name {
+            "environment" => section.text = SystemPrompt::environment_text(cwd),
+            "project_context" => {
+                section.text = SystemPrompt::project_context_text(cwd).unwrap_or_default();
+            }
+            _ => {}
+        }
+    }
+    if !sections.iter().any(|section| section.name == "environment") {
+        let insert_at = sections
+            .iter()
+            .position(|section| section.name == "dynamic_boundary")
+            .unwrap_or(sections.len());
+        sections.insert(insert_at, Section {
+            name: "environment",
+            text: SystemPrompt::environment_text(cwd),
+        });
+    }
+    if let Some(text) = SystemPrompt::project_context_text(cwd) {
+        if let Some(section) = sections
+            .iter_mut()
+            .find(|section| section.name == "project_context")
+        {
+            if section.text.is_empty() {
+                section.text = text;
+            }
+        } else {
+            let insert_at = sections
+                .iter()
+                .position(|section| matches!(section.name, "environment" | "dynamic_boundary"))
+                .unwrap_or(sections.len());
+            sections.insert(insert_at, Section {
+                name: "project_context",
+                text,
+            });
+        }
+    }
+    sections.retain(|section| !(section.name == "project_context" && section.text.is_empty()));
+}

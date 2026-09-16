@@ -35,7 +35,10 @@ pub fn dashboard_router(agent: Arc<Agent>) -> Router {
 
 // --- API: session trace (per-LLM-call spans) ---
 
-const TRACE_HTML: &str = include_str!("../static/trace/index.html");
+const TRACE_HTML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/console/trace/index.html"
+));
 
 async fn load_entries(state: &DashboardState, id: &str) -> Vec<crate::types::TranscriptEntry> {
     state

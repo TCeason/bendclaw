@@ -10,9 +10,9 @@ use serde::Serialize;
 
 use super::metrics::LlmCallMetrics;
 use super::metrics::UsageSummary;
-use super::transcript::CompactReason;
-use super::transcript::CompactionMethod;
-use super::transcript::TranscriptItem;
+use crate::types::CompactReason;
+use crate::types::CompactionMethod;
+use crate::types::TranscriptItem;
 
 // ---------------------------------------------------------------------------
 // Stats structs — one per observability event kind

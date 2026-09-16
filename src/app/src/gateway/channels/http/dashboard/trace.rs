@@ -8,11 +8,11 @@
 
 use serde::Serialize;
 
+use crate::observability::TranscriptStats;
 use crate::types::AssistantBlock;
 use crate::types::SessionMeta;
 use crate::types::TranscriptEntry;
 use crate::types::TranscriptItem;
-use crate::types::TranscriptStats;
 
 /// One row in the trace list: a single assistant LLM call.
 #[derive(Debug, Clone, Serialize)]

@@ -7,8 +7,8 @@ use evot::agent::ToolMode;
 use evot::conf::Config;
 use evot::conf::Protocol;
 use evot::conf::ProviderProfile;
+use evot::observability::TranscriptStats;
 use evot::storage::MemoryStorage;
-use evot::types::TranscriptStats;
 use evot_engine::provider::MockProvider;
 use tempfile::TempDir;
 
