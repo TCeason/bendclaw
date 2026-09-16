@@ -32,6 +32,17 @@ describe('transcript conversion', () => {
     expect(messagesToOutputLines(messages).map(line => line.kind)).toContain('thinking')
   })
 
+  test('resumed reasoning folds in the compact view and is lifted in the expanded view', () => {
+    const messages = transcriptToMessages([{
+      type: 'assistant',
+      content: [{ type: 'thinking', text: 'plan' }],
+    }])
+    const fold = (expanded?: boolean) =>
+      messagesToOutputLines(messages, expanded).filter(line => line.kind === 'thinking').map(line => line.thinkingFold)
+    expect(fold()).toEqual(['middle'])
+    expect(fold(true)).toEqual([undefined])
+  })
+
   test('restores tool-result details onto the canonical tool block', () => {
     const messages = transcriptToMessages([
       {

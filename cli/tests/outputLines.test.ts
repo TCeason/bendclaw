@@ -103,6 +103,17 @@ describe('buildThinkingLines', () => {
   test('reasoning that merely contains dots still renders', () => {
     expect(buildThinkingLines('checking ... now').map(line => line.text)).toEqual(['checking ... now'])
   })
+
+  test('every line of one block carries the fold policy for its view', () => {
+    const text = 'first\n\nsecond'
+    const folds = (options: { streaming?: boolean; expanded?: boolean }) =>
+      [...new Set(buildThinkingLines(text, options).map(line => line.thinkingFold))]
+    // Live block: tail window. Committed compact: head-and-tail. Expanded: none.
+    expect(folds({ streaming: true })).toEqual(['tail'])
+    expect(folds({})).toEqual(['middle'])
+    expect(folds({ streaming: true, expanded: true })).toEqual([undefined])
+    expect(folds({ expanded: true })).toEqual([undefined])
+  })
 })
 
 // ---------------------------------------------------------------------------

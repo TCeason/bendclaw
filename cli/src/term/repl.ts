@@ -1843,7 +1843,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     expandedLines.length = 0
     resetHistoryCache()
     if (hidden > 0) restoreLines([resumeElidedLine(hidden)])
-    restoreLines(messagesToOutputLines(shown))
+    // Both views, as on resume: otherwise ctrl+o could no longer open the
+    // tool cards or lift the reasoning folds of the messages kept on screen.
+    restoreLines(messagesToOutputLines(shown), messagesToOutputLines(shown, true))
 
     const lines = manualCompactionLines(outcome)
     committer.commitDual(lines.compact, lines.expanded)

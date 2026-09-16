@@ -202,6 +202,49 @@ fn foreign_protocol_metadata_is_downgraded_even_when_names_match() {
 }
 
 #[test]
+fn placeholder_thinking_after_tools_stays_in_history_as_text() {
+    let message = assistant("openai", "gpt-5.6-sol", vec![
+        Content::Text {
+            text: "compare the two renderers".into(),
+        },
+        Content::ToolCall {
+            id: "call_1".into(),
+            name: "bash".into(),
+            arguments: serde_json::json!({"command": "rg thinking"}),
+            metadata: None,
+        },
+        Content::Thinking {
+            thinking: "...".into(),
+            metadata: Some(ThinkingMetadata::Anthropic {
+                signature: "sig".into(),
+            }),
+        },
+    ]);
+
+    let transformed = transform_messages_for_model(
+        vec![message],
+        "evot-pro-anthropic",
+        "deepseek-v4.1-flash",
+        ApiProtocol::AnthropicMessages,
+    );
+
+    assert!(matches!(
+        &transformed[0],
+        Message::Assistant { content, .. }
+            if matches!(
+                &content[..],
+                [
+                    Content::Text { text: opening },
+                    Content::ToolCall { id, .. },
+                    Content::Text { text: placeholder },
+                ] if opening == "compare the two renderers"
+                    && id == "call_1"
+                    && placeholder == "..."
+            )
+    ));
+}
+
+#[test]
 fn unsigned_same_model_thinking_is_downgraded_to_text() {
     let message = assistant("anthropic", "claude", vec![Content::Thinking {
         thinking: "plan".into(),

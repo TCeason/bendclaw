@@ -4,7 +4,7 @@ import stringWidth from 'string-width'
 import { line, block, plain, dim, bold, colored, ansi, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
 import { spansWidth, wrapTextByWidth, truncateToWidth } from './width.js'
 import { wrapTextWithAnsi } from '../../render/wrap.js'
-import { formatWallClock } from '../../render/format.js'
+import { clipDisplayText, formatWallClock } from '../../render/format.js'
 import { BOX_DRAWING_RE } from '../../markdown/primitives.js'
 import { getTheme } from '../../render/theme/index.js'
 import stripAnsi from 'strip-ansi'
@@ -14,6 +14,16 @@ export interface OutputContext {
   prevKind?: string
   columns?: number
 }
+
+/**
+ * Height of a folded reasoning block, in visual rows. The live tail window and
+ * the committed head-and-tail fold both come out at exactly this many rows,
+ * so replacing one with the other never moves the footer or repaints
+ * scrollback. Short reasoning (at or under the budget) is shown in full.
+ */
+export const THINKING_FOLD_ROWS = 6
+/** Rows kept from the start of a committed fold; the rest of the budget is tail. */
+const THINKING_FOLD_HEAD_ROWS = 2
 
 // Transcript panels: a full-width filled slab with a blank padded row above
 // and below — pi's Box(paddingY=1, bg). The fill is what separates "input and
@@ -103,7 +113,8 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
   const initialContext: OutputContext = typeof context === 'string' ? { prevKind: context } : context
   let prevKind: string | undefined = initialContext.prevKind
 
-  for (const ol of lines) {
+  for (let index = 0; index < lines.length; index++) {
+    const ol = lines[index]!
     // Track which blocks this line produces so zone markers attach to its
     // first/last rendered line without disturbing the rest.
     const blockStart = blocks.length
@@ -184,23 +195,21 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
       }
 
       case 'thinking': {
-        // Reasoning stays visible and readable: `✻` in the accent hue marks the
-        // block (assistant prose uses `⏺`), and the body is muted grey rather
-        // than dim italic — dim italic on a dark terminal was barely legible,
-        // especially for CJK. Continuations indent under the marker.
-        const theme = getTheme()
-        const isBlockStart = prevKind !== 'thinking'
-        const prefix = isBlockStart
-          ? ansi(theme.thinkHeader.paint('✻ '))
-          : plain('  ')
-        const cols = initialContext.columns
-        const avail = cols ? Math.max(1, cols - 2) : 0
-        const wrapped = avail > 0 ? wrapTextWithAnsi(ol.text, avail) : [ol.text]
-        const thinkingLines = wrapped.map((text, index) => {
-          const body = ol.thinkingStyle ? ansi(theme.thinkText.paint(text)) : dim(text)
-          return line(index === 0 ? prefix : plain('  '), body)
-        })
-        blocks.push(block(thinkingLines, isBlockStart ? 1 : 0))
+        // One reasoning block is laid out as a unit: every consecutive thinking
+        // line with the same fold policy is wrapped first, then the fold is
+        // applied to the visual rows, so the folded height is exact even when
+        // CJK or long lines wrap. Lines without a policy still form a run of
+        // one; they render exactly as before.
+        let end = index + 1
+        while (
+          ol.thinkingFold !== undefined
+          && end < lines.length
+          && lines[end]!.kind === 'thinking'
+          && lines[end]!.thinkingFold === ol.thinkingFold
+        ) end++
+        const run = lines.slice(index, end)
+        blocks.push(buildThinkingBlock(run, prevKind !== 'thinking', initialContext.columns))
+        index = end - 1
         break
       }
 
@@ -280,6 +289,58 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
   }
 
   return blocks
+}
+
+/**
+ * Lay out one reasoning block. `✻` in the accent hue marks the block start
+ * (assistant prose uses `⏺`), and the body is muted grey rather than dim
+ * italic — dim italic on a dark terminal was barely legible, especially for
+ * CJK. Continuations indent under the marker.
+ *
+ * A block over the row budget folds to exactly THINKING_FOLD_ROWS rows:
+ *   tail   — a header counting the rows above, then the newest rows. Used
+ *            while streaming, so the window scrolls in place like `tail -f`
+ *            and the live region's height stays constant.
+ *   middle — the first rows, a hidden-row hint, then the last rows. Used
+ *            once committed. Same height as `tail`, so the commit that swaps
+ *            one for the other changes no row position.
+ */
+function buildThinkingBlock(run: OutputLine[], isBlockStart: boolean, columns?: number): ViewBlock {
+  const theme = getTheme()
+  const avail = columns ? Math.max(1, columns - 2) : 0
+  const rows: StyledSpan[] = []
+  for (const ol of run) {
+    const wrapped = avail > 0 ? wrapTextWithAnsi(ol.text, avail) : [ol.text]
+    for (const text of wrapped) rows.push(ol.thinkingStyle ? ansi(theme.thinkText.paint(text)) : dim(text))
+  }
+  const marker = isBlockStart ? ansi(theme.thinkHeader.paint('✻ ')) : plain('  ')
+  const indent = plain('  ')
+  const row = (body: StyledSpan, first: boolean): StyledLine => line(first ? marker : indent, body)
+  // Hint rows are the one thing here not produced by the wrapper, so they are
+  // clipped to the same content width the body rows wrapped to.
+  const hint = (text: string): StyledSpan => dim(avail > 0 ? clipDisplayText(text, avail) : text)
+  const marginTop = isBlockStart ? 1 : 0
+
+  const fold = run[0]?.thinkingFold
+  if (fold === undefined || rows.length <= THINKING_FOLD_ROWS) {
+    return block(rows.map((body, k) => row(body, k === 0)), marginTop)
+  }
+  if (fold === 'tail') {
+    const visible = rows.slice(rows.length - (THINKING_FOLD_ROWS - 1))
+    const hidden = rows.length - visible.length
+    return block([
+      row(hint(`↑ ${hidden} rows (ctrl+o to expand)`), true),
+      ...visible.map(body => row(body, false)),
+    ], marginTop)
+  }
+  const head = rows.slice(0, THINKING_FOLD_HEAD_ROWS)
+  const tail = rows.slice(rows.length - (THINKING_FOLD_ROWS - THINKING_FOLD_HEAD_ROWS - 1))
+  const hidden = rows.length - head.length - tail.length
+  return block([
+    ...head.map((body, k) => row(body, k === 0)),
+    row(hint(`… ${hidden} rows hidden (ctrl+o to expand)`), false),
+    ...tail.map(body => row(body, false)),
+  ], marginTop)
 }
 
 /**

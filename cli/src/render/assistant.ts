@@ -25,18 +25,20 @@ function renderColumns(): number {
 
 function renderBlockCached(
   block: UIAssistantBlock,
-  expandedTools: boolean,
+  expanded: boolean,
   streaming: boolean,
 ): OutputLine[] {
-  const key = `${expandedTools ? 1 : 0}|${streaming ? 1 : 0}|${renderColumns()}`
+  const key = `${expanded ? 1 : 0}|${streaming ? 1 : 0}|${renderColumns()}`
   const hit = blockLineCache.get(block)
   if (hit && hit.key === key) return hit.lines
 
+  // `expanded` is the one ctrl+o view toggle: it opens tool cards and lifts
+  // the fold on long reasoning alike.
   const lines = block.type === 'thinking'
-    ? buildThinkingLines(block.text, { streaming })
+    ? buildThinkingLines(block.text, { streaming, expanded })
     : block.type === 'text'
       ? buildAssistantLines(block.text, { streaming })
-      : buildToolCard(block.toolCall, expandedTools)
+      : buildToolCard(block.toolCall, expanded)
   blockLineCache.set(block, { key, lines })
   return lines
 }
@@ -58,7 +60,9 @@ export function assistantContentToOutputLines(
   const ordered = [...content].sort((a, b) => a.contentIndex - b.contentIndex)
   // Only the block still receiving deltas is streaming. Earlier blocks are
   // complete, so they render exactly as they will once committed — a finished
-  // reasoning block reads `Thought` while the model is still typing after it.
+  // reasoning block already shows its committed head-and-tail fold while the
+  // model is still typing after it; only the live block scrolls as a tail
+  // window.
   return ordered.flatMap((block, index) =>
     renderBlockCached(block, expandedTools, (options.streaming ?? false) && index === ordered.length - 1),
   )

@@ -276,6 +276,14 @@ export interface OutputLine {
   rawMarkdown?: string
   /** Thinking text already contains markdown ANSI; apply only the outer tint. */
   thinkingStyle?: boolean
+  /**
+   * Fold policy for a long reasoning block. Every thinking line of one block
+   * carries the same value; the viewmodel wraps the whole run and, when it
+   * overflows the row budget, folds it to a fixed height. `tail` keeps the
+   * newest rows (the live streaming window), `middle` keeps the head and tail
+   * (the committed compact form). Absent means never fold (expanded view).
+   */
+  thinkingFold?: ThinkingFold
   /** System text that already carries its own ANSI styling (e.g. `/skill`).
    *  Rendered verbatim instead of being flattened to one dim gray. */
   preStyled?: boolean
@@ -316,6 +324,8 @@ export interface OutputLine {
     | { kind: 'model_change'; data: { provider: string; model: string } }
   >
 }
+
+export type ThinkingFold = 'tail' | 'middle'
 
 export type ToolCardState = 'pending' | 'success' | 'error'
 
@@ -396,23 +406,30 @@ function hasReasoningContent(text: string): boolean {
 /**
  * Reasoning rows, rendered as markdown and tinted muted by the viewmodel.
  *
- * Shown in full: reasoning is the most useful thing on screen while a long
- * turn runs, so it is never collapsed behind a summary row. `streaming` only
- * affects fence handling in the markdown pipeline.
+ * Short reasoning is shown in full. Long reasoning is folded by the viewmodel
+ * to a fixed row budget unless `expanded`: while it streams, the fold is a
+ * tail window that scrolls in place (the newest rows stay visible and the
+ * footer never moves); once committed, the fold keeps the head and tail. Both
+ * folds have the same height, so committing the message never shifts a row.
+ * `streaming` also selects fence handling in the markdown pipeline.
  */
 export function buildThinkingLines(
   text: string,
-  options: { streaming?: boolean } = {},
+  options: { streaming?: boolean; expanded?: boolean } = {},
 ): OutputLine[] {
   if (!text.trim() || !hasReasoningContent(text)) return []
   const rendered = renderThinkingMarkdown(text, { streaming: options.streaming })
   if (!rendered || !rendered.trim()) return []
   const cleaned = rendered.replace(/^\n+/, '').replace(/\n+$/, '')
+  const thinkingFold: ThinkingFold | undefined = options.expanded
+    ? undefined
+    : options.streaming ? 'tail' : 'middle'
   return cleaned.split('\n').map((line) => ({
     id: genId('think'),
     kind: 'thinking' as const,
     text: line,
     thinkingStyle: true,
+    thinkingFold,
   }))
 }
 
@@ -911,7 +928,7 @@ export function messagesToOutputLines(messages: UIMessage[], expanded: boolean =
     if (msg.content) {
       for (const block of [...msg.content].sort((a, b) => a.contentIndex - b.contentIndex)) {
         if (block.type === 'thinking') {
-          lines.push(...buildThinkingLines(block.text))
+          lines.push(...buildThinkingLines(block.text, { expanded }))
         }
         else if (block.type === 'text') lines.push(...buildAssistantLines(block.text))
         else lines.push(...buildToolCard(block.toolCall))

@@ -89,8 +89,16 @@ fn normalized_history_serializes_all_parallel_results_in_the_next_message() {
     let config = StreamConfigBuilder::anthropic().messages(messages).build();
     let body = build_request_body(&config, false);
     assert_eq!(body["messages"][1]["role"], "assistant");
-    // Cross-model thinking becomes text in place, without arbitrary reordering.
-    assert_eq!(body["messages"][1]["content"][5]["type"], "text");
+    let assistant_blocks = body["messages"][1]["content"].as_array().unwrap();
+    // Cross-model thinking stays visible, but a tool_use turn must end on
+    // tool_use: DeepSeek's Anthropic-compatible API treats a later text block
+    // as interrupting the pair with the next message's tool_result.
+    assert_eq!(assistant_blocks[0]["type"], "text");
+    assert_eq!(assistant_blocks[0]["text"], "reading files");
+    assert_eq!(assistant_blocks[1]["type"], "text");
+    assert_eq!(assistant_blocks[1]["text"], "plan");
+    assert_eq!(assistant_blocks[2]["type"], "tool_use");
+    assert_eq!(assistant_blocks.last().unwrap()["type"], "tool_use");
     assert_eq!(body["messages"][2]["role"], "user");
     for (index, id) in ["b", "a", "c", "d"].iter().enumerate() {
         let block = &body["messages"][2]["content"][index];
@@ -779,6 +787,85 @@ fn test_content_to_anthropic_filters_empty_text() {
     let result = content_to_anthropic(&content);
     assert_eq!(result.len(), 1);
     assert_eq!(result[0]["text"], "hello");
+}
+
+#[test]
+fn assistant_placeholder_thinking_after_tools_is_dropped() {
+    let content = vec![
+        Content::Text {
+            text: "compare the two renderers".into(),
+        },
+        Content::ToolCall {
+            id: "call_c9cfe266-abac-46ba-be90-bff3dce7313f".into(),
+            name: "bash".into(),
+            arguments: serde_json::json!({"command": "rg thinking"}),
+            metadata: None,
+        },
+        Content::ToolCall {
+            id: "call_06c624bb-8631-4362-bf34-ab956d7c3512".into(),
+            name: "bash".into(),
+            arguments: serde_json::json!({"command": "rg reasoning"}),
+            metadata: None,
+        },
+        Content::Thinking {
+            thinking: "...".into(),
+            metadata: Some(ThinkingMetadata::Anthropic {
+                signature: "foreign-sig".into(),
+            }),
+        },
+    ];
+
+    let result = assistant_content_to_anthropic(&content);
+    assert_eq!(result.len(), 3);
+    assert_eq!(result[0]["type"], "text");
+    assert_eq!(result[1]["type"], "tool_use");
+    assert_eq!(result[1]["id"], "call_c9cfe266-abac-46ba-be90-bff3dce7313f");
+    assert_eq!(result[2]["type"], "tool_use");
+    assert_eq!(result[2]["id"], "call_06c624bb-8631-4362-bf34-ab956d7c3512");
+}
+
+#[test]
+fn assistant_meaningful_text_after_tools_moves_before_tool_use() {
+    let content = vec![
+        Content::Text {
+            text: "opening".into(),
+        },
+        Content::ToolCall {
+            id: "call_1".into(),
+            name: "read".into(),
+            arguments: serde_json::json!({"path": "README.md"}),
+            metadata: None,
+        },
+        Content::Text {
+            text: "why I called it".into(),
+        },
+    ];
+
+    let result = assistant_content_to_anthropic(&content);
+    assert_eq!(result.len(), 3);
+    assert_eq!(result[0]["type"], "text");
+    assert_eq!(result[0]["text"], "opening");
+    assert_eq!(result[1]["type"], "text");
+    assert_eq!(result[1]["text"], "why I called it");
+    assert_eq!(result[2]["type"], "tool_use");
+    assert_eq!(result[2]["id"], "call_1");
+}
+
+#[test]
+fn assistant_placeholder_thinking_without_tools_is_dropped() {
+    let content = vec![
+        Content::Thinking {
+            thinking: "…".into(),
+            metadata: None,
+        },
+        Content::Text {
+            text: "answer".into(),
+        },
+    ];
+    let result = assistant_content_to_anthropic(&content);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0]["type"], "text");
+    assert_eq!(result[0]["text"], "answer");
 }
 
 // ---------------------------------------------------------------------------

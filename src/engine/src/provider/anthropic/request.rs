@@ -31,7 +31,7 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
                 }));
             }
             Message::Assistant { content, .. } => {
-                let blocks = content_to_anthropic(content);
+                let blocks = assistant_content_to_anthropic(content);
                 // Match pi: aborted/empty assistant messages carry no semantic
                 // content and must not be turned into prompt text. Also discard
                 // the exact sentinel written by older evot builds so existing
@@ -272,6 +272,49 @@ fn system_prompt_blocks(prompt: &str, cache_static: bool) -> Vec<serde_json::Val
     }
 
     blocks
+}
+
+pub fn assistant_content_to_anthropic(content: &[Content]) -> Vec<serde_json::Value> {
+    content_to_anthropic(&close_tool_use_turn(content))
+}
+
+/// Anthropic-compatible backends require a `tool_use` to be answered by the
+/// *next message*. A later block in the same assistant turn — even a demoted
+/// thinking placeholder like `...` — is treated as interrupting that pair.
+/// Keep visible context, but never after the first tool call.
+fn close_tool_use_turn(content: &[Content]) -> Vec<Content> {
+    let mut prefix: Vec<Content> = Vec::new();
+    let mut tools: Vec<Content> = Vec::new();
+    for block in content {
+        if is_placeholder_context(block) {
+            continue;
+        }
+        if is_tool_call(block) {
+            tools.push(block.clone());
+        } else {
+            prefix.push(block.clone());
+        }
+    }
+    prefix.extend(tools);
+    prefix
+}
+
+fn is_tool_call(block: &Content) -> bool {
+    matches!(block, Content::ToolCall { .. })
+}
+
+fn is_placeholder_context(block: &Content) -> bool {
+    match block {
+        Content::Text { text } | Content::Thinking { thinking: text, .. } => {
+            is_placeholder_text(text)
+        }
+        _ => false,
+    }
+}
+
+fn is_placeholder_text(text: &str) -> bool {
+    let trimmed = text.trim();
+    trimmed.is_empty() || trimmed == "..." || trimmed == "…"
 }
 
 pub fn content_to_anthropic(content: &[Content]) -> Vec<serde_json::Value> {
