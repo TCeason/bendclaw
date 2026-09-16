@@ -23,6 +23,10 @@ pub enum ProviderError {
     ProtocolIncomplete(String),
     #[error("Auth error: {0}")]
     Auth(String),
+    #[error("Model not found: {0}")]
+    ModelNotFound(String),
+    #[error("Invalid request: {0}")]
+    InvalidRequest(String),
     #[error("{}", display_rate_limited(.message))]
     RateLimited { message: String },
     /// A provider quota window is exhausted. Unlike short-lived rate limiting,
@@ -32,14 +36,6 @@ pub enum ProviderError {
     QuotaLimited { message: String },
     #[error("Context overflow: {message}")]
     ContextOverflow { message: String },
-    /// The proxy serving this provider cannot answer the request because of
-    /// its own configuration — no channel is entitled to the selected model,
-    /// or the proxy's client version is older than the backend accepts. The
-    /// identical request cannot succeed on retry and the fix belongs to an
-    /// operator, so this fails fast with the provider's own explanation
-    /// instead of entering the retry/outage loop.
-    #[error("Configuration error: {0}")]
-    Configuration(String),
     #[error("Cancelled")]
     Cancelled,
     #[error("{0}")]
@@ -69,10 +65,12 @@ impl ProviderError {
 
     fn classify_with_display(status: u16, evidence: &str, display: &str) -> Self {
         let display = display.to_string();
-        if is_context_overflow(status, evidence) {
+        if status == 401 || status == 403 {
+            Self::Auth(display)
+        } else if super::error_semantics::model_not_found(evidence, None) {
+            Self::ModelNotFound(display)
+        } else if is_context_overflow(status, evidence) {
             Self::ContextOverflow { message: display }
-        } else if is_configuration_error_message(evidence) {
-            Self::Configuration(display)
         } else if is_fatal_quota_exhaustion(evidence) {
             Self::Other(display)
         } else if is_waitable_quota_limit(evidence) {
@@ -81,8 +79,6 @@ impl ProviderError {
             Self::RateLimited { message: display }
         } else if status == 529 || is_overloaded_message(evidence) {
             Self::Overloaded(display)
-        } else if status == 401 || status == 403 {
-            Self::Auth(display)
         } else if status == 408 || status == 425 || (500..600).contains(&status) {
             Self::Transient { message: display }
         } else if (400..500).contains(&status) {
@@ -122,6 +118,27 @@ impl ProviderError {
         classified
     }
 
+    /// Classify native JSON error fields without relying on gateway wording.
+    pub(crate) fn from_http_payload(
+        status: u16,
+        value: Option<&serde_json::Value>,
+        evidence: &str,
+        display: &str,
+        should_retry: Option<bool>,
+    ) -> Self {
+        if !matches!(status, 401 | 403 | 429)
+            && value.is_some_and(super::error_semantics::permanent_type)
+            && !is_context_overflow_message(evidence)
+        {
+            return if super::error_semantics::model_not_found(evidence, value) {
+                Self::ModelNotFound(display.to_string())
+            } else {
+                Self::InvalidRequest(display.to_string())
+            };
+        }
+        Self::classify_with_hints_and_display(status, evidence, display, should_retry)
+    }
+
     pub fn is_context_overflow(&self) -> bool {
         matches!(self, Self::ContextOverflow { .. })
     }
@@ -155,33 +172,47 @@ pub(crate) fn classify_stream_error(
     message: &str,
     value: Option<&serde_json::Value>,
 ) -> ProviderError {
-    // A configuration gap is never a transient outage, even when it arrives
-    // after the request was accepted.
-    if is_configuration_error_message(message) {
-        return ProviderError::Configuration(message.to_string());
+    if value
+        .and_then(provider_error_type)
+        .is_some_and(is_auth_error_type)
+    {
+        return ProviderError::Auth(message.to_string());
     }
-    if is_context_overflow_message(message) {
+    let evidence = value.map(serde_json::Value::to_string);
+    let evidence = evidence.as_deref().unwrap_or(message);
+    if super::error_semantics::model_not_found(evidence, value) {
+        return ProviderError::ModelNotFound(message.to_string());
+    }
+    if is_context_overflow_message(evidence) {
         return ProviderError::ContextOverflow {
             message: message.to_string(),
         };
     }
-    if is_overloaded_message(message) {
-        return ProviderError::Overloaded(message.to_string());
+    if value.is_some_and(super::error_semantics::permanent_type) {
+        return ProviderError::InvalidRequest(message.to_string());
     }
-    if is_fatal_quota_exhaustion(message) {
+    if is_fatal_quota_exhaustion(evidence) {
         return ProviderError::Other(message.to_string());
     }
-    if is_waitable_quota_limit(message) {
+    if is_waitable_quota_limit(evidence) {
         return ProviderError::QuotaLimited {
             message: message.to_string(),
         };
+    }
+    if value.and_then(provider_error_type) == Some("rate_limit_error") {
+        return ProviderError::RateLimited {
+            message: message.to_string(),
+        };
+    }
+    if is_overloaded_message(evidence) {
+        return ProviderError::Overloaded(message.to_string());
     }
     match value.and_then(provider_error_type) {
         Some(error_type) if is_auth_error_type(error_type) => {
             ProviderError::Auth(message.to_string())
         }
         Some(error_type) if is_fatal_error_type(error_type) => {
-            ProviderError::Api(message.to_string())
+            ProviderError::InvalidRequest(message.to_string())
         }
         Some("rate_limit_error") => ProviderError::RateLimited {
             message: message.to_string(),
@@ -195,14 +226,11 @@ pub(crate) fn classify_stream_error(
 /// Extract the provider's semantic error type from common JSON envelopes.
 /// Nested `error.type` takes precedence over the outer event type (`"error"`).
 pub(crate) fn provider_error_type(value: &serde_json::Value) -> Option<&str> {
-    value
-        .pointer("/error/type")
+    let error = super::error_semantics::error_node(value);
+    error
+        .get("type")
         .and_then(serde_json::Value::as_str)
-        .or_else(|| {
-            value
-                .pointer("/error/code")
-                .and_then(serde_json::Value::as_str)
-        })
+        .or_else(|| error.get("code").and_then(serde_json::Value::as_str))
         .or_else(|| value.get("code").and_then(serde_json::Value::as_str))
         .or_else(|| value.get("type").and_then(serde_json::Value::as_str))
         .filter(|kind| *kind != "error")
@@ -308,20 +336,6 @@ fn is_context_overflow(status: u16, message: &str) -> bool {
 
 pub(crate) fn is_overloaded_message(message: &str) -> bool {
     message.to_lowercase().contains("overloaded")
-}
-
-/// Proxy-side configuration errors: the request cannot be served until an
-/// operator changes the routing or version configuration, so an identical
-/// retry is guaranteed to fail. The wording is owned by llmproxy (the proxy in
-/// front of this provider fleet); the status code alone (503) would otherwise
-/// classify these as transient outages and burn the retry budget while the UI
-/// reports "Service busy".
-///
-/// Keep this list in sync with llmproxy's client-facing messages.
-fn is_configuration_error_message(message: &str) -> bool {
-    let lower = message.to_lowercase();
-    lower.contains("no permitted model backend")
-        || lower.contains("model backend requires a supported client version")
 }
 
 fn is_waitable_quota_limit(message: &str) -> bool {

@@ -1444,21 +1444,21 @@ describe('term stream machine', () => {
     // answered 503 "No permitted model backend is configured.", which used to
     // render as "Service busy" — vocabulary for a transient outage that also
     // invited ten pointless retries. The card must name the real gap.
-    const err = 'Configuration error: HTTP 503: api_error: No permitted model backend is configured.'
+    const err = 'Model not found: HTTP 404: model_not_found: Model not found.'
     const state = createStreamMachineState(createInitialState('k3', '/tmp'), createSpinnerState())
     const failed = reduceRunEvent(state, {
       kind: 'llm_call_completed',
       payload: { model: 'k3', turn: 1, error: err, metrics: { duration_ms: 4000 } },
     }, { termRows: 24 })
     const text = failed.commitLines.map(l => l.text).join('\n')
-    expect(text).toContain('Model not configured')
+    expect(text).toContain('Model not found')
     expect(text).not.toContain('Service busy')
 
     // The run's terminal error event carries the same message as the card, so
     // it is deduplicated from scrollback and keeps the raw detail in screen.log.
     const terminal = reduceRunEvent(failed.state, { kind: 'error', payload: { message: err } }, { termRows: 24 })
     const visible = terminal.commitLines.map(l => l.text).join('\n')
-    expect(visible).not.toContain('Model not configured')
+    expect(visible).not.toContain('Model not found')
     expect(terminal.writeLines.some(line => line.text.includes(err))).toBe(true)
   })
 

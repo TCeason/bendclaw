@@ -96,8 +96,9 @@ pub async fn check_error_status(
         .as_ref()
         .map(json_error_evidence)
         .unwrap_or_else(|| body.clone());
-    Err(ProviderError::classify_with_hints_and_display(
+    Err(ProviderError::from_http_payload(
         status,
+        parsed.as_ref(),
         &format!("HTTP {status}: {classification_detail}"),
         &format!("HTTP {status}: {display_detail}"),
         should_retry,
@@ -199,7 +200,7 @@ pub async fn read_json_body(
 /// `Provider returned error` message. That field is part of the envelope, not
 /// a rewrite of it: append `raw` when it is not already in the display string.
 pub fn extract_json_error_message(value: &serde_json::Value) -> Option<String> {
-    let error_obj = value.get("error");
+    let error_obj = Some(super::error_semantics::error_node(value));
 
     let error_kind = error_obj
         .and_then(|error| error.get("type").or_else(|| error.get("code")))

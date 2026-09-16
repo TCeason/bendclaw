@@ -89,10 +89,8 @@ pub fn should_retry(error: &ProviderError) -> bool {
         | ProviderError::ProtocolIncomplete(_)
         | ProviderError::Overloaded(_)
         | ProviderError::Transient { .. } => true,
-        // No channel/version configuration can serve this request, so the
-        // identical retry is guaranteed to fail and the UI must surface the
-        // operator action instead of a retry countdown.
-        ProviderError::Configuration(_) => false,
+        // Protocol-declared permanent errors never enter the legacy text fallback.
+        ProviderError::ModelNotFound(_) | ProviderError::InvalidRequest(_) => false,
         // A bare Api error that is really a context overflow must never retry,
         // even if its wording also contains a transient phrase like "try again".
         // Overflow is handled by compaction, not retry.

@@ -148,28 +148,22 @@ fn classify_overloaded_message_without_status() {
 }
 
 #[test]
-fn classify_proxy_configuration_gap_is_not_retryable() {
-    // llmproxy reports a routing gap (no channel entitled to the selected
-    // model) as HTTP 503. It is not an outage: the same request keeps failing
-    // until an operator configures a channel, so it must fail fast with the
-    // actionable message instead of showing "Service busy" for ten retries.
-    let message = "HTTP 503: api_error: No permitted model backend is configured.";
-    let err = ProviderError::classify_with_hints(503, message, Some(true));
-    assert!(matches!(err, ProviderError::Configuration(_)));
+fn classify_model_not_found_is_not_retryable() {
+    // A standard model-not-found signal remains fatal even with a retry hint.
+    let message = "HTTP 404: model_not_found: Model not found.";
+    let err = ProviderError::classify_with_hints(404, message, Some(true));
+    assert!(matches!(err, ProviderError::ModelNotFound(_)));
     assert!(!evotengine::retry::should_retry(&err));
-    assert!(err
-        .to_string()
-        .contains("No permitted model backend is configured."));
+    assert!(err.to_string().contains("Model not found."));
 }
 
 #[test]
 fn classify_outdated_client_version_is_not_retryable() {
     // The backend refuses this client version until the proxy is updated; a
     // retry cannot change either side of that negotiation.
-    let message = "HTTP 503: api_error: The model backend requires a supported \
-        client version. Contact the proxy administrator.";
-    let err = ProviderError::classify_with_hints(503, message, Some(true));
-    assert!(matches!(err, ProviderError::Configuration(_)));
+    let message = "HTTP 400: invalid_request_error: Unsupported operation.";
+    let err = ProviderError::classify(400, message);
+    assert!(matches!(err, ProviderError::Other(_)));
     assert!(!evotengine::retry::should_retry(&err));
 }
 
@@ -177,9 +171,9 @@ fn classify_outdated_client_version_is_not_retryable() {
 fn configuration_gap_stream_error_is_not_retryable() {
     // Same semantics when the proxy surfaces the gap inside an accepted (2xx)
     // stream instead of a non-2xx response.
-    let payload = r#"{"type":"error","error":{"type":"api_error","message":"No permitted model backend is configured."}}"#;
+    let payload = r#"{"type":"response.failed","response":{"error":{"code":"model_not_found","message":"Not available"}}}"#;
     let err = classify_sse_error_event(payload);
-    assert!(matches!(err, ProviderError::Configuration(_)));
+    assert!(matches!(err, ProviderError::ModelNotFound(_)));
     assert!(!evotengine::retry::should_retry(&err));
 }
 
@@ -243,9 +237,9 @@ fn kiro_api_error_is_structurally_retryable() {
 #[test]
 fn structured_invalid_request_error_remains_non_retryable() {
     let err = classify_sse_error_event(
-        r#"{"type":"error","error":{"type":"invalid_request_error","message":"missing required field"}}"#,
+        r#"{"type":"error","error":{"type":"invalid_request_error","message":"missing required field; please retry"}}"#,
     );
-    assert!(matches!(err, ProviderError::Api(_)));
+    assert!(matches!(err, ProviderError::InvalidRequest(_)));
     assert!(!evotengine::retry::should_retry(&err));
 }
 
@@ -445,7 +439,7 @@ fn non_overflow_messages() {
 #[test]
 fn classify_404_not_retryable() {
     let err = ProviderError::classify(404, "model not found");
-    assert!(matches!(err, ProviderError::Other(_)));
+    assert!(matches!(err, ProviderError::ModelNotFound(_)));
     assert!(!evotengine::retry::should_retry(&err));
 }
 

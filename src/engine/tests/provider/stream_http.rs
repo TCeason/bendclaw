@@ -6,9 +6,44 @@ use evotengine::provider::stream_http::extract_json_error_message;
 use evotengine::provider::stream_http::StreamResponseKind;
 use evotengine::provider::ProviderError;
 
+#[test]
+fn standard_model_errors_are_fatal_across_protocols_without_gateway_hints() {
+    for value in [
+        serde_json::json!({"error":{"type":"invalid_request_error","code":"model_not_found","message":"Not available"}}),
+        serde_json::json!({"type":"error","error":{"type":"not_found_error","message":"Model not found."}}),
+        serde_json::json!({"type":"response.failed","response":{"error":{"code":"model_not_found","message":"Not available"}}}),
+    ] {
+        let error = classify_json_error(&value);
+        assert!(matches!(error, ProviderError::ModelNotFound(_)));
+        assert!(!evotengine::retry::should_retry(&error));
+    }
+    let missing_route = classify_json_error(
+        &serde_json::json!({"error":{"type":"not_found_error","message":"Route not found"}}),
+    );
+    assert!(!matches!(missing_route, ProviderError::ModelNotFound(_)));
+    assert!(!evotengine::retry::should_retry(&missing_route));
+}
+
 // ---------------------------------------------------------------------------
 // extract_json_error_message
 // ---------------------------------------------------------------------------
+
+#[test]
+fn structured_stream_code_is_not_lost_behind_generic_type_or_message() {
+    for (code, is_overflow) in [
+        ("context_length_exceeded", true),
+        ("overloaded_error", false),
+    ] {
+        let value = serde_json::json!({"error":{"type":"server_error","code":code,"message":"Request failed"}});
+        let error = classify_json_error(&value);
+        if is_overflow {
+            assert!(matches!(error, ProviderError::ContextOverflow { .. }));
+            assert!(!evotengine::retry::should_retry(&error));
+        } else {
+            assert!(matches!(error, ProviderError::Overloaded(_)));
+        }
+    }
+}
 
 #[test]
 fn extract_anthropic_error_message() {
@@ -202,7 +237,7 @@ fn classify_json_404_is_not_retryable() {
         }
     });
     let err = classify_json_error(&value);
-    assert!(matches!(err, ProviderError::Api(_)));
+    assert!(matches!(err, ProviderError::ModelNotFound(_)));
     assert!(!evotengine::retry::should_retry(&err));
 }
 
@@ -215,7 +250,7 @@ fn classify_json_400_bad_request_is_not_retryable() {
         }
     });
     let err = classify_json_error(&value);
-    assert!(matches!(err, ProviderError::Api(_)));
+    assert!(matches!(err, ProviderError::InvalidRequest(_)));
     assert!(!evotengine::retry::should_retry(&err));
 }
 
@@ -276,6 +311,40 @@ async fn error_from_mock_response(template: wiremock::ResponseTemplate) -> Provi
         Err(error) => error,
         Ok(_) => panic!("expected an error classification"),
     }
+}
+
+#[tokio::test]
+async fn permanent_protocol_fields_win_over_retry_hints_and_wording() {
+    for (status, payload, model_missing) in [
+        (
+            404,
+            serde_json::json!({"error":{"type":"invalid_request_error","code":"model_not_found","message":"Unavailable"}}),
+            true,
+        ),
+        (
+            503,
+            serde_json::json!({"error":{"type":"invalid_request_error","code":"unsupported_operation","message":"Please retry later"}}),
+            false,
+        ),
+    ] {
+        let err = error_from_mock_response(
+            wiremock::ResponseTemplate::new(status)
+                .insert_header("x-should-retry", "true")
+                .set_body_json(payload),
+        )
+        .await;
+        assert!(!evotengine::retry::should_retry(&err));
+        assert_eq!(
+            matches!(err, ProviderError::ModelNotFound(_)),
+            model_missing
+        );
+    }
+    let err = error_from_mock_response(wiremock::ResponseTemplate::new(404).set_body_json(
+        serde_json::json!({"error":{"message":"Route not found","type":"not_found_error"}}),
+    ))
+    .await;
+    assert!(matches!(err, ProviderError::InvalidRequest(_)));
+    assert!(!evotengine::retry::should_retry(&err));
 }
 
 #[tokio::test]

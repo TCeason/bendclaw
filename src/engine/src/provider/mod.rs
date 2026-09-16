@@ -1,6 +1,7 @@
 pub mod anthropic;
 pub mod bedrock;
 pub mod error;
+mod error_semantics;
 pub mod json_repair;
 mod legacy_bridge;
 pub mod mock;
