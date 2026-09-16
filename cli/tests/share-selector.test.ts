@@ -8,9 +8,24 @@ const shares: SharedSession[] = ['Alpha', 'Beta'].map((title, index) => ({
   created_at: 1_700_000_000_000, size_bytes: 2048,
 }))
 
-test('shares reuse session selector search, navigation, enter and deletion confirmation', () => {
+test('shares use the same gestures as sessions and tasks: d d deletes, / searches, esc closes', () => {
   const state = shareSelectorState(shares)
+  expect(state.listFocused).toBe(true)
+  expect(state.previewPane?.confirmDeleteKey).toBe('d')
   expect(handleSelectorControl(state, { type: 'enter' })).toEqual({ kind: 'open-share', shareId: 'share-0' })
+  // While the list owns the input, letters are actions rather than a filter...
+  const first = handleSelectorControl(state, { type: 'char', char: 'd' })
+  if (first.kind !== 'update') throw new Error('expected armed delete')
+  expect(first.state.pendingDeleteId).toBe('share-0')
+  expect(handleSelectorControl(first.state, { type: 'char', char: 'd' })).toMatchObject({ kind: 'delete-share', shareId: 'share-0' })
+  expect(handleSelectorControl(first.state, { type: 'escape' }).kind).toBe('update')
+  // ...and `/` hands the input to the filter, where typing searches.
+  const searching = handleSelectorControl(state, { type: 'char', char: '/' })
+  if (searching.kind !== 'update') throw new Error('expected filter focus')
+  expect(searching.state.listFocused).toBe(false)
+  const typed = handleSelectorControl(searching.state, { type: 'char', char: 'B' })
+  if (typed.kind !== 'update') throw new Error('expected filter update')
+  expect(typed.state.items.map(item => item.id)).toEqual(['share-1'])
   expect(selectorType(state, 'Beta').items.map(item => item.id)).toEqual(['share-1'])
   const armed = handleSelectorControl(state, { type: 'ctrl', key: 'd' })
   if (armed.kind !== 'update') throw new Error('expected armed delete')

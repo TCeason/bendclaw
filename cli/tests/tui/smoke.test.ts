@@ -684,6 +684,59 @@ describe.skipIf(!canRun)('evot binary smoke (PTY)', () => {
     }
   }, 60_000)
 
+  test('Esc on an idle ask overlay releases the tab title for the next overlay', async () => {
+    // The plan review is an ask overlay with no stream behind it, exactly like
+    // the /task confirmations: Esc goes through close-overlay, not cancel-ask.
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => {
+      const chunk = {
+        id: 'fixture',
+        model: 'smoke-model',
+        choices: [{ index: 0, delta: { role: 'assistant', content: 'Plan:\n1. Read the config loader\n2. Add the missing field\n' }, finish_reason: 'stop' }],
+      }
+      return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } })
+    } })
+    const titles = (raw: string) => [...raw.matchAll(/\x1b\]0;([^\x07]*)\x07/g)].map(match => match[1] ?? '')
+    // Title writes and frame writes are separate stdout writes, so a frame can
+    // be observed a tick before the title that accompanies it.
+    const waitForTitle = async (current: Session, prefix: string): Promise<string[]> => {
+      const deadline = Date.now() + 5_000
+      for (;;) {
+        const seen = titles(current.outputSince())
+        if (seen.at(-1)?.startsWith(prefix)) return seen
+        if (Date.now() >= deadline) throw new Error(`no title starting with ${JSON.stringify(prefix)}; saw ${JSON.stringify(seen)}`)
+        await Bun.sleep(50)
+      }
+    }
+    let session: Session | undefined
+    try {
+      session = await startEvot(true, false, false, `http://127.0.0.1:${server.port}/v1`)
+      session.write('/plan\x0d')
+      await session.waitFor('plan mode', 5_000).catch(() => {})
+      session.checkpoint()
+      session.write('plan the config change\x0d')
+      await session.waitFor('Plan mode - what next?')
+      await waitForTitle(session, '? evot')
+
+      session.checkpoint()
+      session.write('\x1b')
+      await session.waitFor('Describe what to plan')
+      // Leaving the ask must hand the title back: no '?' may survive it.
+      await waitForTitle(session, '✳ evot')
+
+      // And a later overlay is free to repaint it. Before the fix the title
+      // stayed frozen on '?' for the rest of the process.
+      session.checkpoint()
+      session.write('/sessions\x0d')
+      await session.waitFor('smoke resume fixture')
+      session.write('\x1b')
+      await session.waitFor('Describe what to plan')
+      expect(titles(session.outputSince()).every(title => !title.startsWith('?'))).toBe(true)
+    } finally {
+      if (session) await session.kill()
+      await server.stop(true)
+    }
+  }, 60_000)
+
   test('a settled run closes with its total duration', async () => {
     const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => {
       const chunk = {

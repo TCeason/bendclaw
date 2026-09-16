@@ -5,9 +5,12 @@ export {
   skillInstall,
   skillRemove,
   skillUpdate,
-  startOfficialSkillSync,
+  maintainOfficialSkills,
+  startOfficialSkillMaintenance,
   syncOfficialSkills,
+  OFFICIAL_SYNC_INTERVAL_MS,
   type ManageOptions,
+  type OfficialMaintenance,
   type OfficialSyncResult,
 } from './skill/manage.js'
 export {

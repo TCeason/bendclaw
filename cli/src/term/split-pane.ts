@@ -57,11 +57,12 @@ export function splitPaneHints(state: SelectorState): Hint[] {
     { keys: state.previewPane.confirmDeleteKey, action: 'confirm delete', confirmationPending: true },
     { keys: 'escape', action: 'cancel' },
   ]
-  // A resume list whose filter owns the input — the `/resume` command preview, or
-  // after pressing `/` — takes letters as search text, so only the gestures that
-  // work there are offered. `↑/↓` selects in both cases: on the preview it also
-  // promotes the window.
-  if (state.owner === SELECTOR_OWNER.resume && state.listFocused !== true) return [
+  // A resume or shares list whose filter owns the input — the `/resume` command
+  // preview, or after pressing `/` — takes letters as search text, so only the
+  // gestures that work there are offered. `↑/↓` selects in both cases: on the
+  // preview it also promotes the window.
+  if ((state.owner === SELECTOR_OWNER.resume || state.owner === SELECTOR_OWNER.shares)
+    && state.listFocused !== true) return [
     { keys: 'type', action: 'search' },
     { keys: ['up', 'down'], action: 'select' },
     { keys: 'escape', action: state.query ? 'clear search' : 'close' },

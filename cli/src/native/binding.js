@@ -72,3 +72,6 @@ export const taskCreate = binding.taskCreate
 export const taskUpdate = binding.taskUpdate
 export const taskDelete = binding.taskDelete
 export const taskRun = binding.taskRun
+export const taskShare = binding.taskShare
+export const taskShareFetch = binding.taskShareFetch
+export const taskShareId = binding.taskShareId

@@ -11,6 +11,7 @@ export type TaskAction =
   | { kind: 'toggle'; id: string }
   | { kind: 'run'; id: string }
   | { kind: 'history'; id: string }
+  | { kind: 'share'; id: string }
   | { kind: 'delete'; id: string; state: SelectorState }
   | { kind: 'none' }
 
@@ -41,6 +42,7 @@ export function handleTaskKey(state: SelectorState, event: KeyEvent, columns = 8
   if (event.char === 'e') return { kind: 'edit', id: taskId }
   if (event.char === ' ') return { kind: 'toggle', id: taskId }
   if (event.char === 'r') return { kind: 'run', id: taskId }
+  if (event.char === 's') return { kind: 'share', id: taskId }
   if (event.char === 'h' || event.char === '\r') return { kind: 'history', id: taskId }
   if (event.char !== 'd') return { kind: 'none' }
   if (state.pendingDeleteId === taskId) {

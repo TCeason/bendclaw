@@ -37,4 +37,7 @@ pub use task::task_delivery_defaults;
 pub use task::task_get;
 pub use task::task_list;
 pub use task::task_run;
+pub use task::task_share;
+pub use task::task_share_fetch;
+pub use task::task_share_id;
 pub use task::task_update;

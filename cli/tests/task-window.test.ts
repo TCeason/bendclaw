@@ -215,6 +215,7 @@ describe('task window', () => {
       { keys: 'tab', action: 'details' },
       { keys: 'e', action: 'edit' },
       { keys: 'r', action: 'run now' },
+      { keys: 's', action: 'share' },
       { keys: 'd', action: 'delete' },
       { keys: 'escape', action: 'close' },
     ])

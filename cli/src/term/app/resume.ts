@@ -117,6 +117,7 @@ export function sessionPreviewLines(
   showCwd = false,
 ): string[] {
   const facts = [shortModel(session), `${session.turns || 0} turns`, sessionSpan(session)]
+  if (session.source === 'automation') facts.unshift('task run')
   if (showCwd) facts.push(shortenSessionCwd(session.cwd))
   const lines = [sanitizeSessionTitle(session.custom_title ?? session.title), facts.filter(Boolean).join(' · ')]
   if (!text) return lines
@@ -128,7 +129,8 @@ export function sessionPreviewLines(
     lines.push('', ...recognitionSections(text))
     const paths = text.changed_paths ?? []
     if (paths.length) lines.push('', '# Files referenced by edits', ...paths)
-    lines.push('', '# Session', `ID  ${session.session_id}`, `Source  ${session.source || 'unknown'}`,
+    lines.push('', '# Session', `ID  ${session.session_id}`,
+      `Source  ${session.source === 'automation' ? 'task run' : session.source || 'unknown'}`,
       `Workspace  ${shortenSessionCwd(session.cwd)}`)
     return lines
   }
@@ -218,6 +220,17 @@ function sessionIdLabels(sessions: SessionMeta[]): Map<string, string> {
   return labels
 }
 
+/** How a session came to be, in the one word the list has room for. The
+ *  stored `source` is an internal name; `automation` sessions are task runs,
+ *  and calling them that is what lets a row be recognised as one. */
+export function sessionSourceBadge(source: string | undefined): string {
+  switch (source || '') {
+    case 'automation': return 'task'
+    case '': return ''
+    default: return source ?? ''
+  }
+}
+
 function formatSessionItem(
   s: SessionMeta,
   label: string,
@@ -226,7 +239,8 @@ function formatSessionItem(
   text: SessionWithText | undefined,
 ): SelectorItem {
   // The source column only earns its space when it tells rows apart.
-  const source = showSource ? `${padRight(s.source || '', 6)} ` : ''
+  const badge = sessionSourceBadge(s.source)
+  const source = showSource ? `${padRight(badge, 6)} ` : ''
   const title = padRight(sanitizeSessionTitle(s.custom_title ?? s.title), TITLE_COLUMN_WIDTH)
   const turns = padRight(s.turns ? `${s.turns} turns` : '', 10)
   const time = relativeTime(s.updated_at)
@@ -246,7 +260,7 @@ function formatSessionItem(
     detail: `${source}${title} ${turns} ${time}${cwd}`,
     // Transcript text is searchable once loaded; until then a row still matches
     // on the metadata the list already displays.
-    searchText: `${s.custom_title ?? ''} ${s.title ?? ''} ${text?.search_text
+    searchText: `${s.custom_title ?? ''} ${s.title ?? ''} ${badge} ${text?.search_text
       ?? `${s.session_id} ${s.cwd} ${s.source} ${s.provider ?? ''} ${s.model}`}`,
     contextPrefix: otherCwd ? `${shortenSessionCwd(s.cwd)} · ` : undefined,
     preview: sessionPreviewLines(s, text, otherCwd),

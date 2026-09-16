@@ -149,6 +149,33 @@ fn bind_default_delivery(
     Ok(())
 }
 
+/// Publish a task's definition as an unlisted link. Masking happens on the
+/// server, from the stored task; nothing about delivery is sent from here.
+#[napi]
+pub async fn task_share(task_id: String) -> NapiResult<String> {
+    json(
+        &evot::api::share_task(&auth()?, &task_id)
+            .await
+            .map_err(to_napi)?,
+    )
+}
+
+/// Read a shared task by link or id, from this client's own server.
+#[napi]
+pub async fn task_share_fetch(link: String) -> NapiResult<String> {
+    json(
+        &evot::api::fetch_task_share(&auth()?, &link)
+            .await
+            .map_err(to_napi)?,
+    )
+}
+
+/// Pure: is this `/task` argument a share link rather than a request?
+#[napi]
+pub fn task_share_id(input: String) -> Option<String> {
+    evot::api::parse_task_share_id(&input)
+}
+
 #[napi]
 pub async fn task_delete(task_id: String) -> NapiResult<()> {
     evot::api::delete_task(&auth()?, &task_id)

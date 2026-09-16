@@ -151,6 +151,9 @@ export interface SelectorState {
    *  generic "No matching items", which would describe a filter some lists
    *  do not have. */
   emptyMessage?: string
+  /** What the filter searches, for its placeholder: "type to search <this>".
+   *  Absent: the session list's wording. */
+  searchHint?: string
   query: string
 }
 

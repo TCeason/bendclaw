@@ -147,7 +147,15 @@ async fn execute(
     }
 
     let outcome = match agent.submit(request).await {
-        Ok(SubmitOutcome::Run(run)) => run,
+        Ok(SubmitOutcome::Run(run)) => {
+            // The session exists now. Name it after the task, as a user-owned
+            // title, so the list shows "Daily HN digest" rather than the first
+            // line of the instruction — and never "(untitled)" while it runs.
+            if let Err(error) = agent.rename_session(&session_id, &task.name).await {
+                tracing::warn!(%error, session_id, "cannot name task session");
+            }
+            run
+        }
         Ok(SubmitOutcome::Command(message)) => {
             finish(
                 auth,

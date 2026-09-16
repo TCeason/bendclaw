@@ -340,16 +340,15 @@ export function buildSelectorBlocks(
       lines.push(line(
         colored('Filter  ', 'cyan'),
         plain(CURSOR_MARKER),
-        dim(PLACEHOLDER_HINT),
+        dim(`type to search ${state.searchHint ?? SEARCH_TARGET}`),
       ))
     } else {
       // Nothing typed yet: the filter line doubles as the discoverability hint,
       // otherwise there is no on-screen signal that typing filters at all. A
       // list that owns its letters instead names the key that starts a search,
       // because there typing an `e` would be an action.
-      const searchEntry = state.listFocused === true
-        ? '/ to search titles, prompts and transcript text'
-        : PLACEHOLDER_HINT
+      const target = state.searchHint ?? SEARCH_TARGET
+      const searchEntry = state.listFocused === true ? `/ to search ${target}` : `type to search ${target}`
       lines.push(line(colored('Filter  ', 'cyan'), dim(searchEntry)))
     }
     lines.push(line(plain('')))
@@ -481,8 +480,8 @@ function buildSelectorListLines(state: SelectorState, viewport = SELECTOR_VIEWPO
   return lines
 }
 
-/** Placeholder shown on the filter line before anything is typed. */
-const PLACEHOLDER_HINT = 'type to search titles, prompts and transcript text'
+/** What the session list's filter searches; other lists name their own. */
+const SEARCH_TARGET = 'titles, prompts and transcript text'
 
 /** Gap and rail between the list and its preview pane. */
 const PANE_DIVIDER = '  │ '

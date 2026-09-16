@@ -36,10 +36,12 @@ async function main() {
     if (applied) reportAppliedUpdate(applied, opts.command)
   } catch { /* never block launch on update bookkeeping */ }
 
-  if (opts.command === 'repl' || opts.command === 'login' || opts.command === 'prompt') {
+  // One-shot commands get their catalog check here. The REPL owns its own as a
+  // periodic background job, so a session left open stays current too.
+  if (opts.command === 'login' || opts.command === 'prompt') {
     try {
-      const { startOfficialSkillSync } = await import('./commands/skill.js')
-      void startOfficialSkillSync().catch(() => { /* never block launch on skill sync */ })
+      const { startOfficialSkillMaintenance } = await import('./commands/skill.js')
+      void startOfficialSkillMaintenance().catch(() => { /* never block launch on skill sync */ })
     } catch { /* never block launch on skill sync bookkeeping */ }
   }
 

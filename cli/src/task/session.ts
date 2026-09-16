@@ -11,9 +11,11 @@ import type { KeyEvent } from '../term/input.js'
 import type { AskUserAnswer, AskUserQuestion, HostToolExtension } from '../term/host-tools.js'
 /** Signatures of the real RPCs. Type-only, so importing this module still
  *  loads no native addon — the calls below resolve it on first use. */
-import type { deleteTask, getTask, listTasks, runTask, updateTask } from './client.js'
+import type { createTask, deleteTask, fetchTaskShare, getTask, listTasks, runTask, shareTask, taskDeliveryDefaults, updateTask } from './client.js'
+import { commitTaskChange, type TaskCommitContext } from './commit.js'
 import { handleTaskKey } from './control.js'
 import { createTaskExtension } from './host-tool.js'
+import { ADJUST_WITH_AGENT, importArguments, importAsRequest, importExtraFields, importModelPreselect } from './import.js'
 import type { TaskModelDefaults, TaskModelPickerRequest, TaskModelSelection } from './model-picker.js'
 import { createTaskFlowState, createTaskPrompt, updateTaskPrompt, type TaskPromptContext } from './prompt.js'
 import { createTaskWindow } from './window.js'
@@ -29,6 +31,10 @@ export interface TaskSessionApi {
   delete: typeof deleteTask
   update: typeof updateTask
   run: typeof runTask
+  share: typeof shareTask
+  fetchShare: typeof fetchTaskShare
+  create: typeof createTask
+  deliveryDefaults: typeof taskDeliveryDefaults
 }
 
 const taskApi: TaskSessionApi = {
@@ -37,6 +43,10 @@ const taskApi: TaskSessionApi = {
   delete: async id => (await import('./client.js')).deleteTask(id),
   update: async (id, input, envFile) => (await import('./client.js')).updateTask(id, input, envFile),
   run: async id => (await import('./client.js')).runTask(id),
+  share: async id => (await import('./client.js')).shareTask(id),
+  fetchShare: async link => (await import('./client.js')).fetchTaskShare(link),
+  create: async (input, envFile) => (await import('./client.js')).createTask(input, envFile),
+  deliveryDefaults: async envFile => (await import('./client.js')).taskDeliveryDefaults(envFile),
 }
 
 export interface TaskSessionHost {
@@ -54,6 +64,10 @@ export interface TaskSessionHost {
   closeOverlay: () => void
   requestRender: () => void
   notifyError: (text: string) => void
+  /** A system line that is not an error: a published link, an import result. */
+  notify: (text: string) => void
+  /** Render a URL as a terminal hyperlink where supported. */
+  hyperlink?: (url: string) => string
   collectAnswers: (questions: AskUserQuestion[]) => Promise<AskUserAnswer[] | null>
   presentModelPicker: (request: TaskModelPickerRequest) => Promise<TaskModelSelection | null>
   /** Show `userLine` as the user's turn, then run `prompt` with Task tools. */
@@ -135,6 +149,99 @@ export class TaskSession {
     )
   }
 
+  /** `/task <share-link>`: create from a shared definition, no agent turn.
+   *
+   *  Every field is already structured, so it goes through the same pipeline a
+   *  confirmed tool call would — delivery setup, model picker, confirmation —
+   *  with the shared model only positioning the picker. "Adjust with agent"
+   *  hands the recipe to the normal create flow instead. */
+  async import(link: string): Promise<void> {
+    if (this.#disposed || this.#host.destroyed()) return
+    this.#host.notify('Fetching shared task…')
+    this.#host.requestRender()
+    let snapshot
+    try {
+      snapshot = await this.#api.fetchShare(link)
+    } catch (error) {
+      this.#host.notifyError(`Could not import shared task: ${message(error)}`)
+      return
+    }
+    if (this.#disposed || this.#host.destroyed()) return
+    const flow = createTaskFlowState('create')
+    try {
+      const outcome = await commitTaskChange(this.#commitContext(flow), {
+        arguments: importArguments(snapshot),
+        modelPreselect: defaults => {
+          const { request, note } = importModelPreselect(snapshot, defaults)
+          return note ? { ...request, note } : request
+        },
+        extraFields: importExtraFields(snapshot, link),
+        extraOptions: [{ label: ADJUST_WITH_AGENT, description: 'Change schedule, instruction or anything else with the agent before saving.' }],
+      })
+      if (this.#disposed || this.#host.destroyed()) return
+      switch (outcome.kind) {
+        case 'saved':
+          this.#host.notify(outcome.message)
+          this.#loadedAt = 0
+          this.open(outcome.taskId)
+          return
+        case 'declined':
+          this.create(`/task ${link}`, importAsRequest(snapshot, link))
+          return
+        case 'cancelled':
+          this.#host.notify('Import cancelled. Nothing was created.')
+          return
+        case 'failed':
+          this.#host.notifyError(`${outcome.message}. The save outcome is unknown; check /task before retrying.`)
+          return
+      }
+    } catch (error) {
+      this.#host.notifyError(`Could not import shared task: ${message(error)}`)
+    }
+  }
+
+  /** `s` in the list: publish the focused task as an unlisted link. */
+  async #share(id: string): Promise<void> {
+    const task = this.#response?.tasks.find(item => item.id === id)
+    if (!task || this.#pending.has(id)) return
+    const generation = this.#generation
+    const delivery = task.delivery_channel === 'feishu'
+      ? `Delivery: Feishu · ${maskTarget(task.delivery_target)} (masked on the page)`
+      : 'Delivery: local result only'
+    const answers = await this.#host.collectAnswers([{
+      header: 'Share task',
+      question: [
+        `Publish “${task.name}” as a public link?`,
+        'Included: schedule, model, instruction, timeout.',
+        'Excluded: owner, runs, workspace, executor.',
+        delivery,
+        'Anyone with the link can read the instruction as-is — check it for secrets first.',
+      ].join('\n'),
+      options: [
+        { label: 'Publish', description: 'Create the link. Same definition, same link; edits make a new one.' },
+        { label: 'Cancel', description: 'Publish nothing.' },
+      ],
+    }])
+    if (this.#disposed || this.#host.destroyed()) return
+    if (answers?.[0]?.answer !== 'Publish') {
+      this.#paint(id, generation === this.#generation)
+      return
+    }
+    this.#pending.set(id, 'Publishing…')
+    this.#paint(id, generation === this.#generation)
+    try {
+      const created = await this.#api.share(task.id)
+      if (this.#disposed || this.#host.destroyed()) return
+      const link = this.#host.hyperlink?.(created.url) ?? created.url
+      this.#host.notify(`Shared “${task.name}”: ${link}`)
+    } catch (error) {
+      if (!this.#disposed && !this.#host.destroyed()) this.#host.notifyError(`Share failed: ${message(error)}`)
+    } finally {
+      this.#pending.delete(id)
+      this.#paint(id, generation === this.#generation)
+    }
+  }
+
   /** Called when the Task list stops being the visible overlay. */
   invalidate(): void {
     this.#generation++
@@ -168,6 +275,9 @@ export class TaskSession {
       case 'detail':
       case 'history':
         await this.#showDetail(action.id)
+        return
+      case 'share':
+        await this.#share(action.id)
         return
       default:
         await this.#mutate(action.kind, action.id)
@@ -350,18 +460,25 @@ export class TaskSession {
   }
 
   #extension(flow: ReturnType<typeof createTaskFlowState>): HostToolExtension {
+    return createTaskExtension(this.#commitContext(flow))
+  }
+
+  /** Everything a Task mutation needs from the host, bound to a fresh setup
+   *  abort so a cancelled flow cannot leave a Feishu onboarding waiting. */
+  #commitContext(flow: ReturnType<typeof createTaskFlowState>): TaskCommitContext {
     this.#loadedAt = 0
     this.#revision++
     this.cancelSetup()
     this.#setup = new AbortController()
     const signal = this.#setup.signal
-    return createTaskExtension({
+    return {
       flow,
       ensureDelivery: () => this.#host.ensureDelivery(signal),
       defaults: () => this.#modelDefaults(),
       pickModel: request => this.#host.presentModelPicker(request),
       collectAnswers: params => this.#host.collectAnswers(params.questions),
-    })
+      persist: { create: this.#api.create, update: this.#api.update },
+    }
   }
 
   /** Model catalog plus device delivery target, read when a Task tool actually
@@ -369,8 +486,7 @@ export class TaskSession {
   async #modelDefaults(): Promise<TaskModelDefaults> {
     const config = this.#host.configInfo()
     const activeSpec = this.#host.activeModelSpec()
-    const { taskDeliveryDefaults } = await import('./client.js')
-    const delivery = await taskDeliveryDefaults(this.#host.envFile)
+    const delivery = await this.#api.deliveryDefaults(this.#host.envFile)
     return {
       model_spec: activeSpec,
       thinking_level: config?.thinkingLevel ?? '',
@@ -419,4 +535,13 @@ export class TaskSession {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** Mirror of the server's masking, for the publish confirmation only: the
+ *  page itself is masked by the server from the stored task. */
+export function maskTarget(target: string): string {
+  if (target === 'p2p:*') return 'all bot direct conversations'
+  const separator = target.indexOf('_')
+  if (separator < 0 || separator === target.length - 1) return '••••'
+  return `${target.slice(0, separator + 5)}••••`
 }

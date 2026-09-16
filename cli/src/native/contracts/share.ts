@@ -1,4 +1,4 @@
-import { array, nullable, object, optional, text, uint } from './schema.js'
+import { array, json, nullable, object, optional, text, uint } from './schema.js'
 
 export const shareCreated = object({ id: text, url: text })
 /** `created_at` / `size_bytes` are metadata the list can render without: a
@@ -7,6 +7,11 @@ export const shareCreated = object({ id: text, url: text })
 export const shareList = object({ shares: array(object({
   id: text, url: text, title: optional(nullable(text)),
   created_at: optional(nullable(uint)), size_bytes: optional(nullable(uint)),
+  /** `session` (also when absent: older servers only had sessions) or `task`. */
+  kind: optional(text),
+  /** Task shares only: schedule and model, so the selector can say what the
+   *  link holds without fetching it. Every field is optional. */
+  summary: optional(nullable(json)),
 })) })
 
 export interface ShareNotice {

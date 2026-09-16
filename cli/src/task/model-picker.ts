@@ -41,6 +41,9 @@ export interface TaskModelSelection {
 export interface TaskModelPickerRequest {
   preferredSpec?: string
   preferredThinkingLevel?: string
+  /** One line under the title, e.g. why the cursor is not where a shared
+   *  task said it should be. */
+  note?: string
 }
 
 export type TaskModelPicker = (
@@ -105,11 +108,12 @@ export function createTaskModelWindow(
   model: string,
   preferredSpec?: string,
   preferredThinkingLevel?: string,
+  note?: string,
 ): SelectorState {
   const { items, selectedSpec } = taskModelItems(config, model, preferredSpec, preferredThinkingLevel)
   return selectorFocusOn({
     ...createAppSelectorState('taskModel', 'Task model', items),
-    subtitle: 'Choose for this task · ←/→ thinking level',
+    subtitle: note ? `${note} · ←/→ thinking level` : 'Choose for this task · ←/→ thinking level',
     presentation: 'model',
     circularNavigation: true,
     listFocused: true,

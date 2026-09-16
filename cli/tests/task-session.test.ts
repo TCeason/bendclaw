@@ -32,7 +32,7 @@ function harness(api: Partial<TaskSessionApi>, hostOverrides: Partial<TaskSessio
     modelOptionLabel: model => model.model, ensureDelivery: async () => false,
     isTaskOverlay: () => overlay !== null, taskOverlayState: () => overlay,
     showSelector: state => { overlay = state }, closeOverlay: () => { overlay = null },
-    requestRender: () => {}, notifyError: error => { errors.push(error) },
+    requestRender: () => {}, notifyError: error => { errors.push(error) }, notify: () => {},
     collectAnswers: async () => null, presentModelPicker: async () => null,
     runTaskTurn: () => {}, primeInput: () => {}, destroyed: () => false,
     ...hostOverrides,
@@ -40,7 +40,11 @@ function harness(api: Partial<TaskSessionApi>, hostOverrides: Partial<TaskSessio
   const session = new TaskSession(host, {
     list: async () => list(), get: async id => ({ ...task(id), runs: [] }),
     delete: async () => {}, update: async id => ({ task: task(id), next_runs: [] }),
-    run: async () => {}, ...api,
+    run: async () => {}, share: async () => ({ id: '', url: '' }),
+    fetchShare: async () => { throw new Error('no share') },
+    create: async () => { throw new Error('no create') },
+    deliveryDefaults: async () => ({ feishu_ready: false, feishu_target: '' }),
+    ...api,
   })
   return { session, errors, view: () => overlay, hideOverlay: () => { overlay = null } }
 }

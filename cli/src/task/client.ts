@@ -10,6 +10,8 @@ import {
   taskGet as nativeGet,
   taskList as nativeList,
   taskRun as nativeRun,
+  taskShare as nativeShare,
+  taskShareFetch as nativeShareFetch,
   taskUpdate as nativeUpdate,
 } from '../native/index.js'
 import type {
@@ -18,6 +20,8 @@ import type {
   TaskDeliveryDefaults,
   TaskListResponse,
   TaskRunSummary,
+  TaskShareCreated,
+  TaskShareSnapshot,
 } from './types.js'
 import { nativeJson } from './native-result.js'
 
@@ -54,4 +58,14 @@ export async function deleteTask(id: string): Promise<void> {
 
 export async function runTask(id: string): Promise<void> {
   await nativeRun(id, crypto.randomUUID())
+}
+
+/** Publish a task's definition as an unlisted link. Masked server-side. */
+export async function shareTask(id: string): Promise<TaskShareCreated> {
+  return nativeJson('Share task', nativeShare(id))
+}
+
+/** Read a shared task by link or id, from this client's own server. */
+export async function fetchTaskShare(link: string): Promise<TaskShareSnapshot> {
+  return nativeJson('Fetch shared task', nativeShareFetch(link))
 }

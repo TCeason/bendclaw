@@ -23,7 +23,8 @@ import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
 import { buildAssistantLines, buildUserMessage, messagesToOutputLines, type OutputLine } from '../render/output.js'
 import { manualCompactionLines } from './viewmodel/manual-compaction.js'
 import { wrapTextWithAnsi } from '../render/wrap.js'
-import { Agent, QueryStream, fastExit, authNotices, type ManualCompactionOutcome, type SessionMeta, type ConfigInfo } from '../native/index.js'
+import { createHyperlink } from '../render/hyperlink.js'
+import { Agent, QueryStream, fastExit, authNotices, taskShareId, type ManualCompactionOutcome, type SessionMeta, type ConfigInfo } from '../native/index.js'
 import { createInitialState, type AppState } from './app/state.js'
 import { assistantToolCalls } from './app/assistant-content.js'
 import type { UIAssistantBlock } from './app/types.js'
@@ -145,7 +146,7 @@ import {
 } from './app/queue-manage.js'
 import { FileCompletion } from './app/file-completion.js'
 import { extractAtPrefix, completeAtFile } from '../commands/file-completion.js'
-import { getSkillEntries } from '../commands/skill.js'
+import { getSkillEntries, OFFICIAL_SYNC_INTERVAL_MS, startOfficialSkillMaintenance, type OfficialSyncResult } from '../commands/skill.js'
 import { isCommandWindowBridge, isCommandWindowTypingEvent, resolveCommandWindowTrigger } from './app/command-window-trigger.js'
 import { createSkillSelectorState } from './app/skill-window.js'
 import { transcriptToMessages } from '../session/transcript.js'
@@ -345,6 +346,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     closeOverlay: () => { overlay = { kind: 'none' } },
     requestRender: () => renderer.requestRender(),
     notifyError: text => commitSystem('sys-task-err', chalk.red(`  ${text}`)),
+    notify: text => commitSystem('sys-task', `  ${text}`),
+    hyperlink: url => createHyperlink(url),
     collectAnswers: questions => presentAskQuestions(questions, 'idle'),
     presentModelPicker: presentTaskModelPicker,
     runTaskTurn: (userLine, prompt, extension) => {
@@ -394,6 +397,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let commandWindowContentWidth: number | null = null
   let deferredCloudModelNotice: string | null = null
   let deferredCloudCampaignId: string | null = null
+  let deferredSkillNotice: string | null = null
   let enrichedResumeMetadataGeneration: number | null = null
   let enrichedResumeTextGeneration: number | null = null
   let resumeCommandLoadTimer: ReturnType<typeof setTimeout> | undefined
@@ -442,6 +446,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         agent.model,
         request.preferredSpec,
         request.preferredThinkingLevel,
+        request.note,
       ),
     }
     freezeTerminalTitle('?')
@@ -609,10 +614,29 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (commandWindowMounted()) return
     const modelNotice = deferredCloudModelNotice
     const campaignId = deferredCloudCampaignId
+    const skillNotice = deferredSkillNotice
     deferredCloudModelNotice = null
     deferredCloudCampaignId = null
+    deferredSkillNotice = null
     if (modelNotice) commitSystem('sys-cloud-models', chalk.dim(modelNotice))
+    if (skillNotice) commitSystem('sys-skills-sync', chalk.dim(skillNotice))
     if (campaignId) showCloudCampaign(campaignId)
+  }
+
+  /** The official catalog moved and this device followed it. Said once, in one
+   *  dim line, and never over an open command window. */
+  function noteOfficialSkillSync(result: OfficialSyncResult): void {
+    const parts = [
+      result.installed.length ? `new: ${result.installed.join(', ')}` : '',
+      result.updated.length ? `updated: ${result.updated.join(', ')}` : '',
+      result.removed.length ? `removed: ${result.removed.join(', ')}` : '',
+    ].filter(Boolean)
+    if (!parts.length) return
+    const notice = `  ↻ Official skills ${parts.join(' · ')}`
+    refreshBannerData()
+    if (commandWindowMounted()) deferredSkillNotice = notice
+    else commitSystem('sys-skills-sync', chalk.dim(notice))
+    renderer.requestRender()
   }
 
   function releaseCommandWindowLayout(): void {
@@ -2365,7 +2389,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         const closesCommandWindow = focusedCommandWindowGeneration !== null
           && overlay.kind === 'selector'
           && isCommandSelector(overlay.state)
-        if (overlay.kind === 'ask-user') resolvePendingAsk()
+        // Ask and task-model overlays froze the tab title on a '?'. Every way
+        // of leaving them must release it, or the glyph outlives the prompt and
+        // no later overlay or run can repaint the title.
+        if (overlay.kind === 'ask-user') {
+          resolvePendingAsk()
+          unfreezeTerminalTitle()
+        }
         if (overlay.kind === 'selector' && overlay.state.owner === SELECTOR_OWNER.taskModel) {
           resolvePendingTaskModel()
         }
@@ -3011,6 +3041,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (name === '/task') {
       if (!args || args === 'list') {
         taskSession.open()
+      } else if (taskShareId(args) !== null) {
+        // A pasted share link is an import, not a request to interpret.
+        commitLines(buildUserMessage(text.trim()))
+        void taskSession.import(args.trim())
       } else {
         taskSession.create(text.trim(), args)
       }
@@ -3204,6 +3238,19 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   resources.add(backgroundJobs.register({ name: 'cloud-sync', intervalMs: CLOUD_SYNC_MS, initialDelayMs: 400, run: () => syncCloudNow() }))
   resources.add(backgroundJobs.register({ name: 'processes', intervalMs: 500, immediate: false, run: refreshBackgroundProcesses }))
   resources.add(backgroundJobs.register({ name: 'tasks', intervalMs: 10_000, immediate: false, run: () => taskSession.refreshIfVisible() }))
+  // Official skills follow their catalog on their own: a stamp-gated check on
+  // the same cadence as the check itself, so a fresh launch and a session left
+  // open for days both stay current without anyone running /skill update.
+  // Skills are re-read from disk on every turn, so a sync needs no reload.
+  resources.add(backgroundJobs.register({
+    name: 'official-skills',
+    intervalMs: OFFICIAL_SYNC_INTERVAL_MS,
+    initialDelayMs: 1_500,
+    run: async () => {
+      const outcome = await startOfficialSkillMaintenance()
+      if (outcome.kind === 'synced' && !destroyed) noteOfficialSkillSync(outcome.result)
+    },
+  }))
   resources.add(registerDashboard(backgroundJobs, {
     attempt: () => tryStartServer(opts.serverPort, opts.envFile),
     stop: stopOwnedServer,

@@ -95,3 +95,20 @@ describe('resume item memo', () => {
     expect(cache.format(inputs, none)).not.toBe(first)
   })
 })
+
+test('task-run sessions wear a task badge and say so in the preview', async () => {
+  const { formatSessionItems, sessionSourceBadge, sessionPreviewLines } = await import('../src/term/app/resume.js')
+  expect(sessionSourceBadge('automation')).toBe('task')
+  expect(sessionSourceBadge('repl')).toBe('repl')
+  expect(sessionSourceBadge(undefined)).toBe('')
+  const run = {
+    session_id: 'ch_6128c000', title: null, custom_title: 'Daily HN digest', model: 'kimi-k3', thinking_level: null,
+    cwd: '/work', source: 'automation', turns: 0, created_at: '', updated_at: '',
+  }
+  const chat = { ...run, session_id: '01a0aa35aaaa', custom_title: undefined, title: 'Fix the loader', source: 'repl' }
+  const items = formatSessionItems([run, chat] as never, '/work')
+  const row = items.find(item => item.id === run.session_id)
+  expect(row?.detail).toMatch(/^task\s+Daily HN digest/)
+  expect(row?.searchText).toContain('task')
+  expect(sessionPreviewLines(run as never)[1]).toBe('task run · kimi-k3 · 0 turns')
+})

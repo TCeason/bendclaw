@@ -54,6 +54,35 @@ export interface CreatedTaskResponse {
   next_runs: number[]
 }
 
+/** `POST /v1/tasks/{id}/share` response: the public link for a task snapshot. */
+export interface TaskShareCreated {
+  id: string
+  url: string
+}
+
+/** A shared task as `/share/t/{id}/task.json` serves it. The recipe only:
+ *  no delivery target (masked, display-only), owner, executor or workspace. */
+export interface TaskShareSnapshot {
+  schema_version: number
+  kind: string
+  evot_version: string
+  title?: string | null
+  created_at: number
+  data: {
+    name: string
+    cron: string
+    timezone: string
+    instruction: string
+    model_policy: 'fixed' | 'default'
+    model_spec: string
+    thinking_level: string
+    timeout_seconds: number
+    max_lateness_seconds: number
+    delivery_channel: string
+    delivery_target_masked: string
+  }
+}
+
 export interface TaskDeliveryDefaults {
   /** The Feishu channel is linked. Delivery can still be unavailable when no
    *  default notification chat is configured, so these are distinct problems

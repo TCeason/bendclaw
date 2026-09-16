@@ -58,8 +58,13 @@ function handleControl(state: SelectorState, event: KeyEvent, columns: number, r
   }
   const paneAction = handleSplitPaneKey(state, event, columns, rows)
   if (paneAction) return paneAction
-  const resumeListFocused = state.owner === SELECTOR_OWNER.resume && state.listFocused === true
-  if (resumeListFocused && event.type === 'char' && event.char === '/') {
+  // Sessions and shared links are the same kind of list: letters are actions
+  // while the list owns the input (`d d` deletes, `/` opens the filter), and
+  // typing filters once the filter owns it. Only sessions can be renamed.
+  const letterList = (state.owner === SELECTOR_OWNER.resume || state.owner === SELECTOR_OWNER.shares)
+    && state.listFocused === true
+  const resumeListFocused = letterList && state.owner === SELECTOR_OWNER.resume
+  if (letterList && event.type === 'char' && event.char === '/') {
     return { kind: 'update', state: { ...disarmDelete(state), listFocused: false } }
   }
   if (resumeListFocused && event.type === 'char' && event.char === 'e') {
@@ -89,14 +94,14 @@ function handleControl(state: SelectorState, event: KeyEvent, columns: number, r
       return next === state ? { kind: 'none' } : { kind: 'update', state: next }
     }
     case 'char':
-      if (resumeListFocused && event.char === 'd') return deleteAction(state)
+      if (letterList && event.char === 'd') return deleteAction(state)
       // Lists that reserve bare letters for their own gestures never build a
       // filter query: doing so would silently drop rows with no filter line on
       // screen to explain why.
       if (state.noFilter || state.owner === SELECTOR_OWNER.queue) return { kind: 'none' }
       return { kind: 'update', state: selectorType(disarmDelete(state), event.char) }
     case 'paste':
-      if (state.owner !== SELECTOR_OWNER.resume || state.noFilter) return { kind: 'none' }
+      if ((state.owner !== SELECTOR_OWNER.resume && state.owner !== SELECTOR_OWNER.shares) || state.noFilter) return { kind: 'none' }
       return { kind: 'update', state: selectorType(disarmDelete(state), event.text.replace(/[\r\n]+/g, ' ')) }
     case 'backspace':
       if (state.noFilter) return { kind: 'none' }

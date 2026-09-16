@@ -7,6 +7,9 @@ use serde::de::DeserializeOwned;
 use super::model::ClaimedRun;
 use super::model::CreatedTask;
 use super::model::TaskList;
+use super::model::TaskShareCreated;
+use super::model::TaskShareSnapshot;
+use super::share_link::parse_task_share_id;
 use crate::auth::AuthState;
 use crate::error::EvotError;
 use crate::error::Result;
@@ -69,6 +72,46 @@ pub async fn run_task(auth: &AuthState, task_id: &str, request_id: &str) -> Resu
     )
     .await?;
     Ok(())
+}
+
+/// Publish a task's definition as an unlisted link. The server builds and
+/// masks the snapshot; this client only names the task.
+pub async fn share_task(auth: &AuthState, task_id: &str) -> Result<TaskShareCreated> {
+    request(
+        auth,
+        reqwest::Method::POST,
+        &format!("/v1/tasks/{task_id}/share"),
+        Some(&serde_json::json!({})),
+        None,
+    )
+    .await
+}
+
+/// Read a shared task by link or id, always from this client's own server.
+///
+/// The route is public, but going through `server_base_url` rather than the
+/// pasted host keeps `/task <url>` from fetching anything else.
+pub async fn fetch_task_share(auth: &AuthState, link: &str) -> Result<TaskShareSnapshot> {
+    let share_id = parse_task_share_id(link)
+        .ok_or_else(|| EvotError::Conf("not a shared task link".into()))?;
+    let path = format!("/share/t/{share_id}/task.json");
+    let url = format!("{}{}", auth.server_base_url.trim_end_matches('/'), path);
+    let response = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| EvotError::Conf(error.to_string()))?
+        .get(url)
+        .timeout(REQUEST_TIMEOUT)
+        .send()
+        .await
+        .map_err(|error| EvotError::Conf(format!("{path}: {error}")))?;
+    match response.status().as_u16() {
+        404 => Err(EvotError::Conf(
+            "shared task not found; the link may have been revoked".into(),
+        )),
+        403 => Err(EvotError::Conf("this shared task has been disabled".into())),
+        _ => decode::<TaskShareSnapshot>(response, &path).await?.verify(),
+    }
 }
 
 pub async fn register_executor(

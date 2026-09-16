@@ -11,6 +11,8 @@ export interface Checkout {
 
 export type ProgressFn = (msg: string, level: 'info' | 'warn' | 'error') => void
 export type FetchFn = (source: Source, progress?: ProgressFn) => Promise<Checkout>
+/** The commit a ref currently points at, without downloading anything. */
+export type HeadFn = (source: Source) => Promise<string>
 
 async function run(command: string[], action: string): Promise<string> {
   const proc = Bun.spawn(command, { stdout: 'pipe', stderr: 'pipe' })
@@ -43,20 +45,41 @@ export function commitFromRoot(listing: string): string {
   return /^[0-9a-f]{7,40}$/.test(commit) ? commit : 'unknown'
 }
 
+async function githubHeaders(accept: string): Promise<string[]> {
+  const token = await githubToken()
+  return token
+    ? ['-H', `Authorization: token ${token}`, '-H', `Accept: ${accept}`]
+    : ['-H', `Accept: ${accept}`]
+}
+
+/** One small request: the sha `ref` resolves to right now. A periodic check
+ *  compares it with what is installed and downloads the tarball only when
+ *  they differ, so staying current costs a few hundred bytes, not the repo. */
+export async function fetchHeadCommit(source: Source): Promise<string> {
+  const sha = await run(
+    [
+      'curl',
+      '-fsSL',
+      ...(await githubHeaders('application/vnd.github.sha')),
+      `https://api.github.com/repos/${source.repo}/commits/${source.ref}`,
+    ],
+    'resolve repo head',
+  )
+  const trimmed = sha.trim()
+  if (!/^[0-9a-f]{7,40}$/.test(trimmed)) throw new Error('resolve repo head failed: unexpected response')
+  return trimmed
+}
+
 export async function fetchRepo(source: Source, progress?: ProgressFn): Promise<Checkout> {
   const dir = await mkdtemp(join(tmpdir(), 'evot-skill-'))
   try {
     const tarball = join(dir, 'repo.tar.gz')
     progress?.(`downloading ${source.repo}@${source.ref}...`, 'info')
-    const token = await githubToken()
-    const headers = token
-      ? ['-H', `Authorization: token ${token}`, '-H', 'Accept: application/vnd.github+json']
-      : ['-H', 'Accept: application/vnd.github+json']
     await run(
       [
         'curl',
         '-fsSL',
-        ...headers,
+        ...(await githubHeaders('application/vnd.github+json')),
         '-o',
         tarball,
         `https://api.github.com/repos/${source.repo}/tarball/${source.ref}`,
