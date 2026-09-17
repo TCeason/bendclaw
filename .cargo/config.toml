@@ -1,0 +1,11 @@
+# Test and dev processes spawned by cargo / cargo-nextest.
+#
+# reqwest honours `http_proxy` / `https_proxy` / `all_proxy` from the shell.
+# With a VPN or proxy in "global" mode, requests to the loopback mock servers
+# used by integration tests are sent to the proxy and never reach the test
+# server, failing ~90 network tests. Loopback must never be proxied.
+#
+# Cargo does not override a variable the user already exports (no `force`),
+# so an existing NO_PROXY keeps working.
+[env]
+NO_PROXY = "localhost,127.0.0.1,::1"
