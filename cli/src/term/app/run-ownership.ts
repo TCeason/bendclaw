@@ -8,6 +8,9 @@
 export class RunOwnership {
   private generation = 0
 
+  /** Stable from setup through streaming, including the pre-stream await. */
+  get owner(): number { return this.generation }
+
   begin(): number {
     this.generation++
     return this.generation

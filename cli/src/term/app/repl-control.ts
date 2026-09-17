@@ -55,10 +55,6 @@ export function decideReplControl(input: ReplControlInput): ReplControlAction[] 
 
   // Esc owns interrupt (confirmed by a second press in the REPL, opencode
   // style). Ctrl+C never interrupts: it clears the editor or exits the app.
-  if (isCompacting && event.type === 'escape') {
-    return [{ kind: 'interrupt' }]
-  }
-
   if (event.type === 'ctrl' && event.key === 'c') {
     if (overlay.kind === 'ask-user' && hasStream) return [{ kind: 'cancel-ask' }]
     if (isEditorEmpty(editor)) return [{ kind: exitHint ? 'exit' : 'show-exit-hint' }]

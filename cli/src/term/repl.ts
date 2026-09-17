@@ -264,7 +264,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   function runInteractionInput(): RunInteractionInput {
     return {
       active: isLoading,
-      owner: manualCompaction.active ? manualCompaction : streamRef,
+      owner: manualCompaction.active ? manualCompaction : isLoading ? runOwnership.owner : null,
       phase: spinnerState.phase,
       compacting: manualCompaction.active,
       localOperation: foregroundCommand !== null,

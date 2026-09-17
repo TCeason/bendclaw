@@ -33,6 +33,16 @@ describe('repl control', () => {
     expect(kinds({ ...base, event: { type: 'escape' }, isLoading: true, isCompacting: true })).toEqual(['interrupt'])
   })
 
+  test('compaction escape respects modal and completion priority', () => {
+    const compacting = { ...base, event: { type: 'escape' as const }, isLoading: true, isCompacting: true }
+    // A visible layer must consume Esc before confirmation. Otherwise the
+    // host clears confirmation for that layer on every keypress, indefinitely.
+    expect(kinds({ ...compacting, overlay: help })).toEqual(['close-overlay'])
+    expect(kinds({ ...compacting, overlay: selectorWithQuery })).toEqual(['clear-selector-query'])
+    expect(kinds({ ...compacting, editor: completionEditor })).toEqual(['close-completion'])
+    expect(kinds(compacting)).toEqual(['interrupt'])
+  })
+
   test('ctrl-c during manual compaction follows the normal exit path', () => {
     expect(kinds({ ...base, event: { type: 'ctrl', key: 'c' }, isLoading: true, isCompacting: true })).toEqual(['show-exit-hint'])
   })
