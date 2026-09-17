@@ -340,10 +340,24 @@ pub(super) async fn stream_assistant_response(
 
         // Provider streams concurrently — events are forwarded in real-time
         // When provider returns, stream_tx is dropped, ending the forwarder
-        let result = config
+        // Enforce cancellation at the caller boundary as well: HTTP setup,
+        // error/JSON bodies and custom providers may not observe the token.
+        let stream = config
             .provider
-            .stream_bounded(stream_config, stream_tx, provider_cancel)
-            .await;
+            .stream_bounded(stream_config, stream_tx, provider_cancel);
+        tokio::pin!(stream);
+        let result = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                // Let a cooperative provider observe cancellation once so it
+                // can clean up; never wait for one that ignores its token.
+                match futures::poll!(&mut stream) {
+                    std::task::Poll::Ready(result) => result,
+                    std::task::Poll::Pending => Err(ProviderError::Cancelled),
+                }
+            }
+            result = &mut stream => result,
+        };
 
         // Promote empty Ok(Message) to a retryable error so the retry loop
         // handles it uniformly instead of terminating the agent loop.
@@ -492,7 +506,16 @@ pub(super) async fn stream_assistant_response(
             }
             _ => {
                 // Final attempt — wait for forwarder to finish processing remaining events
-                let _ = forward_handle.await;
+                let mut forward_handle = forward_handle;
+                tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => {
+                        forward_handle.abort();
+                        let _ = forward_handle.await;
+                        break Err(ProviderError::Cancelled);
+                    }
+                    _ = &mut forward_handle => {}
+                }
                 if let Ok(mut m) = shared_metrics.lock() {
                     if m.duration_ms == 0 {
                         m.duration_ms = call_start.elapsed().as_millis() as u64;

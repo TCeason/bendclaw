@@ -100,14 +100,25 @@ async fn call_provider(
 
     let (tx, mut rx) = mpsc::unbounded_channel::<StreamEvent>();
 
-    let result = ctx
-        .provider
-        .stream(config, tx, cancel.clone())
-        .await
-        .map_err(|e| SummarizerError::Failed(e.to_string()))?;
+    let stream = ctx.provider.stream(config, tx, cancel.clone());
+    tokio::pin!(stream);
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            // One poll lets a cooperative provider observe cancellation and
+            // clean up; a provider that ignores its token is dropped here.
+            let _ = futures::poll!(&mut stream);
+            return Err(SummarizerError::Cancelled);
+        }
+        result = &mut stream => {
+            result.map_err(|e| SummarizerError::Failed(e.to_string()))?
+        }
+    };
 
-    // Drain the channel (we don't need streaming events for summarization)
-    while rx.recv().await.is_some() {}
+    // Summarization only uses the returned message. Do not wait for sender
+    // clones retained by a provider after it has returned.
+    rx.close();
+    while rx.try_recv().is_ok() {}
 
     if cancel.is_cancelled() {
         return Err(SummarizerError::Cancelled);
