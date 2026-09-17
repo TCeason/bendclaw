@@ -596,46 +596,7 @@ impl Agent {
             },
             observer,
         };
-        let result = crate::compact::orchestrator::compact_session_with_status(
-            session,
-            request,
-            cancel.clone(),
-        )
-        .await?;
-        if result.status == crate::compact::orchestrator::CompactSessionStatus::Cancelled {
-            return Ok(crate::compact::orchestrator::ManualCompactionOutcome::Cancelled);
-        }
-        session.save().await?;
-        match result.item {
-            Some(crate::types::TranscriptItem::Compact {
-                summary,
-                tokens_before,
-                tokens_after,
-                messages_before,
-                messages_after,
-                details,
-                ..
-            }) => Ok(
-                crate::compact::orchestrator::ManualCompactionOutcome::Compacted {
-                    summary,
-                    tokens_before,
-                    tokens_after,
-                    messages_before,
-                    messages_after,
-                    context_window,
-                    messages_evicted: messages_before
-                        .saturating_sub(messages_after)
-                        .saturating_add(1),
-                    current_run_reclaimed: 0,
-                    compaction_level: 3,
-                    used_fallback: result.used_fallback,
-                    method: details.method,
-                    remote_blob_bytes: details.remote_blob_bytes,
-                    fallback_reason: details.fallback_reason,
-                },
-            ),
-            _ => Ok(crate::compact::orchestrator::ManualCompactionOutcome::NothingToCompact),
-        }
+        crate::compact::service::compact(session, request, cancel).await
     }
 
     fn llm_provider(&self, protocol: &Protocol) -> Arc<dyn evot_engine::provider::StreamProvider> {

@@ -25,6 +25,7 @@ mod channel_tasks_test;
 mod command_test;
 #[path = "compact_describe_test.rs"]
 mod compact_describe_test;
+mod compact_service_test;
 #[path = "compact_test.rs"]
 mod compact_test;
 #[path = "conf_load_test.rs"]
