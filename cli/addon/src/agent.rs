@@ -484,91 +484,12 @@ impl NapiAgent {
     }
 
     fn collect_models(&self, config: &evot::api::Config) -> Vec<serde_json::Value> {
-        let llm = self.agent.llm();
-        let free_meta = crate::cloud_model_meta();
-        // The server names and orders its own groups; membership decides which
-        // providers are cloud, so no name is hardcoded here.
-        let cloud_groups = crate::cloud_provider_groups();
-        let mut models = Vec::new();
-        for (provider, profile) in &config.providers {
-            for model in &profile.models {
-                let model = model.trim();
-                if !model.is_empty() {
-                    let mut entry = serde_json::json!({
-                        "provider": provider,
-                        "protocol": profile.protocol.to_string(),
-                        "model": model,
-                        "spec": format!("{provider}:{model}"),
-                    });
-                    Self::attach_thinking_levels(&mut entry, config, provider, model);
-                    if let Some((label, order)) = cloud_groups.get(provider) {
-                        entry["group_label"] = serde_json::json!(label);
-                        entry["group_order"] = serde_json::json!(order);
-                        // Catalog rank inside the tier: higher shows earlier
-                        // when the picker merges protocol providers.
-                        entry["sort_order"] = serde_json::json!(config
-                            .cloud_model_sorts
-                            .get(model)
-                            .copied()
-                            .unwrap_or(0));
-                        if let Some(meta) = free_meta.get(model) {
-                            entry["free"] = serde_json::json!({
-                                "display_name": meta.display_name,
-                                "tagline": meta.tagline,
-                                "is_new": meta.is_new,
-                                "tier": meta.tier,
-                            });
-                        } else {
-                            entry["free"] = serde_json::json!({});
-                        }
-                    }
-                    models.push(entry);
-                }
-            }
-        }
-        let current_is_listed = config.providers.get(&llm.provider).is_some_and(|profile| {
-            profile
-                .models
-                .iter()
-                .any(|model| model.trim() == llm.model.trim())
-        });
-        if !llm.model.trim().is_empty()
-            && !current_is_listed
-            && config.providers.contains_key(&llm.provider)
-        {
-            let mut entry = serde_json::json!({
-                "provider": llm.provider,
-                "protocol": llm.protocol.to_string(),
-                "model": llm.model,
-                "spec": format!("{}:{}", llm.provider, llm.model),
-            });
-            Self::attach_thinking_levels(&mut entry, config, &llm.provider, &llm.model);
-            models.push(entry);
-        }
-        models
-    }
-
-    /// Attach the effort ladder this model actually supports, plus the level it
-    /// would start on. The picker needs per-model levels: offering `max` on a
-    /// model whose metadata stops at `high` would be a lie the transport then
-    /// silently clamps. Models with no selectable reasoning get no fields at
-    /// all, so a legacy reader sees exactly what it saw before.
-    fn attach_thinking_levels(
-        entry: &mut serde_json::Value,
-        config: &evot::api::Config,
-        provider: &str,
-        model: &str,
-    ) {
-        let Ok(llm) = config.build_llm(provider, Some(model.to_string())) else {
-            return;
-        };
-        let levels = ModelSelection::supported_thinking_levels_for(&llm);
-        if levels.is_empty() {
-            return;
-        }
-        entry["thinking_levels"] =
-            serde_json::json!(levels.iter().map(|l| l.as_str()).collect::<Vec<_>>());
-        entry["thinking_level"] = serde_json::json!(llm.thinking_level.as_str());
+        evot::api::model_catalog(
+            config,
+            &self.agent.llm(),
+            &crate::cloud_model_meta(),
+            &crate::cloud_provider_groups(),
+        )
     }
 
     /// Switch the active provider by model spec.
@@ -608,16 +529,7 @@ impl NapiAgent {
     /// selectable reasoning levels.
     #[napi]
     pub fn cycle_thinking_level(&self) -> Option<String> {
-        let level = self.agent.cycle_thinking_level()?;
-        // Best-effort: the live session keeps the new level even when the
-        // config write fails; the default then falls back on next start.
-        if let Ok(mut config) = self.load_config() {
-            let provider = self.agent.llm().provider.clone();
-            let _ = evot::api::persist_default_thinking_level(&mut config, &provider, level);
-        }
-        Some(ModelSelection::display_thinking_level_for(
-            &self.agent.llm(),
-        ))
+        evot::api::cycle_thinking_level(&self.agent, &self.env_file_path)
     }
 
     /// Apply a named thinking level and persist it as the default, the same
@@ -628,20 +540,7 @@ impl NapiAgent {
     /// the live selection untouched rather than silently clamping.
     #[napi]
     pub fn set_thinking_level(&self, level: String) -> Option<String> {
-        let parsed = evot::api::thinking_level_from_str(&level).ok()?;
-        if !self.agent.supported_thinking_levels().contains(&parsed) {
-            return None;
-        }
-        self.agent.set_thinking_level(parsed);
-        // Best-effort: the live session keeps the new level even when the
-        // config write fails; the default then falls back on next start.
-        if let Ok(mut config) = self.load_config() {
-            let provider = self.agent.llm().provider.clone();
-            let _ = evot::api::persist_default_thinking_level(&mut config, &provider, parsed);
-        }
-        Some(ModelSelection::display_thinking_level_for(
-            &self.agent.llm(),
-        ))
+        evot::api::set_thinking_level(&self.agent, &self.env_file_path, &level)
     }
 
     /// Apply a named thinking level when supported by the active model.

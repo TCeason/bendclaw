@@ -53,10 +53,12 @@ mod feishu_state_test;
 mod id_validation_test;
 #[path = "manual_compact_llm_test.rs"]
 mod manual_compact_llm_test;
+mod model_catalog_test;
 #[path = "model_metadata_test.rs"]
 mod model_metadata_test;
 #[path = "model_selection_test.rs"]
 mod model_selection_test;
+mod model_settings_test;
 #[path = "orchestrator_compact_test.rs"]
 mod orchestrator_compact_test;
 mod process_registry_test;
@@ -105,6 +107,7 @@ mod storage_memory_test;
 mod storage_test;
 #[path = "tool_mode_test.rs"]
 mod tool_mode_test;
+mod turn_assembler_test;
 #[path = "types_transcript_stats_test.rs"]
 mod types_transcript_stats_test;
 

@@ -8,28 +8,19 @@ use super::dump::build_prompt_dump;
 use super::dump::resolve_dump_path;
 use super::fork::ForkRequest;
 use super::fork::ForkedAgent;
-use super::processes::ProcessRegistry;
 use super::request::expand_prompt_command;
 use super::request::ExecutionLimits;
 use super::request::QueryRequest;
 use super::request::SubmitOutcome;
-use super::run::engine::EngineOptions;
-use super::run::policy::ExecutionBudget;
 use super::run::registry::RunRegistry;
 use super::run::run::Run;
 use super::run::runtime;
 use super::run::runtime::TurnFactory;
-use super::tools::build_tools;
 use super::tools::ToolMode;
+use super::turn_assembler::TurnAssembler;
+use super::turn_assembler::TurnBuildRequest;
 use super::turn_factory::AgentTurnFactory;
-use super::turn_factory::TurnBuildRequest;
 use super::variables::Variables;
-use crate::agent::prompt::bind_workspace_sections;
-use crate::agent::prompt::dynamic_sections;
-use crate::agent::prompt::load_turn_skills;
-use crate::agent::prompt::prompt_mode;
-use crate::agent::prompt::skills_prompt_section;
-use crate::agent::prompt::DynamicContext;
 use crate::agent::prompt::Section;
 use crate::conf::Config;
 use crate::conf::LlmConfig;
@@ -64,28 +55,14 @@ const COMPACTION_SUMMARY_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct Agent {
     selection: ModelSelection,
     system_prompt: RwLock<String>,
-    /// Per-section breakdown matching `system_prompt`. Used by `/_dump`.
-    /// Empty when `with_system_prompt` was called with a raw string and no
-    /// sections; the dump path then treats the whole prompt as a single
-    /// "system_prompt" section.
-    system_prompt_sections: RwLock<Vec<Section>>,
-    limits: RwLock<ExecutionLimits>,
-    skills_dirs: RwLock<Vec<PathBuf>>,
-    skill_names: RwLock<Option<Vec<String>>>,
+    assembler: Arc<TurnAssembler>,
     cwd: String,
-    /// Root dir for spill files. Only set when storage backend is Fs.
-    spill_root: Option<PathBuf>,
     storage: Arc<dyn Storage>,
-    variables: RwLock<Option<Arc<Variables>>>,
-    sandbox: super::sandbox::SandboxPolicy,
-    provider_override: RwLock<Option<Arc<dyn evot_engine::provider::StreamProvider>>>,
     /// session_id → (run_id, handle, done_flag)
     active_runs: Arc<RunRegistry>,
     /// Fixed sharded gates linearize start/clear/delete per session without
     /// retaining one lock per historical session.
     session_lifecycle_gates: SessionGates,
-    /// Session-scoped process registries survive per-turn tool reconstruction.
-    processes: ProcessRegistry,
 }
 
 impl Agent {
@@ -104,22 +81,11 @@ impl Agent {
                     .unwrap_or_else(|_| LlmConfig::unconfigured()),
             ),
             system_prompt: RwLock::new(system_prompt),
-            system_prompt_sections: RwLock::new(Vec::new()),
-            limits: RwLock::new(ExecutionLimits::default()),
-            skills_dirs: RwLock::new(Vec::new()),
-            skill_names: RwLock::new(None),
+            assembler: Arc::new(TurnAssembler::new(config)),
             cwd,
-            spill_root: match config.storage.backend {
-                crate::conf::StorageBackend::Fs => Some(config.storage.fs.root_dir.clone()),
-                _ => None,
-            },
             storage,
-            variables: RwLock::new(None),
-            sandbox: super::sandbox::SandboxPolicy::from_config(&config.sandbox),
-            provider_override: RwLock::new(None),
             active_runs: Arc::new(RunRegistry::default()),
             session_lifecycle_gates: SessionGates::new(),
-            processes: ProcessRegistry::new(),
         })
     }
 
@@ -130,7 +96,7 @@ impl Agent {
         provider: impl evot_engine::provider::StreamProvider + 'static,
     ) -> Result<Arc<Self>> {
         let agent = Arc::new(Self::new_inner(config, cwd.into(), storage)?);
-        *agent.provider_override.write() = Some(Arc::new(provider));
+        *agent.assembler.provider_override.write() = Some(Arc::new(provider));
         Ok(agent)
     }
 
@@ -139,7 +105,7 @@ impl Agent {
     pub fn with_system_prompt(self: &Arc<Self>, prompt: impl Into<String>) -> Arc<Self> {
         let prompt = prompt.into();
         let mut current_prompt = self.system_prompt.write();
-        let mut sections = self.system_prompt_sections.write();
+        let mut sections = self.assembler.system_prompt_sections.write();
         *current_prompt = prompt;
         sections.clear();
         Arc::clone(self)
@@ -154,7 +120,7 @@ impl Agent {
         sections: Vec<Section>,
     ) -> Arc<Self> {
         let mut current_prompt = self.system_prompt.write();
-        let mut current_sections = self.system_prompt_sections.write();
+        let mut current_sections = self.assembler.system_prompt_sections.write();
         *current_prompt = text;
         *current_sections = sections;
         Arc::clone(self)
@@ -168,7 +134,7 @@ impl Agent {
         }
 
         let mut prompt = self.system_prompt.write();
-        let mut sections = self.system_prompt_sections.write();
+        let mut sections = self.assembler.system_prompt_sections.write();
         if sections.is_empty() {
             if !prompt.is_empty() {
                 prompt.push_str("\n\n");
@@ -199,18 +165,18 @@ impl Agent {
     }
 
     pub fn with_limits(self: &Arc<Self>, limits: ExecutionLimits) -> Arc<Self> {
-        *self.limits.write() = limits;
+        *self.assembler.limits.write() = limits;
         Arc::clone(self)
     }
 
     pub fn with_skills_dirs(self: &Arc<Self>, dirs: Vec<PathBuf>) -> Arc<Self> {
-        *self.skills_dirs.write() = dirs;
+        *self.assembler.skills_dirs.write() = dirs;
         self.with_claude_skills_dirs()
     }
 
     pub fn add_skills_dirs(self: &Arc<Self>, dirs: Vec<PathBuf>) -> Arc<Self> {
         {
-            let mut current = self.skills_dirs.write();
+            let mut current = self.assembler.skills_dirs.write();
             for dir in dirs {
                 if !current.contains(&dir) {
                     current.push(dir);
@@ -223,7 +189,7 @@ impl Agent {
     pub fn set_skill_names(&self, names: Vec<String>) -> Result<()> {
         crate::agent::prompt::skill::load_skills_by_name(&self.skills_dirs(), &names)
             .map_err(|error| EvotError::Agent(error.to_string()))?;
-        *self.skill_names.write() = Some(names);
+        *self.assembler.skill_names.write() = Some(names);
         Ok(())
     }
 
@@ -231,7 +197,7 @@ impl Agent {
         if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
             let claude_dir = PathBuf::from(home).join(".claude").join("skills");
             if claude_dir.is_dir() {
-                let mut dirs = self.skills_dirs.write();
+                let mut dirs = self.assembler.skills_dirs.write();
                 if !dirs.contains(&claude_dir) {
                     dirs.push(claude_dir);
                 }
@@ -241,7 +207,7 @@ impl Agent {
     }
 
     pub fn with_variables(self: &Arc<Self>, variables: Arc<Variables>) -> Arc<Self> {
-        *self.variables.write() = Some(variables);
+        *self.assembler.variables.write() = Some(variables);
         Arc::clone(self)
     }
 
@@ -265,11 +231,11 @@ impl Agent {
     /// layer should read so `/skill list` and the banner never drift from what
     /// the agent actually loads.
     pub fn skills_dirs(&self) -> Vec<PathBuf> {
-        self.skills_dirs.read().clone()
+        self.assembler.skills_dirs.read().clone()
     }
 
     pub fn limits(&self) -> ExecutionLimits {
-        self.limits.read().clone()
+        self.assembler.limits.read().clone()
     }
 
     pub fn set_llm(&self, llm: LlmConfig) {
@@ -355,7 +321,7 @@ impl Agent {
     }
 
     pub fn variables(&self) -> Option<Arc<Variables>> {
-        self.variables.read().clone()
+        self.assembler.variables.read().clone()
     }
 
     pub fn storage(&self) -> Arc<dyn Storage> {
@@ -533,7 +499,7 @@ impl Agent {
             return Ok(outcome);
         }
         // `/clip all` loads the memory workflow and continues as a normal run.
-        let skills_dirs = self.skills_dirs.read().clone();
+        let skills_dirs = self.assembler.skills_dirs.read().clone();
         let request = expand_prompt_command(request, &skills_dirs)?;
 
         let run = self.start_run(request, session).await?;
@@ -561,7 +527,7 @@ impl Agent {
                 let session_id = session.session_id().await;
                 let _lifecycle = self.session_lifecycle_gate(&session_id).lock().await;
                 self.abort_run_and_wait_for_completion(&session_id).await?;
-                self.processes.retire(&session_id).await;
+                self.assembler.processes.retire(&session_id).await;
                 session.write_clear_marker().await?;
                 session.save().await?;
                 Ok(Some(SubmitOutcome::Command("Session cleared.".into())))
@@ -677,7 +643,8 @@ impl Agent {
         use evot_engine::provider::OpenAiCompatProvider;
         use evot_engine::provider::OpenAiResponsesProvider;
 
-        self.provider_override
+        self.assembler
+            .provider_override
             .read()
             .clone()
             .unwrap_or_else(|| match protocol {
@@ -740,7 +707,7 @@ impl Agent {
         });
 
         let factory: Arc<dyn TurnFactory> = Arc::new(AgentTurnFactory {
-            agent: Arc::clone(self),
+            assembler: Arc::clone(&self.assembler),
             session: Arc::clone(&session),
             mode: request.mode,
             session_id: session_id.clone(),
@@ -774,40 +741,21 @@ impl Agent {
         let Self {
             selection,
             system_prompt: _,
-            system_prompt_sections: _,
-            limits,
-            skills_dirs: _,
-            skill_names: _,
+            assembler,
             cwd,
-            spill_root: _,
             storage: _,
-            variables: _,
-            sandbox,
-            provider_override: _,
             active_runs: _,
             session_lifecycle_gates: _,
-            processes: _,
         } = self.as_ref();
 
         let forked = Arc::new(Self {
             selection: ModelSelection::new(selection.snapshot()),
             system_prompt: RwLock::new(request.system_prompt),
-            system_prompt_sections: RwLock::new(Vec::new()),
-            limits: RwLock::new(limits.read().clone()),
-            skills_dirs: RwLock::new(vec![]),
-            skill_names: RwLock::new(None),
+            assembler: Arc::new(assembler.fork()),
             cwd: cwd.clone(),
-            spill_root: None,
             storage: Arc::new(MemoryStorage::new()),
-            variables: RwLock::new(None),
-            sandbox: super::sandbox::SandboxPolicy {
-                enabled: sandbox.enabled,
-                extra_dirs: sandbox.extra_dirs.clone(),
-            },
-            provider_override: RwLock::new(None),
             active_runs: Arc::new(RunRegistry::default()),
             session_lifecycle_gates: SessionGates::new(),
-            processes: ProcessRegistry::new(),
         });
         Ok(ForkedAgent {
             agent: forked,
@@ -833,7 +781,7 @@ impl Agent {
     pub async fn delete_session(&self, session_id: &str) -> Result<bool> {
         let _lifecycle = self.session_lifecycle_gate(session_id).lock().await;
         self.abort_run_and_wait_for_completion(session_id).await?;
-        self.processes.retire(session_id).await;
+        self.assembler.processes.retire(session_id).await;
         self.storage.delete_session(session_id).await
     }
 
@@ -843,7 +791,7 @@ impl Agent {
         &self,
         session_id: &str,
     ) -> Vec<evot_engine::tools::ProcessSummary> {
-        self.processes.summaries(session_id)
+        self.assembler.processes.summaries(session_id)
     }
 
     pub async fn stop_background_process(
@@ -851,7 +799,10 @@ impl Agent {
         session_id: &str,
         task_id: &str,
     ) -> Result<Option<evot_engine::tools::ProcessSummary>> {
-        self.processes.stop_background(session_id, task_id).await
+        self.assembler
+            .processes
+            .stop_background(session_id, task_id)
+            .await
     }
 
     /// Detach every foreground shell in a session, returning how many moved.
@@ -863,7 +814,9 @@ impl Agent {
         session_id: &str,
         reason: evot_engine::tools::BackgroundReason,
     ) -> usize {
-        self.processes.background_foreground(session_id, reason)
+        self.assembler
+            .processes
+            .background_foreground(session_id, reason)
     }
 
     /// Blocking `task_output` waits in flight for a session.
@@ -872,14 +825,16 @@ impl Agent {
     /// backgrounded, so there is no foreground shell to detach — the UI needs
     /// this count to know ctrl+b has something to release.
     pub fn blocking_task_waits(&self, session_id: &str) -> usize {
-        self.processes.blocking_waiters(session_id)
+        self.assembler.processes.blocking_waiters(session_id)
     }
 
     /// End in-flight blocking waits, returning how many were released.
     ///
     /// The watched tasks keep running; only the waiting ends.
     pub fn release_blocking_task_waits(&self, session_id: &str) -> usize {
-        self.processes.release_blocking_waiters(session_id)
+        self.assembler
+            .processes
+            .release_blocking_waiters(session_id)
     }
 
     /// Completion notices queued for a session but not yet delivered to a turn.
@@ -888,18 +843,23 @@ impl Agent {
     /// turn is the only thing that can actually carry these. `build_turn`
     /// drains them via `take_notifications`.
     pub fn pending_process_notifications(&self, session_id: &str) -> usize {
-        self.processes.pending_notifications(session_id)
+        self.assembler.processes.pending_notifications(session_id)
     }
 
     pub fn pending_process_wake_notifications(&self, session_id: &str) -> usize {
-        self.processes.pending_wake_notifications(session_id)
+        self.assembler
+            .processes
+            .pending_wake_notifications(session_id)
     }
 
     pub async fn stop_all_background_processes(
         &self,
         session_id: &str,
     ) -> Vec<evot_engine::tools::ProcessSummary> {
-        self.processes.stop_all_background(session_id).await
+        self.assembler
+            .processes
+            .stop_all_background(session_id)
+            .await
     }
 
     /// Kill every background process across all sessions, synchronously.
@@ -907,7 +867,7 @@ impl Agent {
     /// Used on process-exit paths that bypass async teardown, where waiting is
     /// not possible and orphaned children are the failure mode.
     pub fn kill_all_background_processes_now(&self) -> usize {
-        self.processes.kill_all_now()
+        self.assembler.processes.kill_all_now()
     }
 
     pub async fn list_favorites(&self) -> Result<Vec<String>> {
@@ -978,30 +938,6 @@ impl Agent {
 
     // -- private -------------------------------------------------------------
 
-    fn build_system_prompt(&self, mode: ToolMode, cwd: &str) -> (String, Vec<Section>) {
-        let mut sections = self.system_prompt_sections.read().clone();
-        bind_workspace_sections(&mut sections, cwd);
-
-        let ctx = DynamicContext {
-            mode: prompt_mode(mode),
-            sandbox: self.sandbox.enabled,
-            variables: self
-                .variables
-                .read()
-                .as_ref()
-                .map(|v| v.variable_names())
-                .unwrap_or_default(),
-        };
-        sections.extend(dynamic_sections(&ctx));
-
-        let text = sections
-            .iter()
-            .map(|s| s.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        (text, sections)
-    }
-
     /// Search recent sessions for literal matches before falling back to
     /// semantic ranking with the configured LLM.
     async fn handle_resume_search(&self, query: &str) -> Result<String> {
@@ -1039,6 +975,7 @@ impl Agent {
         // build_turn runs the full per-turn assembly (tools, skills).
         let llm = self.llm();
         let turn = self
+            .assembler
             .build_turn(
                 &llm,
                 mode,
@@ -1092,153 +1029,5 @@ impl Agent {
         } else {
             None
         }
-    }
-
-    pub(super) async fn build_turn(
-        &self,
-        llm: &LlmConfig,
-        mode: ToolMode,
-        session: Arc<Session>,
-        session_id: &str,
-        request: TurnBuildRequest,
-    ) -> Result<runtime::TurnInput> {
-        let TurnBuildRequest {
-            mut input,
-            host_tools,
-            consume_process_notifications,
-        } = request;
-        let llm = llm.clone();
-        if llm.provider.is_empty() {
-            return Err(EvotError::Conf(
-                "No model available yet. Log in via the dashboard sidebar, run `evot login` here, or add a provider on the Models page."
-                    .to_string(),
-            ));
-        }
-        if llm.api_key.trim().is_empty() {
-            return Err(EvotError::Conf(format!(
-                "No API key set for provider '{}'. Add it in the dashboard settings \
-                 or set EVOT_LLM_{}_API_KEY in your env file.",
-                llm.provider,
-                llm.provider.to_uppercase().replace('-', "_"),
-            )));
-        }
-        let envs = self
-            .variables()
-            .map(|v| v.all_env_pairs())
-            .unwrap_or_default();
-        // Build path guard from sandbox policy. System dirs cover skill scan
-        // directories plus the memory vault used by the builtin memory skill.
-        let cwd = session.meta().await.cwd;
-        let cwd_path = std::path::Path::new(&cwd);
-        let skill_dirs = self.skills_dirs.read().clone();
-        let selected_skill_names = self.skill_names.read().clone();
-        let skills = load_turn_skills(&skill_dirs, selected_skill_names.as_deref())?;
-        let mut system_dirs = skill_dirs.clone();
-        if let Ok(memory_dir) = crate::conf::paths::memory_dir() {
-            if let Err(e) = std::fs::create_dir_all(&memory_dir) {
-                tracing::warn!("cannot create memory dir {}: {e}", memory_dir.display());
-            }
-            system_dirs.push(memory_dir);
-        }
-        for skill in &skills {
-            system_dirs.push(skill.base_dir.clone());
-        }
-        let spill_dir = self
-            .spill_root
-            .as_ref()
-            .map(|root| root.join("sessions").join(session_id).join("tool-results"));
-        if let Some(spill_dir) = &spill_dir {
-            std::fs::create_dir_all(spill_dir)?;
-            system_dirs.push(spill_dir.clone());
-        }
-        let sandbox_rt = self.sandbox.build_runtime(cwd_path, &system_dirs)?;
-        let policy = mode.policy();
-        let process_manager = if policy.background_processes {
-            Some(self.processes.acquire(session_id)?)
-        } else {
-            None
-        };
-
-        let tools = build_tools(
-            policy,
-            envs,
-            sandbox_rt.allow_bash,
-            sandbox_rt.bash_sandbox_dirs,
-            process_manager.clone(),
-            host_tools,
-        );
-
-        let (mut system_prompt, mut sections) = self.build_system_prompt(mode, &cwd);
-        if let Some(section) = skills_prompt_section(&skills) {
-            let insert_at = sections
-                .iter()
-                .position(|section| matches!(section.name, "environment" | "dynamic_boundary"))
-                .unwrap_or(sections.len());
-            sections.insert(insert_at, section);
-            system_prompt = sections
-                .iter()
-                .map(|section| section.text.as_str())
-                .collect::<Vec<_>>()
-                .join("\n\n");
-        }
-
-        let (prior_messages, compaction_state, transcript_seq) = session.context_snapshot().await;
-        // Keep the stored history intact. Replay normalization runs after
-        // context conversion at the engine's LLM boundary, not in session state.
-        if consume_process_notifications {
-            if let Some(process_manager) = &process_manager {
-                input.extend(
-                    process_manager
-                        .take_notifications()
-                        .into_iter()
-                        .map(|text| evot_engine::Content::Text { text }),
-                );
-            }
-        }
-        // A wake carries no prompt of its own: the queued notices *are* its
-        // input. If they were taken by another turn between the poll that
-        // decided to wake and this drain, the turn would reach the provider with
-        // nothing in it — and every provider filters empty text blocks, so the
-        // message would be rejected as contentless rather than merely useless.
-        if input
-            .iter()
-            .all(|content| matches!(content, evot_engine::Content::Text { text } if text.trim().is_empty()))
-        {
-            input = vec![evot_engine::Content::Text {
-                text: "A background task finished, but its result was already delivered. \
-                       Continue from where you left off, or wait for the user."
-                    .to_string(),
-            }];
-        }
-
-        Ok(runtime::TurnInput {
-            options: EngineOptions {
-                provider: llm.provider,
-                protocol: llm.protocol,
-                model: llm.model,
-                api_key: llm.api_key,
-                model_config: llm.model_config,
-                system_prompt,
-                system_prompt_sections: sections,
-                limits: if policy.budget == ExecutionBudget::Unbounded {
-                    None
-                } else {
-                    Some(self.limits.read().clone())
-                },
-                tools,
-                thinking_level: llm.thinking_level,
-                cwd: cwd_path.to_path_buf(),
-                path_guard: sandbox_rt.path_guard,
-                spill_dir,
-                process_manager,
-                prompt_cache_key: Some(session_id.to_string()),
-                provider_override: self.provider_override.read().clone(),
-                compaction_state,
-            },
-            history: prior_messages,
-            input,
-            session,
-            transcript_seq,
-        })
     }
 }

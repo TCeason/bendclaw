@@ -36,7 +36,7 @@ use crate::types::TranscriptItem;
 // TurnInput — prepared by agent, executed by runtime
 // ---------------------------------------------------------------------------
 
-pub(in crate::agent) struct TurnInput {
+pub struct TurnInput {
     pub options: EngineOptions,
     pub history: Vec<evot_engine::AgentMessage>,
     pub input: Vec<evot_engine::Content>,

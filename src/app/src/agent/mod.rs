@@ -8,6 +8,7 @@ pub mod run;
 pub mod run_manager;
 pub mod sandbox;
 pub mod tools;
+pub mod turn_assembler;
 mod turn_factory;
 #[allow(hidden_glob_reexports)]
 pub(crate) mod variables;
