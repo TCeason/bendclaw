@@ -43,5 +43,6 @@ pub use crate::models::cycle_thinking_level;
 pub use crate::models::model_catalog;
 pub use crate::models::set_thinking_level;
 pub use crate::models::ModelSelection;
+pub use crate::models::SelectionReload;
 pub use crate::sessions::Session;
 pub use crate::share;

@@ -7,6 +7,7 @@ use evot::api::ForkRequest;
 use evot::api::HostTools;
 use evot::api::ModelSelection;
 use evot::api::QueryRequest;
+use evot::api::SelectionReload;
 use evot::api::ToolMode;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -508,6 +509,22 @@ impl NapiAgent {
     pub fn reload_selection(&self) -> Result<bool> {
         let config = self.load_config()?;
         Ok(self.agent.reload_selection(&config).has_model())
+    }
+
+    /// Like `reload_selection`, but reports where the selection landed:
+    /// `kept`, `followed` (same model id, new provider), `switched`
+    /// (different model), or `unconfigured`. Lets the UI announce only real
+    /// movement instead of diffing display state.
+    #[napi]
+    pub fn reload_selection_outcome(&self) -> Result<String> {
+        let config = self.load_config()?;
+        let outcome = match self.agent.reload_selection(&config) {
+            SelectionReload::Kept => "kept",
+            SelectionReload::Followed => "followed",
+            SelectionReload::Switched => "switched",
+            SelectionReload::Unconfigured => "unconfigured",
+        };
+        Ok(outcome.to_string())
     }
 
     /// Reload provider/model selection from disk for session resume. Unlike an

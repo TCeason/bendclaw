@@ -26,6 +26,15 @@ import { decodeResult } from './contracts/results.js'
 import type { SessionMeta, SessionWithText, TranscriptItem, VariableInfo, BackgroundProcess, ManualCompactionOutcome, CompactionPhase } from './contracts/results.js'
 export type { SessionMeta, SessionWithText, TranscriptItem, VariableInfo, BackgroundProcess, ManualCompactionOutcome, CompactionPhase } from './contracts/results.js'
 
+/** Where `reloadSelectionOutcome` left the live model. */
+export type SelectionReloadOutcome = 'kept' | 'followed' | 'switched' | 'unconfigured'
+
+const SELECTION_RELOAD_OUTCOMES: ReadonlySet<string> = new Set(['kept', 'followed', 'switched', 'unconfigured'])
+
+function isSelectionReloadOutcome(value: string): value is SelectionReloadOutcome {
+  return SELECTION_RELOAD_OUTCOMES.has(value)
+}
+
 export type SubmitOutcome =
   | { kind: 'run'; stream: QueryStream }
   | { kind: 'command'; message: string }
@@ -285,6 +294,16 @@ export class Agent {
    */
   reloadSelection(): boolean {
     return this.raw.reloadSelection()
+  }
+
+  /**
+   * Same reload, reporting where the selection landed: `kept`, `followed`
+   * (the model id moved to another provider and was followed), `switched`
+   * (a different model took over) or `unconfigured`.
+   */
+  reloadSelectionOutcome(): SelectionReloadOutcome {
+    const raw = this.raw.reloadSelectionOutcome()
+    return isSelectionReloadOutcome(raw) ? raw : 'switched'
   }
 
   /**

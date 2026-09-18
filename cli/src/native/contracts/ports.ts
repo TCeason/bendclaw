@@ -49,6 +49,7 @@ export interface NativeAgent {
   availableModels(): string[]
   setProvider(provider: string): void
   reloadSelection(): boolean
+  reloadSelectionOutcome(): string
   reloadProvider(provider: string): boolean
   cycleThinkingLevel(): string | null
   setThinkingLevel(level: string): string | null

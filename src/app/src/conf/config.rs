@@ -272,6 +272,24 @@ impl Config {
         Some((self.llm.provider.clone(), profile.model().to_string()))
     }
 
+    /// Find another provider that explicitly lists `model` and can serve it.
+    ///
+    /// Used when a model moved between catalog groups (e.g. a free model
+    /// promoted to a premium tier): the user's pick should follow the model,
+    /// not fall back to the catalog default. Only explicit listings count, so
+    /// a BYOK provider that accepts arbitrary ids is never chosen by accident.
+    pub fn provider_listing_model(&self, model: &str, exclude: &str) -> Option<String> {
+        if model.is_empty() {
+            return None;
+        }
+        self.providers
+            .iter()
+            .filter(|(name, _)| name.as_str() != exclude)
+            .filter(|(_, profile)| !profile.api_key.trim().is_empty())
+            .find(|(_, profile)| profile.models.iter().any(|m| m == model))
+            .map(|(name, _)| name.clone())
+    }
+
     /// Whether this config can still serve a given (provider, model) pair.
     ///
     /// The single rule behind every reload: a provider must be configured with a

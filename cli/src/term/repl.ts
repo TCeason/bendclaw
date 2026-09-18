@@ -1209,22 +1209,29 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
    */
   function reloadAfterAuthChange(): boolean {
     taskIdentity.refresh()
-    const previousSpec = currentModelSpec(configInfo, appState.model)
-    const hasModel = agent.reloadSelection()
+    const previousModel = agent.model
+    const outcome = agent.reloadSelectionOutcome()
     refreshConfigInfo()
     reloadCloudContent()
-    if (!hasModel) return false
+    if (outcome === 'unconfigured') return false
 
     appState = { ...appState, model: agent.model }
+    // Only real movement is worth a line. A run in flight keeps repainting
+    // its pinned model into `appState`, so diffing display state here would
+    // re-announce the same landing on every external catalog write.
+    if (outcome === 'kept') return true
     const next = configInfo?.availableModels.find(model => model.spec === currentModelSpec(configInfo, agent.model))
-    if (next && next.spec !== previousSpec) {
-      commitStatusLine({
-        id: 'sys-model',
-        kind: 'system',
-        text: `  Model → ${formatModelLabel(agent.model, next.provider, next.group_label)}`,
-        shareEvents: modelShareEvents(next.provider, agent.model, configInfo?.thinkingLevel),
-      })
-    }
+    const provider = next?.provider ?? configInfo?.provider ?? ''
+    const label = formatModelLabel(agent.model, provider, next?.group_label)
+    const reason = outcome === 'followed'
+      ? ` · ${agent.model} moved groups, selection followed it`
+      : ` · ${previousModel} is no longer available`
+    commitStatusLine({
+      id: 'sys-model',
+      kind: 'system',
+      text: `  Model → ${label}${chalk.dim(reason)}`,
+      shareEvents: modelShareEvents(provider, agent.model, configInfo?.thinkingLevel),
+    })
     return true
   }
 

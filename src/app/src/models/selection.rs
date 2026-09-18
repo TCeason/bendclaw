@@ -11,6 +11,9 @@ use crate::error::Result;
 pub enum SelectionReload {
     /// The live selection is still served, using fresh configuration.
     Kept,
+    /// The same model id is now served by a different provider (the catalog
+    /// moved it between groups); the selection followed the model.
+    Followed,
     /// The live selection disappeared; the configured selection took over.
     Switched,
     /// No usable model remains configured.
@@ -162,17 +165,22 @@ impl ModelSelection {
     }
 
     /// Keep a still-served live selection on fresh configuration, inheriting
-    /// and clamping effort. Otherwise land on the configured default or clear
-    /// the selection. This is distinct from an interactive model switch.
+    /// and clamping effort. The model id is what the user chose: if the
+    /// catalog moved that id to another provider (free → premium), follow it
+    /// there. Otherwise land on the configured default or clear the
+    /// selection. This is distinct from an interactive model switch.
     pub fn reload_selection(&self, config: &Config) -> SelectionReload {
         let mut current = self.llm.write();
         if config.serves(&current.provider, &current.model) {
-            if let Ok(mut next) = config.build_llm(&current.provider, Some(current.model.clone())) {
-                next.thinking_level = next
-                    .model_config
-                    .effective_thinking_level(current.thinking_level);
+            if let Some(next) = Self::rebuild_with_effort(config, &current.provider, &current) {
                 *current = next;
                 return SelectionReload::Kept;
+            }
+        }
+        if let Some(provider) = config.provider_listing_model(&current.model, &current.provider) {
+            if let Some(next) = Self::rebuild_with_effort(config, &provider, &current) {
+                *current = next;
+                return SelectionReload::Followed;
             }
         }
         match config.active_llm() {
@@ -185,6 +193,22 @@ impl ModelSelection {
                 SelectionReload::Unconfigured
             }
         }
+    }
+
+    /// Rebuild `current.model` under `provider`, inheriting and clamping the
+    /// live thinking effort. `None` when the provider cannot build it.
+    fn rebuild_with_effort(
+        config: &Config,
+        provider: &str,
+        current: &LlmConfig,
+    ) -> Option<LlmConfig> {
+        let mut next = config
+            .build_llm(provider, Some(current.model.clone()))
+            .ok()?;
+        next.thinking_level = next
+            .model_config
+            .effective_thinking_level(current.thinking_level);
+        Some(next)
     }
 
     /// Restore the saved model using current configured effort. If resolution
