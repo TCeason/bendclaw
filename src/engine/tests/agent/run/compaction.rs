@@ -1236,6 +1236,61 @@ async fn test_large_window_model_does_not_compact_mid_window() {
         .any(|event| matches!(event, AgentEvent::LlmCallStart { .. })));
 }
 
+/// Gateway accounting faults (a whole run's prompt tokens summed into the last
+/// response) report a context far above the window while the real history is
+/// tiny. That usage must not read as a silent overflow: no compaction, no
+/// overflow error, the prompt goes out against the actual history.
+#[tokio::test]
+async fn test_implausible_usage_does_not_trigger_overflow_compaction() {
+    use evotengine::context::ContextConfig;
+
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("answer".into())])
+        .prior_messages(vec![
+            AgentMessage::Llm(Message::user("history ".repeat(4_000))),
+            AgentMessage::Llm(Message::Assistant {
+                content: vec![Content::Text {
+                    text: "prior answer".into(),
+                }],
+                stop_reason: StopReason::Stop,
+                model: "test-model".into(),
+                provider: "test".into(),
+                usage: Usage {
+                    input: 305_000,
+                    output: 9_000,
+                    cache_read: 4_900_000,
+                    total_tokens: 5_214_000,
+                    ..Default::default()
+                },
+                timestamp: 1,
+                error_message: None,
+                response_id: None,
+            }),
+        ])
+        .context_config(ContextConfig::from_context_window(1_000_000))
+        .run("next")
+        .await;
+
+    assert!(
+        output
+            .events
+            .iter()
+            .all(|event| !matches!(event, AgentEvent::ContextCompactionEnd { .. })),
+        "5.2M reported on an ~8k history must not compact"
+    );
+    assert!(
+        output
+            .events
+            .iter()
+            .all(|event| !matches!(event, AgentEvent::Error { .. })),
+        "implausible usage is not an overflow"
+    );
+    assert!(output
+        .events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::LlmCallStart { .. })));
+}
+
 /// A summarizer that cannot produce a summary must not strand the run: the
 /// main request still goes out. Compaction is best-effort, not a gate.
 #[tokio::test]

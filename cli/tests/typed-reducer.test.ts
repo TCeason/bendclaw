@@ -129,4 +129,60 @@ describe('typed run reducer', () => {
     } })
     expect(compacted.currentRunStats.compactHistory).toEqual([{ level: 2, beforeTokens: 100, afterTokens: 25 }])
   })
+
+  test('implausible provider usage keeps the engine estimate for the footer', () => {
+    const initial = createInitialState('model', '/tmp')
+    const started = apply(initial, 'llm_call_started', {
+      turn: 33, attempt: 0, injected_count: 0, model: 'kimi-k3', message_count: 257, message_bytes: 1,
+      estimated_context_tokens: 302_000, system_prompt_tokens: 4_000, tool_count: 0, context_window: 1_000_000,
+    })
+    expect(started.sessionTokens.contextTokens).toBe(302_000)
+
+    // A gateway summed the whole run's prompt tokens into the last response.
+    const bogus = apply(started, 'llm_call_completed', {
+      turn: 33, attempt: 0, usage: { input: 305_000, output: 9_000, cache_read: 4_900_000, cache_write: 0 },
+    })
+    expect(bogus.sessionTokens.contextTokens).toBe(302_000)
+    expect(bogus.currentRunStats.contextTokens).toBe(302_000)
+    // Billing counters still record what the provider charged.
+    expect(bogus.sessionTokens.cacheReadTokens).toBe(4_900_000)
+
+    // A count consistent with the request replaces the estimate.
+    const real = apply(started, 'llm_call_completed', {
+      turn: 33, attempt: 0, usage: { input: 20_000, output: 2_000, cache_read: 290_000, cache_write: 0 },
+    })
+    expect(real.sessionTokens.contextTokens).toBe(312_000)
+
+    // Without any estimate the provider count is taken as is.
+    const noEstimate = apply(initial, 'llm_call_completed', {
+      turn: 1, attempt: 0, usage: { input: 30_000, output: 100, cache_read: 0, cache_write: 0 },
+    })
+    expect(noEstimate.sessionTokens.contextTokens).toBe(30_100)
+  })
+
+  test('auto compaction completed refreshes the footer context to the post-compaction size', () => {
+    const initial = createInitialState('model', '/tmp')
+    const event = { event_id: 'e', run_id: 'r', session_id: 's', turn: 1, created_at: '' }
+    const before = {
+      ...initial,
+      currentRunStats: { ...initial.currentRunStats, contextTokens: 5_200_000, contextWindow: 1_000_000 },
+      sessionTokens: { ...initial.sessionTokens, contextTokens: 5_200_000, contextWindow: 1_000_000 },
+    }
+    const compacted = applyEvent(before, { ...event, kind: 'context_compaction_completed', payload: {
+      reason: 'overflow',
+      context_window: 1_000_000,
+      result: {
+        type: 'compacted', before_message_count: 258, after_message_count: 37,
+        before_tokens: 297_000, after_tokens: 24_000, messages_evicted: 222, current_run_reclaimed: 0,
+      },
+    } })
+    expect(compacted.sessionTokens.contextTokens).toBe(24_000)
+    expect(compacted.sessionTokens.contextWindow).toBe(1_000_000)
+    expect(compacted.currentRunStats.contextTokens).toBe(24_000)
+
+    const noOp = applyEvent(before, { ...event, kind: 'context_compaction_completed', payload: {
+      reason: 'threshold', result: { type: 'no_op' },
+    } })
+    expect(noOp.sessionTokens.contextTokens).toBe(5_200_000)
+  })
 })

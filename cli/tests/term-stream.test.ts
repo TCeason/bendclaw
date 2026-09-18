@@ -1247,12 +1247,13 @@ describe('term stream machine', () => {
     // Pre-call estimate lands first via llm_call_started.
     state = reduceRunEvent(state, {
       kind: 'llm_call_started',
-      payload: { model: 'test', messages: [], estimated_context_tokens: 5000, context_window: 160000 },
+      payload: { model: 'test', messages: [], estimated_context_tokens: 95000, context_window: 160000 },
     }, { termRows: 24 }).state
-    expect(state.appState.currentRunStats.contextTokens).toBe(5000)
+    expect(state.appState.currentRunStats.contextTokens).toBe(95000)
 
     // On completion the footer must switch to the provider's real usage,
     // matching the compaction trigger: input + cache_read + cache_write + output.
+    // (A count wildly above the estimate is rejected instead; see typed-reducer.)
     const completed = reduceRunEvent(state, {
       kind: 'llm_call_completed',
       payload: {

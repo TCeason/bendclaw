@@ -11,6 +11,35 @@ use crate::provider::ToolDefinition;
 use crate::types::*;
 
 // ---------------------------------------------------------------------------
+// Usage plausibility
+// ---------------------------------------------------------------------------
+
+/// How far a provider-reported context size may exceed the local estimate of
+/// the same request before it is rejected as not describing that request.
+///
+/// The local heuristic (UTF-16 chars / 4) undercounts CJK-heavy text by up to
+/// ~3x and images by a few thousand tokens, so the bound is deliberately loose.
+/// It exists to catch gross accounting faults — e.g. a gateway summing a whole
+/// run's prompt tokens into the final response — which otherwise read as a
+/// silent context overflow and force a destructive compaction.
+pub const USAGE_PLAUSIBILITY_FACTOR: usize = 4;
+
+/// Absolute headroom added on top of the factor so small requests with
+/// provider-side overhead (tool schemas, reasoning envelopes) are never
+/// rejected. Below this size no compaction decision can be affected anyway.
+pub const USAGE_PLAUSIBILITY_SLACK_TOKENS: usize = 16_000;
+
+/// Whether a provider-reported context size can describe a request whose
+/// local estimate (messages plus system prompt and tool overhead) is
+/// `local_estimate` tokens.
+pub fn usage_is_plausible(reported_tokens: usize, local_estimate: usize) -> bool {
+    let bound = local_estimate
+        .saturating_mul(USAGE_PLAUSIBILITY_FACTOR)
+        .saturating_add(USAGE_PLAUSIBILITY_SLACK_TOKENS);
+    reported_tokens <= bound
+}
+
+// ---------------------------------------------------------------------------
 // Context tracking (real usage + estimates)
 // ---------------------------------------------------------------------------
 
@@ -97,8 +126,13 @@ impl ContextTracker {
         target_provider: Option<&str>,
         target_model: Option<&str>,
     ) -> Option<usize> {
-        let (baseline, idx) =
-            latest_provider_anchor(messages, target_provider, target_model, self.compacted_at)?;
+        let (baseline, idx) = latest_provider_anchor(
+            messages,
+            target_provider,
+            target_model,
+            self.compacted_at,
+            self.system_tool_overhead_tokens,
+        )?;
         let trailing: usize = messages[idx + 1..].iter().map(message_tokens).sum();
         Some(baseline + trailing)
     }
@@ -145,19 +179,24 @@ impl ContextTracker {
 ///
 /// Uses provider total usage, falling back to normalized usage buckets. Rejects
 /// responses from a different provider/model (their counts do not describe this
-/// model's serialization) and responses at or before the compaction boundary
-/// (their counts describe the pre-compaction context).
+/// model's serialization), responses at or before the compaction boundary
+/// (their counts describe the pre-compaction context), and counts that cannot
+/// describe the prefix they answered (see [`usage_is_plausible`]).
 fn latest_provider_anchor(
     messages: &[AgentMessage],
     target_provider: Option<&str>,
     target_model: Option<&str>,
     compacted_at: Option<u64>,
+    request_overhead_tokens: usize,
 ) -> Option<(usize, usize)> {
     let mut latest_prefix_timestamp = 0;
     let mut latest_anchor = None;
+    let mut prefix_tokens = request_overhead_tokens;
 
-    for (idx, message) in messages.iter().enumerate() {
-        let Some(message) = message.as_llm() else {
+    for (idx, agent_message) in messages.iter().enumerate() {
+        // The response's usage covers everything up to and including itself.
+        prefix_tokens = prefix_tokens.saturating_add(message_tokens(agent_message));
+        let Some(message) = agent_message.as_llm() else {
             continue;
         };
         let timestamp = message_timestamp(message);
@@ -180,6 +219,7 @@ fn latest_provider_anchor(
                 && *stop_reason != StopReason::Aborted
                 && *stop_reason != StopReason::Error
                 && anchor > 0
+                && usage_is_plausible(anchor, prefix_tokens)
             {
                 latest_anchor = Some((anchor, idx));
             }

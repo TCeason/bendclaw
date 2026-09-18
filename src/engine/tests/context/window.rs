@@ -17,6 +17,16 @@ fn assistant_with_input(text: &str, input: u64, cache_read: u64) -> AgentMessage
     assistant_at(text, input, cache_read, 0)
 }
 
+/// An assistant response whose visible content is large enough that its
+/// provider usage is plausible for the prefix it answered. Usage that dwarfs
+/// the local estimate is rejected as a context anchor (see
+/// `implausible_usage_is_not_a_context_anchor`), so tests that expect the
+/// provider count to win must carry matching content.
+fn anchored_assistant_at(input: u64, cache_read: u64, timestamp: u64) -> AgentMessage {
+    let body = "x".repeat(((input + cache_read) * 4) as usize);
+    assistant_at(&body, input, cache_read, timestamp)
+}
+
 fn assistant_at(text: &str, input: u64, cache_read: u64, timestamp: u64) -> AgentMessage {
     AgentMessage::Llm(Message::Assistant {
         content: vec![Content::Text {
@@ -47,7 +57,7 @@ fn anchors_on_latest_assistant_usage_plus_trailing() {
     let trailing = "x".repeat(400); // 100 tokens at UTF-16 chars / 4
     let messages = vec![
         user_msg("hello"),
-        assistant_with_input("hi", 90_000, 10_000),
+        anchored_assistant_at(90_000, 10_000, 0),
         user_msg(&trailing),
     ];
 
@@ -64,7 +74,7 @@ fn anchors_on_latest_assistant_usage_plus_trailing() {
 fn fresh_tracker_recovers_anchor_on_resume() {
     let messages = vec![
         user_msg("earlier turn"),
-        assistant_with_input("answer", 98_000, 0),
+        anchored_assistant_at(98_000, 0, 0),
     ];
 
     // A brand-new tracker is what a resumed session starts with.
@@ -112,10 +122,7 @@ fn anchors_on_response_after_compaction_boundary() {
     let mut tracker = ContextTracker::new();
     tracker.record_compaction_done(100);
 
-    let messages = vec![
-        user_msg("q"),
-        assistant_at("post-compaction answer", 40_000, 0, 101),
-    ];
+    let messages = vec![user_msg("q"), anchored_assistant_at(40_000, 0, 101)];
     assert_eq!(tracker.estimate_context_tokens(&messages), 40_050);
 }
 
@@ -128,7 +135,7 @@ fn boundary_applies_per_message_not_to_the_whole_list() {
 
     let messages = vec![
         user_msg("q"),
-        assistant_at("fresh", 40_000, 0, 101),
+        anchored_assistant_at(40_000, 0, 101),
         user_msg("next"),
         assistant_at("stale replay", 150_000, 0, 50),
     ];
@@ -255,7 +262,7 @@ fn provider_switch_does_not_reuse_same_named_model_anchor() {
 #[test]
 fn native_total_tokens_take_precedence_over_component_fallback() {
     let tracker = ContextTracker::new();
-    let mut assistant = assistant_with_input("answer", 90_000, 10_000);
+    let mut assistant = anchored_assistant_at(90_000, 10_000, 0);
     if let AgentMessage::Llm(Message::Assistant { usage, .. }) = &mut assistant {
         usage.total_tokens = 100_123;
     }
@@ -266,10 +273,76 @@ fn native_total_tokens_take_precedence_over_component_fallback() {
 #[test]
 fn zero_native_total_falls_back_to_usage_components() {
     let tracker = ContextTracker::new();
-    let mut assistant = assistant_with_input("answer", 90_000, 10_000);
+    let mut assistant = anchored_assistant_at(90_000, 10_000, 0);
     if let AgentMessage::Llm(Message::Assistant { usage, .. }) = &mut assistant {
         usage.total_tokens = 0;
     }
 
     assert_eq!(tracker.estimate_context_tokens(&[assistant]), 100_050);
+}
+
+/// A provider count that cannot describe the prefix it answered — here a
+/// gateway summing a whole run's prompt tokens into one response — must not
+/// anchor the estimate; the local estimate of the actual history is used.
+#[test]
+fn implausible_usage_is_not_a_context_anchor() {
+    let tracker = ContextTracker::new();
+    let history = "x".repeat(400_000); // 100k local tokens
+    let messages = vec![
+        user_msg(&history),
+        assistant_with_input("done", 305_000, 4_900_000),
+    ];
+
+    let estimate = tracker.estimate_context_tokens(&messages);
+    assert!(
+        (100_000..101_000).contains(&estimate),
+        "5.2M usage on a 100k prefix must fall back to the local estimate: {estimate}"
+    );
+}
+
+/// Rejecting one bogus response falls back to the previous trustworthy anchor
+/// plus the trailing delta, not to a full-history estimate.
+#[test]
+fn implausible_usage_falls_back_to_previous_anchor() {
+    let tracker = ContextTracker::new();
+    let messages = vec![
+        user_msg("q"),
+        anchored_assistant_at(90_000, 10_000, 1),
+        user_msg(&"y".repeat(400)),
+        assistant_with_input("done", 305_000, 4_900_000),
+    ];
+
+    let estimate = tracker.estimate_context_tokens(&messages);
+    // 100_050 anchor + 100 trailing user tokens + "done" (1 token).
+    assert_eq!(estimate, 100_050 + 100 + 1);
+}
+
+/// The bound is loose on purpose: CJK text and images legitimately count far
+/// above the UTF-16 / 4 heuristic, and small requests carry provider overhead.
+#[test]
+fn moderately_high_usage_stays_a_context_anchor() {
+    let tracker = ContextTracker::new();
+    let cjk_history = "文".repeat(40_000); // 10k local tokens, ~3x more real
+    let messages = vec![
+        user_msg(&cjk_history),
+        assistant_with_input("好", 35_000, 0),
+    ];
+
+    assert_eq!(tracker.estimate_context_tokens(&messages), 35_050);
+}
+
+#[test]
+fn usage_plausibility_bound_is_factor_plus_slack() {
+    use evotengine::context::window::usage_is_plausible;
+    use evotengine::context::window::USAGE_PLAUSIBILITY_FACTOR;
+    use evotengine::context::window::USAGE_PLAUSIBILITY_SLACK_TOKENS;
+
+    let local = 10_000;
+    let bound = local * USAGE_PLAUSIBILITY_FACTOR + USAGE_PLAUSIBILITY_SLACK_TOKENS;
+    assert!(usage_is_plausible(bound, local));
+    assert!(!usage_is_plausible(bound + 1, local));
+    // Tiny requests are always covered by the slack alone.
+    assert!(usage_is_plausible(USAGE_PLAUSIBILITY_SLACK_TOKENS, 0));
+    // The incident shape: 5.2M reported against a ~300k request.
+    assert!(!usage_is_plausible(5_200_000, 300_000));
 }

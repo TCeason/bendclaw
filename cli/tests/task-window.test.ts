@@ -215,6 +215,7 @@ describe('task window', () => {
       { keys: 'tab', action: 'details' },
       { keys: 'e', action: 'edit' },
       { keys: 'r', action: 'run now' },
+      { keys: 'space', action: 'pause/resume' },
       { keys: 's', action: 'share' },
       { keys: 'd', action: 'delete' },
       { keys: 'escape', action: 'close' },
@@ -226,11 +227,13 @@ describe('task window', () => {
       }, 120, 32).map(stripAnsi).join('\n')
       expect(text).toContain(focused ? 'scroll' : 'select')
       expect(text).not.toContain('page-up')
-      expect(text).not.toContain('pause/resume')
-      if (focused) expect(text).not.toContain('to delete')
-      else {
+      if (focused) {
+        expect(text).not.toContain('to delete')
+        expect(text).not.toContain('pause/resume')
+      } else {
         expect(text).toContain('to edit')
         expect(text).toContain('to run now')
+        expect(text).toContain('space to pause/resume')
         expect(text).toContain('to delete')
       }
       expect(text).not.toContain('to history')

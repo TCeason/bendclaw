@@ -10,6 +10,7 @@ import type { MessageStats, UIAssistantBlock, UIMessage, UIToolCall } from './ty
 import { appendAssistantDelta, assistantToolCalls, completedAssistantContent, findAssistantToolCall, updateAssistantToolCall, updateToolCallInMessages, upsertAssistantToolCall } from './assistant-content.js'
 import { compactRecordFromResult } from './compaction-record.js'
 import { parseStreamingToolArgs, toolArgsRecord } from './tool-args.js'
+import { usageIsPlausible } from './usage-plausibility.js'
 
 
 export function applyEvent(state: AppState, event: RunEvent): AppState {
@@ -315,10 +316,13 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
           cacheWriteTokens: cacheWriteTok,
         }
 
-        // Provider usage buckets are disjoint.
+        // Provider usage buckets are disjoint. `contextTokens` currently holds
+        // the engine's estimate from `llm_call_started`; a provider count that
+        // cannot describe that request keeps the estimate.
         const realContextTokens =
           inputTok + cacheReadTok + cacheWriteTok + outputTok
-        if (realContextTokens > 0) {
+        const hasEstimate = stats.contextTokens > 0
+        if (realContextTokens > 0 && (!hasEstimate || usageIsPlausible(realContextTokens, stats.contextTokens))) {
           stats.contextTokens = realContextTokens
         }
       }
@@ -388,13 +392,27 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const text = formatCompactionCompleted(data)
       const compactRecord = compactRecordFromResult(p.result, state.currentRunStats.contextTokens)
 
+      // Auto compaction rewrote the model's context: the footer must drop to
+      // the post-compaction size instead of keeping the pre-compaction (or
+      // provider-reported) number until the next LLM call reports usage.
+      const afterTokens = compactRecord?.afterTokens ?? 0
+      const contextWindow = typeof p.context_window === 'number' && p.context_window > 0
+        ? p.context_window
+        : state.sessionTokens.contextWindow
       const updatedStats = compactRecord
-        ? { ...state.currentRunStats, compactHistory: [...state.currentRunStats.compactHistory, compactRecord] }
+        ? {
+            ...state.currentRunStats,
+            compactHistory: [...state.currentRunStats.compactHistory, compactRecord],
+            contextTokens: afterTokens > 0 ? afterTokens : state.currentRunStats.contextTokens,
+          }
         : state.currentRunStats
 
       return {
         ...state,
         currentRunStats: updatedStats,
+        sessionTokens: afterTokens > 0
+          ? { ...state.sessionTokens, contextTokens: afterTokens, contextWindow }
+          : state.sessionTokens,
         verboseEvents: [...state.verboseEvents, { kind: 'compact_done', text }],
       }
     }

@@ -10,6 +10,7 @@ import {
   newlySettled,
   runningBackgroundCount,
   settledNoticeMessage,
+  settledOutputSnapshot,
   shouldWakeForNotifications,
   stopAllMessage,
   stopOneMessage,
@@ -401,7 +402,7 @@ export class BackgroundTerminals {
         const state = this.deps.panelState()
         if (state) {
           if (state.owner === SELECTOR_OWNER.backgroundOutput) {
-            this.refreshOutputView(state, next)
+            this.refreshOutputView(state, next, sessionChanged ? [] : previous)
           } else {
             this.deps.updatePanel(this.withActivity(refreshBackgroundPanelState(state, this.panelProcesses())))
           }
@@ -483,16 +484,7 @@ export class BackgroundTerminals {
     if (!state || !isBackgroundSelector(state)) return false
     if (state.owner === SELECTOR_OWNER.backgroundOutput) {
       if (event.type === 'escape') {
-        this.dispose()
-        if (state.outputView?.returnToPrompt) {
-          this.deps.updatePanel(null)
-        } else {
-          const taskId = state.items[0]?.id
-          const panel = this.withActivity(this.returnPanel
-            ? refreshBackgroundPanelState(this.returnPanel, this.panelProcesses())
-            : createBackgroundPanelState(this.panelProcesses()))
-          this.deps.updatePanel(taskId ? selectorFocusOn(panel, item => item.id === taskId) : panel)
-        }
+        this.leaveOutputView(state)
         return true
       }
       if (event.type === 'char' && event.char === 'x') {
@@ -561,13 +553,74 @@ export class BackgroundTerminals {
     this.subscribeOutput(process)
   }
 
-  /** Refresh an open live tail from the latest process snapshot and file. */
-  private refreshOutputView(state: SelectorState, processes: BackgroundProcess[]): void {
+  /**
+   * Leave the live tail the way the user came in: back to the prompt when the
+   * view was opened directly, otherwise back to the list with the task focused.
+   */
+  private leaveOutputView(state: SelectorState): void {
+    this.dispose()
+    if (state.outputView?.returnToPrompt) {
+      this.deps.updatePanel(null)
+      return
+    }
+    const taskId = state.items[0]?.id
+    const panel = this.withActivity(this.returnPanel
+      ? refreshBackgroundPanelState(this.returnPanel, this.panelProcesses())
+      : createBackgroundPanelState(this.panelProcesses()))
+    this.deps.updatePanel(taskId ? selectorFocusOn(panel, item => item.id === taskId) : panel)
+  }
+
+  /**
+   * The watched task finished: hand the screen back.
+   *
+   * A live tail exists to watch work in progress; once the work is done, leaving
+   * the overlay up means an extra keypress for every task the user ever watched
+   * to completion. The final output goes into the transcript first, because the
+   * list only shows live tasks and this is the output's last way on screen. The
+   * view returns to the list while other tasks are still running, otherwise all
+   * the way to the prompt (an empty list has nothing left to manage).
+   */
+  private settleOutputView(state: SelectorState, process: BackgroundProcess): void {
+    if (!this.announced.has(process.task_id)) {
+      this.announced.add(process.task_id)
+      this.deps.commit('settled', settledOutputSnapshot(process, this.readOutput(process)))
+      if (!process.stopped_by_user) this.wakeArmed = true
+    }
+    const othersLive = this.panelProcesses().some(candidate =>
+      candidate.task_id !== process.task_id && isLiveStatus(candidate.status))
+    if (othersLive) {
+      this.leaveOutputView(state)
+    } else {
+      this.dispose()
+      this.deps.updatePanel(null)
+    }
+    this.deps.requestRender()
+  }
+
+  /**
+   * Refresh an open live tail from the latest process snapshot and file.
+   *
+   * `previous` is the task list from the last poll; a task seen live there and
+   * settled now closes the view (see `settleOutputView`). Output-file events
+   * pass no list, so only the status poll can trigger the close. A viewport
+   * frozen by scrolling up is left alone: the user is reading, and the view
+   * still updates its status line so they can leave when they are done.
+   */
+  private refreshOutputView(
+    state: SelectorState,
+    processes: BackgroundProcess[],
+    previous: BackgroundProcess[] = [],
+  ): void {
     const taskId = state.items[0]?.id
     const process = processes.find(candidate => candidate.task_id === taskId)
     if (!process) {
       this.dispose()
       this.deps.updatePanel(this.withActivity(createBackgroundPanelState(this.panelProcesses())))
+      return
+    }
+    const wasLive = previous.some(candidate => candidate.task_id === taskId && isLiveStatus(candidate.status))
+    if (wasLive && !isLiveStatus(process.status) && state.outputView?.scrollOffset === undefined) {
+      this.settleOutputView(state, process)
       return
     }
     const next = refreshBackgroundOutputState(state, process, this.latestOutput)

@@ -6,6 +6,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::config::AgentLoopConfig;
 use super::event_sink::EventSink;
+use crate::context::tokens::total_tokens;
+use crate::context::window::usage_is_plausible;
 use crate::context::AfterResponseAction;
 use crate::context::CompactionController;
 use crate::context::CompactionResponse;
@@ -94,10 +96,38 @@ pub(super) async fn check_compaction(
         Some(ctrl) => ctrl,
         None => return false,
     };
-    let usage = match usage_snapshot_from_message(assistant_message) {
+    let mut usage = match usage_snapshot_from_message(assistant_message) {
         Some(usage) => usage,
         None => return false,
     };
+    // The pre-prompt check runs before the turn loop records this request's
+    // overhead; refresh it so the plausibility bound sees the same request.
+    tracker.record_request_overhead(request_shape.system_prompt, request_shape.tools);
+
+    // A provider count that cannot describe the request it answered (e.g. a
+    // gateway summing a whole run's prompt tokens into the final response) must
+    // not be read as a silent overflow or a threshold hit. Drop the numbers and
+    // let the estimate fallback below decide from the last trustworthy anchor.
+    // Explicit overflow errors keep their dedicated compact-and-retry path.
+    let local_estimate =
+        total_tokens(messages).saturating_add(tracker.system_tool_overhead_tokens());
+    let reported = crate::context::compaction::trigger::context_tokens(&usage);
+    let usage_rejected =
+        usage.stop_reason != StopReason::Error && !usage_is_plausible(reported, local_estimate);
+    if usage_rejected {
+        tracing::warn!(
+            reported_tokens = reported,
+            local_estimate,
+            model = %usage.model.model,
+            provider = %usage.model.provider,
+            "provider usage cannot describe this request; ignoring it for compaction"
+        );
+        usage.input = 0;
+        usage.cache_read = 0;
+        usage.cache_write = 0;
+        usage.output = 0;
+        usage.total_tokens = 0;
+    }
     let current_model = ModelId {
         provider: target_provider(config)
             .unwrap_or(&usage.model.provider)
@@ -124,7 +154,7 @@ pub(super) async fn check_compaction(
     let anchor_estimate = if response.action == AfterResponseAction::Continue
         && response.stats.is_none()
         && response.reason.is_none()
-        && needs_usage_anchor_estimate(assistant_message)
+        && (usage_rejected || needs_usage_anchor_estimate(assistant_message))
     {
         tracker.estimate_context_tokens_from_anchor_for_model(
             messages,

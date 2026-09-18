@@ -280,9 +280,9 @@ describe('BackgroundTerminals panel refresh', () => {
   test('a poll updates the open panel in place', () => {
     const h = harness({ processes: [proc()] })
     h.controller.togglePanel()
-    h.setProcesses([proc({ status: 'completed', exit_code: 0 })])
+    h.setProcesses([proc({ elapsed_ms: 61_000 })])
     h.controller.refresh()
-    expect(h.panel()!.items[0]!.detail).toBe('exit 0 · 2s')
+    expect(h.panel()!.items[0]!.detail).toBe('running · 1m 1s')
     expect(h.panel()?.presentation).toBe('background-output')
   })
 
@@ -367,12 +367,86 @@ describe('BackgroundTerminals.handlePanelKey', () => {
     expect(h.panel()?.items[0]?.preview).not.toContain('done')
     h.outputChanged()
     expect(h.panel()?.items[0]?.preview).toContain('done')
+  })
+
+  test('the live view closes by itself when the watched task finishes', () => {
+    // Watching a build to the end must not cost an extra esc for every task:
+    // the prompt comes back, and what was on screen goes into the transcript.
+    const h = harness({ processes: [proc()], output: 'building…\ndone\n' })
+    h.controller.togglePanel()
+    expect(h.panel()?.presentation).toBe('background-output')
     h.setProcesses([proc({ status: 'completed', exit_code: 0, elapsed_ms: 2500 })])
     h.controller.refresh()
 
-    expect(h.panel()?.items[0]?.preview).toContain('done')
-    expect(h.panel()?.items[0]?.preview?.join('\n')).toContain('✓ · exit 0')
-    expect(h.panel()?.subtitle).toBe('aaaaaaaa')
+    expect(h.panel()).toBeNull()
+    const settled = h.commits.filter(entry => entry.slot === 'settled')
+    expect(settled).toHaveLength(1)
+    const text = settled[0]!.text
+    expect(text).toContain('✓ completed in background · exit 0 · aaaaaaaa  sleep 30')
+    expect(text).toContain('    building…')
+    expect(text).toContain('    done')
+    expect(text).toContain('    /tmp/out.txt')
+    // Further polls do not re-announce or re-open anything.
+    h.controller.refresh()
+    expect(h.panel()).toBeNull()
+    expect(h.commits.filter(entry => entry.slot === 'settled')).toHaveLength(1)
+    // Output-file events after the close are ignored.
+    const reads = h.outputReads()
+    h.outputChanged()
+    expect(h.outputReads()).toBe(reads)
+  })
+
+  test('a finished task viewed from the list returns to the list while others run', () => {
+    const h = harness({ processes: [proc(), proc({ task_id: 'bbbbbbbb-2222', command: 'make check' })] })
+    h.controller.togglePanel()
+    h.controller.handlePanelKey({ type: 'enter' })
+    expect(h.panel()?.presentation).toBe('background-output')
+    h.setProcesses([proc({ status: 'failed', exit_code: 2 }), proc({ task_id: 'bbbbbbbb-2222', command: 'make check' })])
+    h.controller.refresh()
+
+    expect(h.panel()?.presentation).toBe('background-list')
+    expect(h.panel()?.items.map(item => item.id)).toEqual(['bbbbbbbb-2222'])
+    expect(h.texts().join('\n')).toContain('✗ failed in background · exit 2')
+  })
+
+  test('a finished task viewed from the list closes the overlay when it was the last one', () => {
+    const h = harness({ processes: [proc(), proc({ task_id: 'bbbbbbbb-2222' })] })
+    h.controller.togglePanel()
+    h.controller.handlePanelKey({ type: 'enter' })
+    h.setProcesses([proc({ status: 'completed', exit_code: 0 }), proc({ task_id: 'bbbbbbbb-2222', status: 'completed', exit_code: 0 })])
+    h.controller.refresh()
+
+    expect(h.panel()).toBeNull()
+    // Both tasks settled in one poll: the watched one via the view, the other
+    // via the ordinary notice. Each is reported exactly once.
+    expect(h.commits.filter(entry => entry.slot === 'settled')).toHaveLength(2)
+  })
+
+  test('a frozen viewport is not closed under the reader when the task finishes', () => {
+    let output = 'one\ntwo\nthree\n'
+    const h = harness({ processes: [proc()], output: () => output })
+    h.controller.togglePanel()
+    h.controller.handlePanelKey({ type: 'up' })
+    expect(h.panel()?.outputView?.scrollOffset).toBeDefined()
+    h.setProcesses([proc({ status: 'completed', exit_code: 0, elapsed_ms: 2500 })])
+    h.controller.refresh()
+
+    expect(h.panel()?.presentation).toBe('background-output')
+    expect(h.panel()?.items[0]?.detail).toContain('exit 0')
+    // The plain notice still lands in the transcript, once.
+    expect(h.commits.filter(entry => entry.slot === 'settled')).toHaveLength(1)
+    expect(h.controller.handlePanelKey({ type: 'escape' })).toBe(true)
+    expect(h.panel()).toBeNull()
+  })
+
+  test('stopping the watched task from its view closes the view without a second notice', async () => {
+    const h = harness({ processes: [proc()] })
+    h.controller.togglePanel()
+    expect(h.controller.handlePanelKey({ type: 'char', char: 'x' })).toBe(true)
+    await h.controller.settled()
+    expect(h.panel()).toBeNull()
+    expect(h.texts().filter(text => text.includes('aaaaaaaa'))).toHaveLength(1)
+    expect(h.texts().join('\n')).toContain('Stopped aaaaaaaa')
   })
 
   test('reading earlier output freezes the viewport while new output is received', () => {
@@ -488,12 +562,13 @@ describe('BackgroundTerminals.handlePanelKey', () => {
     expect(h.texts().join('\n')).toContain('Stopped 2 background terminals')
   })
 
-  test('stopping refreshes the panel, so the row shows its new status', async () => {
-    const h = harness({ processes: [proc()] })
+  test('stopping refreshes the panel, so the stopped row leaves the list', async () => {
+    const h = harness({ processes: [proc(), proc({ task_id: 'bbbbbbbb-2222' })] })
     h.controller.togglePanel()
     h.controller.handlePanelKey({ type: 'char', char: 'x' })
     await h.controller.settled()
-    expect(h.panel()!.items[0]!.detail).toContain('cancelled by user')
+    expect(h.panel()?.presentation).toBe('background-list')
+    expect(h.panel()?.items.map(item => item.id)).toEqual(['bbbbbbbb-2222'])
   })
 })
 
