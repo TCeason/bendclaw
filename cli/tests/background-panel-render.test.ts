@@ -2,7 +2,14 @@ import { describe, test, expect } from 'bun:test'
 import { buildOverlayBlocks } from '../src/term/viewmodel/overlays.js'
 import { buildSelectorRegionLines } from '../src/term/viewmodel/selector.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
-import { backgroundOutputRows, createBackgroundOutputState, createBackgroundPanelState } from '../src/term/app/background-panel.js'
+import {
+  backgroundOutputRows,
+  backgroundOutputViewport,
+  createBackgroundOutputState,
+  createBackgroundPanelState,
+  formatOutputPosition,
+  scrollBackgroundOutput,
+} from '../src/term/app/background-panel.js'
 import { selectorDown } from '../src/term/selector.js'
 import type { BackgroundProcess } from '../src/native/index.js'
 
@@ -190,7 +197,7 @@ describe('background panel rendering', () => {
       expect(lines.every(text => text.length <= 60)).toBe(true)
       expect(lines).toContain('  latest output')
       expect(lines.join('\n')).toContain('Esc')
-      const commandView = { ...state, outputView: { scrollOffset: 1 } }
+      const commandView = { ...state, outputView: { scrollOffset: 0 } }
       expect(buildSelectorRegionLines(commandView, 60, rows).length).toBeLessThanOrEqual(rows)
     }
   })
@@ -201,14 +208,73 @@ describe('background panel rendering', () => {
     const rows = backgroundOutputRows(state, 40)
     expect(rows).toContain('chrome')
     expect(rows.join('\n')).toContain('--screenshot=')
-    for (let offset = 1; offset <= rows.length; offset++) {
+    for (let offset = 0; offset < rows.length; offset++) {
       const view = { ...state, outputView: { scrollOffset: offset } }
       const lines = buildSelectorRegionLines(view, 40, 12).map(stripAnsi)
-      expect(lines).toContain(`  ${rows[offset - 1]}`)
+      expect(lines).toContain(`  ${rows[offset]}`)
       expect(lines.length).toBeLessThanOrEqual(12)
       expect(lines.join('\n')).toContain('Background task · aaaaaaaa')
       expect(lines.join('\n')).not.toContain('script (5 lines)')
     }
+  })
+
+  test('the overlay keeps one height at every scroll position', () => {
+    // The composer sits directly under the overlay: a body window that grows or
+    // shrinks with the scroll position would drag the prompt up and down.
+    const output = Array.from({ length: 60 }, (_, index) => `line ${index + 1}`).join('\n')
+    const state = createBackgroundOutputState(proc(), output)
+    const following = buildSelectorRegionLines(state, 100, 24).map(stripAnsi)
+    const viewport = backgroundOutputViewport(state, 100, 24)
+    expect(viewport.height).toBe(16)
+    expect(following.some(line => line.trim() === 'line 60')).toBe(true)
+    expect(following.join('\n')).toContain('earlier lines · ↑ to scroll back')
+
+    for (const offset of [0, 1, 5, viewport.body.length - viewport.height - 1]) {
+      const lines = buildSelectorRegionLines({ ...state, outputView: { scrollOffset: offset } }, 100, 24).map(stripAnsi)
+      expect(lines).toHaveLength(following.length)
+      expect(lines.join('\n')).toContain(`Paused · ${offset + 1}–${offset + viewport.height} of ${viewport.body.length}`)
+    }
+    // The top of the body is the command itself.
+    const top = buildSelectorRegionLines({ ...state, outputView: { scrollOffset: 0 } }, 100, 24).map(stripAnsi)
+    expect(top).toContain('  Command')
+    expect(top).toContain('  sleep 30')
+    // An offset at or past the last window is simply following.
+    const bottom = buildSelectorRegionLines({ ...state, outputView: { scrollOffset: 10_000 } }, 100, 24).map(stripAnsi)
+    expect(bottom).toEqual(following)
+  })
+
+  test('a short body has no scroll range and reports no position', () => {
+    const state = createBackgroundOutputState(proc(), 'hello\nworld')
+    const viewport = backgroundOutputViewport(state, 100, 24)
+    expect(scrollBackgroundOutput(viewport, 'up')).toBeUndefined()
+    expect(scrollBackgroundOutput(viewport, 'home')).toBeUndefined()
+    expect(formatOutputPosition(viewport)).toBe('')
+    const lines = buildSelectorRegionLines(state, 100, 24).map(stripAnsi)
+    expect(lines.join('\n')).not.toContain('Paused')
+  })
+
+  test('scroll keys are clamped to the body and hand back to the tail at the bottom', () => {
+    const output = Array.from({ length: 60 }, (_, index) => `line ${index + 1}`).join('\n')
+    const state = createBackgroundOutputState(proc(), output)
+    const following = backgroundOutputViewport(state, 100, 24)
+    const maxStart = following.body.length - following.height
+    expect(following.start).toBe(maxStart)
+
+    expect(scrollBackgroundOutput(following, 'up')).toBe(maxStart - 1)
+    expect(scrollBackgroundOutput(following, 'page-up')).toBe(maxStart - (following.height - 1))
+    expect(scrollBackgroundOutput(following, 'home')).toBe(0)
+    expect(scrollBackgroundOutput(following, 'command')).toBe(0)
+    expect(scrollBackgroundOutput(following, 'down')).toBeUndefined()
+
+    const top = backgroundOutputViewport({ ...state, outputView: { scrollOffset: 0 } }, 100, 24)
+    expect(scrollBackgroundOutput(top, 'up')).toBe(0)
+    expect(scrollBackgroundOutput(top, 'page-up')).toBe(0)
+    expect(scrollBackgroundOutput(top, 'down')).toBe(1)
+    expect(scrollBackgroundOutput(top, 'end')).toBeUndefined()
+
+    const nearBottom = backgroundOutputViewport({ ...state, outputView: { scrollOffset: maxStart - 1 } }, 100, 24)
+    expect(scrollBackgroundOutput(nearBottom, 'down')).toBeUndefined()
+    expect(scrollBackgroundOutput(nearBottom, 'page-down')).toBeUndefined()
   })
 
   test('capped-output warning stays pinned above a noisy tail', () => {

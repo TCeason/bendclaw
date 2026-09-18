@@ -319,6 +319,123 @@ export function backgroundOutputRows(state: SelectorState, columns: number): str
   return body.flatMap(entry => wrapTextWithAnsi(entry, Math.max(1, width - 2)))
 }
 
+/** Pinned lines above the body: title and status, plus the capped-file warning. */
+export function backgroundOutputHeaderLines(state: SelectorState): string[] {
+  const preview = state.items[0]?.preview ?? []
+  const split = preview.indexOf('')
+  return split < 0 ? [] : preview.slice(0, split)
+}
+
+/**
+ * Rows the output overlay may occupy in total, excluding the outer renderer's
+ * leading blank and two borders. Capped so a tall terminal does not turn the
+ * overlay into a second screen; floored so short terminals still show activity.
+ */
+export function backgroundOutputBudget(rows: number): number {
+  return Math.max(4, Math.min(24, Math.floor(rows) - 4))
+}
+
+/** Rows below the body: the position line and the key hints. */
+const OUTPUT_FOOTER_LINES = 2
+
+/** Header rows: title and status, plus one per warning. */
+function outputHeaderHeight(state: SelectorState): number {
+  const warnings = backgroundOutputHeaderLines(state).filter(text => text.includes('output file was capped'))
+  return 2 + warnings.length
+}
+
+export interface BackgroundOutputViewport {
+  /** Every wrapped body row (command, output, markers). */
+  body: string[]
+  /** Rows the body viewport can show at once. */
+  height: number
+  /** First visible body row. */
+  start: number
+  /** One past the last visible body row. */
+  end: number
+  /** True while the view is pinned to the tail. */
+  following: boolean
+}
+
+/**
+ * Body window for the output overlay.
+ *
+ * `outputView.scrollOffset` is the first visible body row; undefined follows
+ * the tail. The window is always `height` rows when the body is that long, and
+ * the whole body otherwise, so scrolling never changes the overlay's height:
+ * the composer and footer below it stay exactly where they are.
+ */
+export function backgroundOutputViewport(
+  state: SelectorState,
+  columns: number,
+  rows: number,
+): BackgroundOutputViewport {
+  const body = backgroundOutputRows(state, columns)
+  const height = Math.max(1, backgroundOutputBudget(rows) - outputHeaderHeight(state) - OUTPUT_FOOTER_LINES)
+  const maxStart = Math.max(0, body.length - height)
+  const offset = state.outputView?.scrollOffset
+  const following = offset === undefined || offset >= maxStart
+  const start = following ? maxStart : Math.max(0, offset)
+  return { body, height, start, end: Math.min(body.length, start + height), following }
+}
+
+export type OutputScrollKey = 'up' | 'down' | 'page-up' | 'page-down' | 'home' | 'end' | 'command'
+
+/**
+ * The scroll offset after one navigation key, or undefined to follow the tail.
+ *
+ * Scrolling is clamped to the body: a body that already fits cannot be scrolled
+ * at all, so ↑ on a short output is inert rather than pausing an empty window.
+ * Reaching the bottom by any route resumes following, so the tail picks up
+ * again without a dedicated key.
+ */
+export function scrollBackgroundOutput(
+  viewport: BackgroundOutputViewport,
+  key: OutputScrollKey,
+): number | undefined {
+  const maxStart = Math.max(0, viewport.body.length - viewport.height)
+  if (maxStart === 0) return undefined
+  const page = Math.max(1, viewport.height - 1)
+  let next: number
+  switch (key) {
+    case 'home':
+    case 'command':
+      next = 0
+      break
+    case 'end':
+      return undefined
+    case 'up':
+      next = viewport.start - 1
+      break
+    case 'down':
+      next = viewport.start + 1
+      break
+    case 'page-up':
+      next = viewport.start - page
+      break
+    case 'page-down':
+      next = viewport.start + page
+      break
+  }
+  const clamped = Math.max(0, Math.min(maxStart, next))
+  return clamped >= maxStart ? undefined : clamped
+}
+
+/**
+ * One line describing where the window sits. Always present (possibly empty)
+ * so the overlay keeps a constant height whether or not the view is paused.
+ */
+export function formatOutputPosition(viewport: BackgroundOutputViewport): string {
+  const total = viewport.body.length
+  if (!viewport.following) {
+    return `Paused · ${viewport.start + 1}–${viewport.end} of ${total} · ↓ or End to follow latest`
+  }
+  if (viewport.start > 0) {
+    return `Following latest · ${viewport.start} earlier ${viewport.start === 1 ? 'line' : 'lines'} · ↑ to scroll back`
+  }
+  return ''
+}
+
 /** Replace status and tail while preserving the open output view. */
 export function refreshBackgroundOutputState(
   state: SelectorState,

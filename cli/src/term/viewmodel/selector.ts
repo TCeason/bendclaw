@@ -1,4 +1,4 @@
-import { backgroundOutputRows } from '../app/background-panel.js'
+import { backgroundOutputHeaderLines, backgroundOutputViewport, formatOutputPosition } from '../app/background-panel.js'
 import { buildSessionRenameLines } from './session-rename.js'
 import { buildOutputBlocks } from './output.js'
 import { clipDisplayText } from '../../render/format.js'
@@ -69,19 +69,15 @@ export function buildSelectorRegionLines(
   return ['', border, ...blocksToLines(buildSelectorBlocks(state, width, active, rows)), border]
 }
 
-/** Bounded detail: metadata cannot consume the activity viewport or footer. */
+/**
+ * Bounded detail: pinned header, a fixed-height body window, one position
+ * line, one hint line. The body window is sized from the terminal, not from
+ * the scroll position, so paging through earlier output never resizes the
+ * overlay or moves the composer beneath it.
+ */
 function buildBackgroundOutputRegionLines(state: SelectorState, width: number, rows: number): string[] {
   const item = state.items[0]
-  const preview = item?.preview ?? ['', '(no output yet)']
-  const split = preview.indexOf('')
-  const metadata = split < 0 ? [] : preview.slice(0, split)
-  const body = backgroundOutputRows(state, width)
-  const paused = state.outputView?.scrollOffset !== undefined
-  const end = Math.min(body.length, state.outputView?.scrollOffset ?? body.length)
-  const wrapped = body.slice(0, end).map(text => `${width > 2 ? '  ' : ''}${text}`)
-  // The outer renderer adds a leading blank and two borders. Leave those out
-  // of this budget; keep enough space for activity even on short terminals.
-  const budget = Math.max(4, Math.min(24, Math.floor(rows) - 4))
+  const metadata = backgroundOutputHeaderLines(state)
   // List rows summarize commands; detail views show the full command in the
   // scrollable body exactly once. Keep task identity pinned instead.
   const taskId = item?.id?.slice(0, 8)
@@ -94,10 +90,9 @@ function buildBackgroundOutputRegionLines(state: SelectorState, width: number, r
     ], { columns: width }).flatMap(block => block.lines).map(styledLineToAnsi),
     ...warnings.map(text => styledLineToAnsi(line(colored(clipDisplayText(text, width), 'yellow')))),
   ]
-  const bodyBudget = Math.max(1, budget - header.length - 2)
-  const visible = wrapped.slice(-bodyBudget)
-  const hasEarlier = wrapped.length > visible.length || metadata.some(text => text.includes('earlier line'))
-  const position = paused ? 'Paused · ↓ to return to latest output' : hasEarlier ? '↑ command and earlier output' : ''
+  const viewport = backgroundOutputViewport(state, width, rows)
+  const indent = width > 2 ? '  ' : ''
+  const visible = viewport.body.slice(viewport.start, viewport.end)
   const hints = state.hints ?? [{ keys: 'escape', action: 'back' }]
   return [
     ...header,
@@ -105,9 +100,9 @@ function buildBackgroundOutputRegionLines(state: SelectorState, width: number, r
       if (text.trim() === '(no output yet)') {
         return styledLineToAnsi(line(dim('  ↳ No stdout/stderr received yet')))
       }
-      return styledLineToAnsi(line(plain(text)))
+      return styledLineToAnsi(line(plain(`${indent}${text}`)))
     }),
-    styledLineToAnsi(line(dim(position))),
+    styledLineToAnsi(line(dim(formatOutputPosition(viewport)))),
     styledLineToAnsi(buildHintLine(hints)),
   ].map(text => wrapTextWithAnsi(text, width)[0] ?? '')
 }

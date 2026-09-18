@@ -4,6 +4,9 @@ import { decideReplControl } from '../src/term/app/repl-control.js'
 import { createEditorState } from '../src/term/input/editor.js'
 import { BackgroundTerminals } from '../src/term/app/background-terminals.js'
 import { isBackgroundSelector } from '../src/term/app/selector-identity.js'
+import { backgroundOutputRows } from '../src/term/app/background-panel.js'
+import { buildSelectorRegionLines } from '../src/term/viewmodel/selector.js'
+import stripAnsi from 'strip-ansi'
 import type { SelectorState } from '../src/term/selector.js'
 import type { BackgroundProcess } from '../src/native/index.js'
 
@@ -22,6 +25,11 @@ function proc(overrides: Partial<BackgroundProcess> = {}): BackgroundProcess {
   }
 }
 
+/** `n` numbered output lines, longer than any body window used in these tests. */
+function longOutput(n: number): string {
+  return Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n') + '\n'
+}
+
 /**
  * Drives the controller with an in-memory overlay and client, mirroring how
  * `repl.ts` wires it: `panelOpen` is derived from the overlay's identity, so the
@@ -38,6 +46,8 @@ function harness(options: {
   blockingWaits?: () => number
   releaseBlockingWaits?: () => number
   onList?: () => BackgroundProcess[]
+  /** Terminal height seen by the output view; defaults to a 24-row terminal. */
+  rows?: number
   /** Queued completion notices the engine has not yet handed to a turn. */
   pendingNotifications?: () => number
   runInFlight?: () => boolean
@@ -71,6 +81,8 @@ function harness(options: {
   }
 
   const controller = new BackgroundTerminals({
+    columns: () => 80,
+    rows: () => options.rows ?? 24,
     client: {
       backgroundProcesses: () => (options.onList ? options.onList() : processes),
       stopBackgroundProcess: async (_sessionId, taskId) => {
@@ -423,7 +435,7 @@ describe('BackgroundTerminals.handlePanelKey', () => {
   })
 
   test('a frozen viewport is not closed under the reader when the task finishes', () => {
-    let output = 'one\ntwo\nthree\n'
+    let output = longOutput(40)
     const h = harness({ processes: [proc()], output: () => output })
     h.controller.togglePanel()
     h.controller.handlePanelKey({ type: 'up' })
@@ -449,12 +461,58 @@ describe('BackgroundTerminals.handlePanelKey', () => {
     expect(h.texts().join('\n')).toContain('Stopped aaaaaaaa')
   })
 
+  test('↑ on output that already fits is inert instead of pausing an empty window', () => {
+    const h = harness({ processes: [proc()], output: 'one\ntwo\nthree\n' })
+    h.controller.togglePanel()
+    expect(h.controller.handlePanelKey({ type: 'up' })).toBe(true)
+    expect(h.panel()?.outputView?.scrollOffset).toBeUndefined()
+    expect(h.controller.handlePanelKey({ type: 'page-up' })).toBe(true)
+    expect(h.panel()?.outputView?.scrollOffset).toBeUndefined()
+  })
+
+  test('scrolling moves a fixed-height window over the body and resumes following at the tail', () => {
+    // 24 rows → budget 20, minus 2 header and 2 footer rows = a 16-row body window.
+    const h = harness({ processes: [proc()], output: longOutput(40), rows: 24 })
+    h.controller.togglePanel()
+    const rendered = () => buildSelectorRegionLines(h.panel()!, 80, 24).map(stripAnsi)
+    const height = rendered().length
+    const body = backgroundOutputRows(h.panel()!, 80)
+    const maxStart = body.length - 16
+
+    h.controller.handlePanelKey({ type: 'up' })
+    expect(h.panel()?.outputView?.scrollOffset).toBe(maxStart - 1)
+    expect(rendered()).toHaveLength(height)
+    h.controller.handlePanelKey({ type: 'page-up' })
+    expect(h.panel()?.outputView?.scrollOffset).toBe(maxStart - 1 - 15)
+    expect(rendered()).toHaveLength(height)
+    h.controller.handlePanelKey({ type: 'home' })
+    expect(h.panel()?.outputView?.scrollOffset).toBe(0)
+    expect(rendered()).toHaveLength(height)
+    expect(rendered().join('\n')).toContain('Command')
+    // Every further ↑ is clamped at the top; the overlay never shrinks.
+    h.controller.handlePanelKey({ type: 'up' })
+    expect(h.panel()?.outputView?.scrollOffset).toBe(0)
+    expect(rendered()).toHaveLength(height)
+
+    h.controller.handlePanelKey({ type: 'char', char: 'c' })
+    expect(h.panel()?.outputView?.scrollOffset).toBe(0)
+    h.controller.handlePanelKey({ type: 'page-down' })
+    expect(h.panel()?.outputView?.scrollOffset).toBe(15)
+    // Walking down onto the last window hands control back to the tail.
+    for (let i = 0; i < 40 && h.panel()?.outputView?.scrollOffset !== undefined; i++) {
+      h.controller.handlePanelKey({ type: 'down' })
+    }
+    expect(h.panel()?.outputView?.scrollOffset).toBeUndefined()
+    expect(rendered()).toHaveLength(height)
+  })
+
   test('reading earlier output freezes the viewport while new output is received', () => {
-    let output = 'one\ntwo\nthree\n'
+    let output = longOutput(40)
     const h = harness({ processes: [proc()], output: () => output })
     h.controller.togglePanel()
     h.controller.handlePanelKey({ type: 'up' })
     const offset = h.panel()?.outputView?.scrollOffset
+    expect(offset).toBeDefined()
     output += 'four\n'
     h.outputChanged()
     expect(h.panel()?.outputView?.scrollOffset).toBe(offset)

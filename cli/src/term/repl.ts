@@ -1968,6 +1968,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   const backgroundTerminals = new BackgroundTerminals({
     columns: () => renderer.termCols,
+    rows: () => renderer.termRows,
     client: agent,
     sessionId: () => sessionId,
     commit: commitBackgroundLine,

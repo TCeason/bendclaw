@@ -16,7 +16,9 @@ import {
   stopOneMessage,
 } from './background-processes.js'
 import {
-  backgroundOutputRows,
+  backgroundOutputViewport,
+  scrollBackgroundOutput,
+  type OutputScrollKey,
   createBackgroundOutputState,
   createBackgroundPanelState,
   decideBackgroundPanelAction,
@@ -58,6 +60,8 @@ export interface BackgroundTerminalsDeps {
    */
   readOutput: (path: string) => string
   columns?: () => number
+  /** Terminal height; sizes the output view's body window for scrolling. */
+  rows?: () => number
   /** Output-file notifications, independent of the process-status poll. */
   watchOutput?: (path: string, changed: () => void, failed: (error: Error) => void) => () => void
   /** Opens the panel as a selector overlay. */
@@ -492,25 +496,9 @@ export class BackgroundTerminals {
         if (target?.live) this.track(this.stopFromPanel(target.id))
         return true
       }
-      if (event.type === 'char' && event.char === 'c') {
-        this.deps.updatePanel({ ...state, outputView: { ...state.outputView, scrollOffset: 1 } })
-        return true
-      }
-      if (event.type === 'end') {
-        const next = { ...state, outputView: { ...state.outputView, scrollOffset: undefined } }
-        this.deps.updatePanel(next)
-        this.refreshOutputView(next, this.processes)
-        return true
-      }
-      if (['up', 'down', 'page-up', 'page-down', 'home'].includes(event.type)) {
-        const count = backgroundOutputRows(state, this.deps.columns?.() ?? 80).length
-        const previous = state.outputView?.scrollOffset ?? count
-        const delta = event.type === 'up' ? -1 : event.type === 'page-up' ? -10 : event.type === 'page-down' ? 10 : 1
-        const offset = event.type === 'home' ? 1 : Math.max(1, Math.min(count, previous + delta))
-        const follow = delta > 0 && offset >= count && event.type !== 'home'
-        const next = { ...state, outputView: { ...state.outputView, scrollOffset: follow ? undefined : offset } }
-        this.deps.updatePanel(next)
-        if (follow) this.refreshOutputView(next, this.processes)
+      const scrollKey = outputScrollKey(event)
+      if (scrollKey) {
+        this.scrollOutputView(state, scrollKey)
         return true
       }
       // Keep editor/navigation input out of the hidden composer, but let global
@@ -542,6 +530,22 @@ export class BackgroundTerminals {
     // Failures are already reported to the user inside the workers, so the
     // chain absorbs them here rather than staying permanently rejected.
     this.pending = this.pending.then(() => work).catch(() => {})
+  }
+
+  /**
+   * Move the output window. Leaving the tail freezes the body (see
+   * `refreshBackgroundOutputState`); reaching it again resumes following and
+   * pulls in whatever arrived while the user was reading.
+   */
+  private scrollOutputView(state: SelectorState, key: OutputScrollKey): void {
+    const viewport = backgroundOutputViewport(state, this.deps.columns?.() ?? 80, this.deps.rows?.() ?? 24)
+    const scrollOffset = scrollBackgroundOutput(viewport, key)
+    const wasFollowing = state.outputView?.scrollOffset === undefined
+    const following = scrollOffset === undefined
+    if (wasFollowing && following) return
+    const next = { ...state, outputView: { ...state.outputView, scrollOffset } }
+    this.deps.updatePanel(next)
+    if (following) this.refreshOutputView(next, this.processes)
   }
 
   /** Open a full-width live tail without writing snapshots into history. */
@@ -816,5 +820,25 @@ export class BackgroundTerminals {
       // Never block shutdown on cleanup of processes we are abandoning anyway.
       return 0
     }
+  }
+}
+
+/**
+ * Navigation keys the output view claims. `c` jumps to the command at the top
+ * of the body, mirroring Home; End resumes following.
+ */
+function outputScrollKey(event: KeyEvent): OutputScrollKey | null {
+  switch (event.type) {
+    case 'up':
+    case 'down':
+    case 'page-up':
+    case 'page-down':
+    case 'home':
+    case 'end':
+      return event.type
+    case 'char':
+      return event.char === 'c' ? 'command' : null
+    default:
+      return null
   }
 }
