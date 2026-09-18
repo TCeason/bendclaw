@@ -27,9 +27,76 @@ use crate::types::ToolResult;
 /// AI-visible parameter, so a tool call cannot extend or disable the bound.
 const NO_BLOCKING_WAIT_LIMIT: Option<Duration> = None;
 
+/// When a blocking wait stops trusting the task and hands the turn back.
+///
+/// The unbounded wait above assumes a user who can press a key. Overnight runs
+/// have no such user: a deadlocked test held one `task_output` for 1h35m with
+/// the model making no decision at all, because nothing ever told it the task
+/// had gone silent. This is not the old fixed timer coming back — that fired
+/// on healthy builds and taught the model to re-wait. It is a *stall* signal:
+/// the task produced nothing for `quiet`, or has run past `hard_cap` while
+/// still going. Both thresholds double on each wake for the same task, so a
+/// second wait is a real second chance rather than the first slice of a loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StallPolicy {
+    /// Silence that ends a wait: no output at all for this long.
+    pub quiet: Duration,
+    /// Total runtime that ends a wait even while output keeps flowing, e.g. a
+    /// `tail -f` or a test looping on a log line.
+    pub hard_cap: Duration,
+}
+
+impl StallPolicy {
+    pub const DEFAULT: Self = Self {
+        quiet: Duration::from_secs(10 * 60),
+        hard_cap: Duration::from_secs(30 * 60),
+    };
+
+    /// Cap on the doubling so the thresholds stay finite.
+    const MAX_BACKOFF_SHIFT: u32 = 6;
+
+    fn backoff(base: Duration, wakes: u32) -> Duration {
+        base.saturating_mul(1u32 << wakes.min(Self::MAX_BACKOFF_SHIFT))
+    }
+
+    fn quiet_after(self, wakes: u32) -> Duration {
+        Self::backoff(self.quiet, wakes)
+    }
+
+    fn hard_cap_after(self, wakes: u32) -> Duration {
+        Self::backoff(self.hard_cap, wakes)
+    }
+}
+
+/// Why a stall ended the wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StallKind {
+    Quiet,
+    HardCap,
+}
+
+/// How a blocking wait came to an end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WaitEnd {
+    /// The task reached a terminal status.
+    Finished,
+    /// The host-configured bound elapsed (legacy path, unset by default).
+    Timeout,
+    /// The user reclaimed the turn.
+    Released,
+    /// No wait at all: `block: false` took an immediate snapshot.
+    Snapshot,
+    /// The task looked stalled; `next_quiet` is what the next wait tolerates.
+    Stalled {
+        kind: StallKind,
+        next_quiet: Duration,
+    },
+}
+
 pub struct TaskOutputTool {
     manager: Arc<ProcessManager>,
     blocking_wait_limit: Option<Duration>,
+    stall_policy: Option<StallPolicy>,
 }
 
 impl TaskOutputTool {
@@ -37,7 +104,22 @@ impl TaskOutputTool {
         Self {
             manager,
             blocking_wait_limit: NO_BLOCKING_WAIT_LIMIT,
+            stall_policy: Some(StallPolicy::DEFAULT),
         }
+    }
+
+    /// Replace the stall thresholds. Host-configured only: like the wait bound,
+    /// this is not an AI-visible parameter. Tests use it to reach the stalled
+    /// path in milliseconds.
+    pub fn with_stall_policy(mut self, policy: StallPolicy) -> Self {
+        self.stall_policy = Some(policy);
+        self
+    }
+
+    /// Disable stall detection entirely, restoring the unbounded wait.
+    pub fn without_stall_detection(mut self) -> Self {
+        self.stall_policy = None;
+        self
     }
 
     /// Bound the blocking wait, which is unbounded by default.
@@ -64,7 +146,7 @@ impl TaskOutputTool {
         task_id: &str,
         timeout: Option<Duration>,
         ctx: &ToolContext,
-    ) -> Result<Option<(ProcessSnapshot, bool)>, ToolError> {
+    ) -> Result<Option<(ProcessSnapshot, WaitEnd)>, ToolError> {
         let started = Instant::now();
         let mut last_progress = Instant::now();
         let mut last_update = Instant::now();
@@ -83,14 +165,26 @@ impl TaskOutputTool {
                 return Ok(None);
             };
             let elapsed = started.elapsed();
-            if snapshot.status.is_terminal() || timeout.is_some_and(|limit| elapsed >= limit) {
-                return Ok(Some((snapshot, false)));
+            if snapshot.status.is_terminal() {
+                return Ok(Some((snapshot, WaitEnd::Finished)));
+            }
+            if timeout.is_some_and(|limit| elapsed >= limit) {
+                return Ok(Some((snapshot, WaitEnd::Timeout)));
             }
             // The user reclaimed the turn. Hand back what the task looks like now
             // rather than erroring: the command keeps running, so this reads as a
             // wait that ended early, not as a failure.
             if self.manager.wait_release_generation() != release_generation {
-                return Ok(Some((snapshot, true)));
+                return Ok(Some((snapshot, WaitEnd::Released)));
+            }
+            if let Some(kind) = self.detect_stall(&snapshot) {
+                let wakes = self.manager.record_stall_wake(task_id);
+                let next_quiet = self
+                    .stall_policy
+                    .map_or(Duration::ZERO, |policy| policy.quiet_after(wakes));
+                // Re-read so the returned snapshot carries the bumped count.
+                let snapshot = self.manager.snapshot(task_id).unwrap_or(snapshot);
+                return Ok(Some((snapshot, WaitEnd::Stalled { kind, next_quiet })));
             }
 
             if elapsed >= PROGRESS_INTERVAL && last_progress.elapsed() >= PROGRESS_INTERVAL {
@@ -122,6 +216,34 @@ impl TaskOutputTool {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
+
+    /// Whether the task crossed a stall threshold, given how many times it has
+    /// already woken a wait. Silence is judged on the task, not on this wait:
+    /// a task that went quiet before the wait began is just as stuck.
+    fn detect_stall(&self, snapshot: &ProcessSnapshot) -> Option<StallKind> {
+        let policy = self.stall_policy?;
+        let wakes = snapshot.stall_wakes;
+        if snapshot.quiet_for >= policy.quiet_after(wakes) {
+            return Some(StallKind::Quiet);
+        }
+        if snapshot.elapsed >= policy.hard_cap_after(wakes) {
+            return Some(StallKind::HardCap);
+        }
+        None
+    }
+}
+
+/// Coarse human duration for the stall message: `12m 03s`, `1h 35m`.
+fn coarse_duration(duration: Duration) -> String {
+    let total = duration.as_secs();
+    let (hours, minutes, seconds) = (total / 3600, (total % 3600) / 60, total % 60);
+    if hours > 0 {
+        format!("{hours}h {minutes:02}m")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds:02}s")
+    } else {
+        format!("{seconds}s")
+    }
 }
 
 #[async_trait]
@@ -144,7 +266,7 @@ impl AgentTool for TaskOutputTool {
         // make: waiting on a task whose result the next step needs is what this
         // tool is for, and framing it as the inferior option told a model its
         // legitimate use was a mistake.
-        "Get status and recent output from a background command. Waits for the task to finish by default, returning when it ends or when the user reclaims the turn. Pass block: false for an immediate snapshot. The task's output file is also readable directly at the path the command returned."
+        "Get status and recent output from a background command. Waits for the task to finish by default, returning when it ends, when the user reclaims the turn, or when the task looks stalled (a long silence with no output). Pass block: false for an immediate snapshot. The task's output file is also readable directly at the path the command returned."
     }
 
     fn prompt_snippet(&self) -> Option<&str> {
@@ -191,12 +313,12 @@ impl AgentTool for TaskOutputTool {
             .ok_or_else(|| ToolError::InvalidArgs("missing 'task_id' parameter".into()))?;
         let block = params["block"].as_bool().is_none_or(|value| value);
 
-        let (snapshot, released) = match if block {
+        let (snapshot, wait_end) = match if block {
             self.watch(task_id, self.blocking_wait_limit, &ctx).await?
         } else {
             self.manager
                 .snapshot(task_id)
-                .map(|snapshot| (snapshot, false))
+                .map(|snapshot| (snapshot, WaitEnd::Snapshot))
         } {
             Some(pair) => pair,
             // A reaped task ran to completion; saying "not found" invites
@@ -208,6 +330,7 @@ impl AgentTool for TaskOutputTool {
             }
         };
 
+        let released = wait_end == WaitEnd::Released;
         let retrieval_status = if snapshot.status.is_terminal() {
             self.manager.claim_notification(task_id);
             "success"
@@ -215,6 +338,10 @@ impl AgentTool for TaskOutputTool {
             // Distinct from `timeout`: nothing went wrong and no deadline was
             // hit, so the model must not read this as the task being slow.
             "released"
+        } else if matches!(wait_end, WaitEnd::Stalled { .. }) {
+            // Also distinct from `timeout`: this is a judgement about the task,
+            // not about the wait, and it comes with an instruction to decide.
+            "stalled"
         } else if block {
             "timeout"
         } else {
@@ -241,6 +368,30 @@ impl AgentTool for TaskOutputTool {
             text.push_str(
                 "\nThe user ended this wait to get the turn back; the task was not interrupted and is still running. Do not wait on it again unless they ask — stop polling and respond to them now.",
             );
+        }
+        if let WaitEnd::Stalled { kind, next_quiet } = wait_end {
+            // The wait ended on the runtime's judgement, so the message has to
+            // carry that judgement and what to do with it. A bare `running`
+            // reads as "ask again", which is the loop this exists to prevent.
+            let why = match kind {
+                StallKind::Quiet => format!(
+                    "it has produced no output for {} (running {} in total)",
+                    coarse_duration(snapshot.quiet_for),
+                    coarse_duration(snapshot.elapsed)
+                ),
+                StallKind::HardCap => format!(
+                    "it has been running for {} and is still going",
+                    coarse_duration(snapshot.elapsed)
+                ),
+            };
+            text.push_str(&format!(
+                "\nThis wait ended because the task looks stalled, not because it finished: {why}. \
+                 The task is still running. Decide now instead of waiting blindly: inspect it \
+                 (read the output file, check the process with ps), stop it with task_stop if it \
+                 is hung, or wait again only if you can state why it legitimately needs more time. \
+                 A further wait on this task returns after {} of silence.",
+                coarse_duration(next_quiet)
+            ));
         }
         if snapshot.stopped_by_user {
             // A bare `killed` left the model inferring a cause from process
@@ -269,6 +420,8 @@ impl AgentTool for TaskOutputTool {
                 // identically, which is useless when several are in flight.
                 "command": snapshot.command,
                 "elapsed_ms": snapshot.elapsed.as_millis(),
+                "quiet_ms": snapshot.quiet_for.as_millis(),
+                "stall_wakes": snapshot.stall_wakes,
                 "total_lines": snapshot.total_lines,
                 "status": snapshot.status.as_str(),
                 "exit_code": snapshot.exit_code,

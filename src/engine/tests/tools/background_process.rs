@@ -1,12 +1,14 @@
 use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use evotengine::tools::task_label;
 use evotengine::tools::BackgroundReason;
 use evotengine::tools::BashTool;
 use evotengine::tools::ProcessManager;
 use evotengine::tools::ProcessStatus;
+use evotengine::tools::StallPolicy;
 use evotengine::tools::TaskOutputTool;
 use evotengine::tools::TaskStopTool;
 use evotengine::types::AgentTool;
@@ -2955,4 +2957,178 @@ async fn a_yielded_command_is_not_blocked_by_the_single_task_cap() -> Result<(),
 
     manager.terminate_all_and_wait(Duration::from_secs(5)).await;
     Ok(())
+}
+
+#[tokio::test]
+async fn a_silent_task_wakes_the_wait_as_stalled_and_backs_off() -> Result<(), Box<dyn Error>> {
+    // The unbounded wait assumed a user at the keyboard. A deadlocked pytest
+    // once held one blocking task_output for 1h35m overnight because nothing
+    // told the model the task had gone silent. Silence, not elapsed time, is
+    // the signal: a healthy build that keeps printing must not trip this.
+    let dir = tempfile::tempdir()?;
+    let manager = Arc::new(ProcessManager::new());
+    let bash = BashTool::new().with_process_manager(manager.clone());
+    let output = TaskOutputTool::new(manager.clone()).with_stall_policy(StallPolicy {
+        quiet: Duration::from_millis(200),
+        hard_cap: Duration::from_secs(60),
+    });
+
+    let started = bash
+        .execute(
+            serde_json::json!({"command": "echo start; sleep 30", "run_in_background": true}),
+            context("bash", dir.path()),
+        )
+        .await?;
+    let id = task_id(&started)?.to_string();
+
+    let waited = Instant::now();
+    let first = output
+        .execute(
+            serde_json::json!({"task_id": id}),
+            context("task_output", dir.path()),
+        )
+        .await?;
+    let first_wait = waited.elapsed();
+    assert_eq!(first.details["retrieval_status"], "stalled");
+    assert_eq!(first.details["status"], "running");
+    assert_eq!(first.details["stall_wakes"], 1);
+    assert!(first.details["quiet_ms"]
+        .as_u64()
+        .is_some_and(|ms| ms >= 200));
+    let body = text(&first);
+    // Says what happened, that the task is alive, and what to do — not "ask again".
+    assert!(body.contains("looks stalled"), "got: {body}");
+    assert!(body.contains("no output for"), "got: {body}");
+    assert!(body.contains("still running"), "got: {body}");
+    assert!(body.contains("task_stop"), "got: {body}");
+    assert!(body.contains("Decide now"), "got: {body}");
+    assert!(
+        body.contains("start"),
+        "output tail should be included, got: {body}"
+    );
+    assert!(
+        first_wait < Duration::from_secs(5),
+        "first wait took {first_wait:?}"
+    );
+
+    // A second wait on the same task tolerates twice the silence, so re-waiting
+    // is a real second chance instead of the first slice of a poll loop.
+    let waited = Instant::now();
+    let second = output
+        .execute(
+            serde_json::json!({"task_id": id}),
+            context("task_output", dir.path()),
+        )
+        .await?;
+    let second_wait = waited.elapsed();
+    assert_eq!(second.details["retrieval_status"], "stalled");
+    assert_eq!(second.details["stall_wakes"], 2);
+    // quiet_for is measured on the task: ~200ms already passed before the first
+    // wake, so the second wake lands once total silence reaches ~400ms.
+    assert!(second.details["quiet_ms"]
+        .as_u64()
+        .is_some_and(|ms| ms >= 400));
+    assert!(
+        second_wait < Duration::from_secs(5),
+        "second wait took {second_wait:?}"
+    );
+    assert!(
+        text(&second).contains("A further wait on this task"),
+        "got: {}",
+        text(&second)
+    );
+
+    manager.stop(&id).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_chatty_task_is_not_called_stalled_until_the_hard_cap() -> Result<(), Box<dyn Error>> {
+    // Output keeps arriving well inside the quiet window, so only total runtime
+    // can end the wait. A tail -f or a test spinning on a log line would
+    // otherwise hold the turn forever.
+    let dir = tempfile::tempdir()?;
+    let manager = Arc::new(ProcessManager::new());
+    let bash = BashTool::new().with_process_manager(manager.clone());
+    let output = TaskOutputTool::new(manager.clone()).with_stall_policy(StallPolicy {
+        quiet: Duration::from_secs(60),
+        hard_cap: Duration::from_millis(400),
+    });
+
+    let started = bash
+        .execute(
+            serde_json::json!({
+                "command": "for i in $(seq 1 300); do echo tick $i; sleep 0.05; done",
+                "run_in_background": true
+            }),
+            context("bash", dir.path()),
+        )
+        .await?;
+    let id = task_id(&started)?.to_string();
+
+    let result = output
+        .execute(
+            serde_json::json!({"task_id": id}),
+            context("task_output", dir.path()),
+        )
+        .await?;
+    assert_eq!(result.details["retrieval_status"], "stalled");
+    assert!(result.details["quiet_ms"]
+        .as_u64()
+        .is_some_and(|ms| ms < 60_000));
+    let body = text(&result);
+    assert!(body.contains("still going"), "got: {body}");
+    assert!(body.contains("tick"), "got: {body}");
+
+    manager.stop(&id).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_task_finishing_inside_the_quiet_window_is_a_plain_success() -> Result<(), Box<dyn Error>>
+{
+    // Stall detection must not touch the common case.
+    let dir = tempfile::tempdir()?;
+    let manager = Arc::new(ProcessManager::new());
+    let bash = BashTool::new().with_process_manager(manager.clone());
+    let output = TaskOutputTool::new(manager.clone()).with_stall_policy(StallPolicy {
+        quiet: Duration::from_secs(5),
+        hard_cap: Duration::from_secs(60),
+    });
+
+    let started = bash
+        .execute(
+            serde_json::json!({"command": "sleep 0.3; echo done", "run_in_background": true}),
+            context("bash", dir.path()),
+        )
+        .await?;
+    let id = task_id(&started)?.to_string();
+    let result = output
+        .execute(
+            serde_json::json!({"task_id": id}),
+            context("task_output", dir.path()),
+        )
+        .await?;
+    assert_eq!(result.details["retrieval_status"], "success");
+    assert_eq!(result.details["stall_wakes"], 0);
+    assert!(!text(&result).contains("stalled"));
+    Ok(())
+}
+
+#[test]
+fn stall_detection_is_on_by_default_and_runtime_owned() {
+    // The thresholds are a runtime policy: the model cannot lengthen or disable
+    // them through the schema, and the description tells it a stall can end a wait.
+    let manager = Arc::new(ProcessManager::new());
+    let tool = TaskOutputTool::new(manager);
+    let schema = tool.parameters_schema();
+    assert!(schema["properties"]["stall"].is_null());
+    assert!(schema["properties"]["quiet"].is_null());
+    assert!(
+        tool.description().contains("stalled"),
+        "got: {}",
+        tool.description()
+    );
+    assert_eq!(StallPolicy::DEFAULT.quiet, Duration::from_secs(10 * 60));
+    assert_eq!(StallPolicy::DEFAULT.hard_cap, Duration::from_secs(30 * 60));
 }

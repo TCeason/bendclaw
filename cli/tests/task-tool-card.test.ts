@@ -178,6 +178,20 @@ describe('task tool settled status', () => {
     expect(statusLine(lines)).toBe('  ● · running in background · wait timed out · 45s · 12 lines')
   })
 
+  test('a stalled wait names the silence so the hand-back explains itself', () => {
+    // The runtime gave up on the task, not on the wait: a deadlocked test that
+    // printed nothing for ten minutes. The card must say why the model got the
+    // turn back with no result, and how long the task has been silent.
+    const lines = render(settled({
+      retrieval_status: 'stalled',
+      status: 'running',
+      elapsed_ms: 12 * 60_000,
+      quiet_ms: 10 * 60_000,
+      total_lines: 3,
+    }))
+    expect(statusLine(lines)).toBe('  ● · running in background · stalled, quiet 10m · 12m · 3 lines')
+  })
+
   test('a wait the user ended reads as plainly detached, not as a timeout', () => {
     // Nothing went wrong and no deadline was hit: the user reclaimed the turn
     // and the task is still running. Reporting a timeout here would suggest the

@@ -142,6 +142,9 @@ struct ProcessState {
     /// When the task reached a terminal status. Elapsed time freezes here so a
     /// finished task does not keep ticking in `/ps`.
     finished_at: Option<Instant>,
+    /// Blocking waits that gave up on this task because it looked stalled.
+    /// See `ProcessSnapshot::stall_wakes`.
+    stall_wakes: u32,
     global_permit: Option<OwnedSemaphorePermit>,
 }
 
@@ -153,6 +156,8 @@ struct ProcessOutput {
     tail_bytes: usize,
     newlines: usize,
     open_line: bool,
+    /// Last time any byte arrived; the task's start until then.
+    last_activity: Instant,
 }
 
 impl ProcessOutput {
@@ -165,6 +170,7 @@ impl ProcessOutput {
             tail_bytes: tail_bytes.max(4096),
             newlines: 0,
             open_line: false,
+            last_activity: Instant::now(),
         }
     }
 
@@ -172,6 +178,7 @@ impl ProcessOutput {
         if bytes.is_empty() {
             return;
         }
+        self.last_activity = Instant::now();
         self.newlines += bytes.iter().filter(|byte| **byte == b'\n').count();
         self.open_line = bytes.last() != Some(&b'\n');
         if let Some(file) = self.file.as_mut() {
@@ -341,6 +348,7 @@ impl ProcessManager {
                 notification_claimed: false,
                 stopped_by_user: false,
                 finished_at: None,
+                stall_wakes: 0,
                 global_permit: Some(global_permit),
             }),
             cancel: CancellationToken::new(),
@@ -532,6 +540,17 @@ impl ProcessManager {
             .read()
             .get(task_id)
             .map(|task| task.snapshot())
+    }
+
+    /// Record that a blocking wait ended because the task looked stalled.
+    /// Returns the new count, which the next wait uses to back off.
+    pub(super) fn record_stall_wake(&self, task_id: &str) -> u32 {
+        let Some(task) = self.inner.tasks.read().get(task_id).cloned() else {
+            return 0;
+        };
+        let mut state = task.state.lock();
+        state.stall_wakes = state.stall_wakes.saturating_add(1);
+        state.stall_wakes
     }
 
     /// Listing view of one task. Unlike `snapshot`, this skips the captured
@@ -948,9 +967,18 @@ impl ProcessTask {
         }
     }
 
+    /// Time since the last output byte, frozen with `elapsed` once terminal.
+    fn quiet_for(&self, state: &ProcessState, output: &ProcessOutput) -> Duration {
+        match state.finished_at {
+            Some(finished_at) => finished_at.saturating_duration_since(output.last_activity),
+            None => output.last_activity.elapsed(),
+        }
+    }
+
     fn snapshot(&self) -> ProcessSnapshot {
         let state = self.state.lock();
         let output = self.output.lock();
+        let quiet_for = self.quiet_for(&state, &output);
         ProcessSnapshot {
             task_id: self.id.clone(),
             tool_call_id: self.tool_call_id.clone(),
@@ -964,6 +992,8 @@ impl ProcessTask {
             status: state.status.clone(),
             exit_code: state.exit_code,
             elapsed: self.elapsed(&state),
+            quiet_for,
+            stall_wakes: state.stall_wakes,
             stopped_by_user: state.stopped_by_user,
         }
     }

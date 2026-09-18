@@ -26,6 +26,7 @@ pub use process::ProcessManager;
 pub use process::ProcessSnapshot;
 pub use process::ProcessStatus;
 pub use process::ProcessSummary;
+pub use process::StallPolicy;
 pub use process::TaskOutputTool;
 pub use process::TaskStopTool;
 pub use sandbox::check_available;

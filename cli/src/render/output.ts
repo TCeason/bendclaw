@@ -1102,6 +1102,7 @@ function taskToolStatusParts(details: Record<string, unknown>): string[] {
   const retrieval = detailString(details, 'retrieval_status')
   const exitCode = detailNumber(details, 'exit_code')
   const elapsedMs = detailNumber(details, 'elapsed_ms')
+  const quietMs = detailNumber(details, 'quiet_ms')
   const lines = detailNumber(details, 'total_lines')
   const parts: string[] = []
 
@@ -1125,7 +1126,7 @@ function taskToolStatusParts(details: Record<string, unknown>): string[] {
     // work is now detached and safe to leave, or still holding a wait. The bash
     // card has always named the background; this one now agrees with it.
     case 'running':
-      parts.push(runningInBackgroundLabel(retrieval))
+      parts.push(runningInBackgroundLabel(retrieval, quietMs))
       break
     case 'running_foreground':
       // No "in background" here: this task really is still in the foreground.
@@ -1149,19 +1150,25 @@ function taskToolStatusParts(details: Record<string, unknown>): string[] {
  * card and Claude Code: the useful fact is that the work is detached and the
  * turn is free, not merely that it has not finished.
  *
- * Only a hit deadline earns an extra clause. `released` and `not_ready` both
- * mean the same thing to someone reading the card — the task is detached and
- * this poll returned no result — and "running in background · stopped waiting"
- * said that twice.
+ * Only a hit deadline or a stall earns an extra clause. `released` and
+ * `not_ready` both mean the same thing to someone reading the card — the task
+ * is detached and this poll returned no result — and "running in background ·
+ * stopped waiting" said that twice.
  */
-function runningInBackgroundLabel(retrieval: string | undefined): string {
+function runningInBackgroundLabel(retrieval: string | undefined, quietMs?: number): string {
   // `timeout` is a legacy value: waits are no longer cut short by a bound, so
   // nothing writes it any more. Tool-result details are persisted per
   // transcript, so sessions recorded before that change still replay through
   // here and must not render a bare, unexplained "running in background".
-  return retrieval === 'timeout'
-    ? 'running in background · wait timed out'
-    : 'running in background'
+  if (retrieval === 'timeout') return 'running in background · wait timed out'
+  // A stall is the runtime giving up on the task, not on the wait: the card
+  // has to say why the model got the turn back with nothing to show.
+  if (retrieval === 'stalled') {
+    return quietMs !== undefined && quietMs > 0
+      ? `running in background · stalled, quiet ${formatElapsed(quietMs)}`
+      : 'running in background · stalled'
+  }
+  return 'running in background'
 }
 
 function resultLineCount(content: string): number {

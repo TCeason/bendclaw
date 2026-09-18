@@ -78,6 +78,16 @@ pub struct ProcessSnapshot {
     pub status: ProcessStatus,
     pub exit_code: Option<i32>,
     pub elapsed: Duration,
+    /// How long the task has produced no output (since start when it never
+    /// has). Frozen at the terminal instant like `elapsed`.
+    ///
+    /// A blocking wait uses this to tell a live build apart from a deadlocked
+    /// test: both look identical from `status` alone.
+    pub quiet_for: Duration,
+    /// How many blocking waits on this task ended because it looked stalled.
+    /// Each one lengthens the next stall threshold, so re-waiting cannot
+    /// degrade into a poll loop.
+    pub stall_wakes: u32,
     /// True when the stop came from the user (`/stop`, background panel) rather
     /// than from the model's own `task_stop` call.
     ///
