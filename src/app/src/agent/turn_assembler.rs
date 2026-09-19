@@ -4,6 +4,7 @@
 //! assembly settings remain live between turns; the selected LLM is supplied
 //! separately as a per-run snapshot.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -49,6 +50,12 @@ pub struct TurnAssembler {
     pub(super) sandbox: SandboxPolicy,
     pub(super) provider_override: RwLock<Option<Arc<dyn evot_engine::provider::StreamProvider>>>,
     pub(super) processes: ProcessRegistry,
+    /// Prune verdicts per session, kept across runs so the judge is not asked
+    /// the same questions every prompt. Judge-decided only; lost on restart,
+    /// which merely costs one re-ask.
+    pub(super) prune_ledgers: RwLock<
+        HashMap<String, Arc<tokio::sync::Mutex<evot_engine::context::compaction::PruneLedger>>>,
+    >,
 }
 
 impl TurnAssembler {
@@ -66,6 +73,7 @@ impl TurnAssembler {
             sandbox: SandboxPolicy::from_config(&config.sandbox),
             provider_override: RwLock::new(None),
             processes: ProcessRegistry::new(),
+            prune_ledgers: RwLock::new(HashMap::new()),
         }
     }
 
@@ -85,6 +93,7 @@ impl TurnAssembler {
             },
             provider_override: RwLock::new(None),
             processes: ProcessRegistry::new(),
+            prune_ledgers: RwLock::new(HashMap::new()),
         }
     }
 
@@ -156,10 +165,11 @@ impl TurnAssembler {
         for skill in &skills {
             system_dirs.push(skill.base_dir.clone());
         }
-        let spill_dir = self
+        let session_dir = self
             .spill_root
             .as_ref()
-            .map(|root| root.join("sessions").join(session_id).join("tool-results"));
+            .map(|root| root.join("sessions").join(session_id));
+        let spill_dir = session_dir.as_ref().map(|dir| dir.join("tool-results"));
         if let Some(spill_dir) = &spill_dir {
             std::fs::create_dir_all(spill_dir)?;
             system_dirs.push(spill_dir.clone());
@@ -235,6 +245,15 @@ impl TurnAssembler {
                 prompt_cache_key: Some(session_id.to_string()),
                 provider_override: self.provider_override.read().clone(),
                 compaction_state,
+                // Re-resolved every run: the catalog decides whether pruning
+                // is on, and it can change while a session is open.
+                judge: crate::judge::current_for_session(session_dir.as_deref()),
+                prune_ledger: self
+                    .prune_ledgers
+                    .write()
+                    .entry(session_id.to_string())
+                    .or_default()
+                    .clone(),
             },
             history: prior_messages,
             input,

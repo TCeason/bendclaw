@@ -760,6 +760,9 @@ export function buildVerboseEvent(eventText: string): OutputLine[] {
 export function isVisibleEvent(text: string): boolean {
   return /^\[LLM\]\s+[↻✗⚠]/u.test(text)
     || /^\[COMPACT\]\s+✓\s+·\s+(?!skipped\b)/u.test(text)
+    // Only a prune that changed the context is a card; a judge round that
+    // merely recorded verdicts is bookkeeping and stays in the log.
+    || /^\[JEV\]\s+✂/u.test(text)
 }
 
 /**
@@ -801,6 +804,20 @@ export function buildLlmCard(text: string): OutputLine[] {
 }
 
 export function buildEventCard(text: string): OutputLine[] {
+  if (text.startsWith('[JEV]')) {
+    // Judge prune: the header and the context line are the card; per-call
+    // verdicts stay in the verbose log where they can be studied.
+    const rawLines = text.split('\n')
+    const applied = /^\[JEV\]\s+✂/u.test(rawLines[0] ?? '')
+    const head = (rawLines[0] ?? '').replace(/^\[JEV\]\s+[✂·]?\s*·?\s*/u, '').trim()
+    const lines: OutputLine[] = [
+      { id: genId('tool'), kind: 'tool', text: applied ? '✂ jev prune' : '⚖ jev judge' },
+      { id: genId('tool'), kind: 'tool', text: `  ${applied ? '✓' : '·'} · ${head}` },
+    ]
+    const context = rawLines.slice(1).find(line => /^\s*context\s/u.test(line))
+    if (context) lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${context.replace(/^\s*context\s*/u, '').trim()}` })
+    return lines
+  }
   if (text.startsWith('[COMPACT]')) {
     const rawLines = text.split('\n')
     const head = (rawLines[0] ?? '').replace(/^\[COMPACT\]\s+✓\s*·?\s*/u, '').trim()

@@ -13,4 +13,8 @@ pub struct ConfigInfo {
     pub base_url: Option<String>,
     pub available_models: Vec<serde_json::Value>,
     pub thinking_level: String,
+    /// Judge model the catalog publishes (Jev); present means judge-driven
+    /// context pruning is on for this client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<String>,
 }

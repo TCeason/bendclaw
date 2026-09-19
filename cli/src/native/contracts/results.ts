@@ -48,7 +48,7 @@ export type ManualCompactionOutcome =
     }
   | { status: 'nothing_to_compact' }
   | { status: 'cancelled' }
-export type CompactionPhase = 'planning' | 'remote' | 'local_fallback' | 'local' | 'complete'
+export type CompactionPhase = 'pruning' | 'planning' | 'remote' | 'local_fallback' | 'local' | 'complete'
 export interface ServerInfo { port: number; address: string; channels: string[]; channelCount: number }
 export interface LoginCodeResponse { code: string; login_url: string; expires_at: number; expires_in_ms: number; interval_ms: number }
 export interface CloudUser { id: string; name: string; email: string }
@@ -86,11 +86,12 @@ export const backgroundProcess: Schema<BackgroundProcess> = object({
   exit_code: nullable(integer), elapsed_ms: uint, output_file_truncated: boolean, stopped_by_user: boolean,
 })
 export const backgroundProcesses = array(backgroundProcess)
-export const compactionPhase: Schema<CompactionPhase> = oneOf('planning', 'remote', 'local_fallback', 'local', 'complete')
+export const compactionPhase: Schema<CompactionPhase> = oneOf('pruning', 'planning', 'remote', 'local_fallback', 'local', 'complete')
 export const compactionOutcome: Schema<ManualCompactionOutcome> = tagged('status', {
   compacted: object({
     status: oneOf('compacted'), summary: text, tokens_before: uint, tokens_after: uint,
     messages_before: uint, messages_after: uint, context_window: uint, messages_evicted: uint,
+    // `compaction_level` predates single-step compaction; always 3, never read.
     current_run_reclaimed: uint, compaction_level: uint, used_fallback: boolean,
     method: optional(oneOf('remote', 'local', 'remote_failed_local')), remote_blob_bytes: optional(uint), fallback_reason: optional(text),
   }),

@@ -24,12 +24,15 @@ export interface ResumeItemInputs {
   textVersion: number
   /** Row cap for the bounded first paint, or undefined for the whole catalog. */
   limit?: number
+  /** The session this REPL is in, marked `● open` in the list. */
+  openSessionId?: string | null
 }
 
 interface Entry {
   sessions: SessionMeta[]
   cwd: string
   textVersion: number
+  openSessionId: string | null
   items: SelectorItem[]
 }
 
@@ -61,17 +64,19 @@ export class ResumeItemCache {
       && previous.sessions === inputs.sessions
       && previous.cwd === inputs.cwd
       && previous.textVersion === inputs.textVersion
+      && previous.openSessionId === (inputs.openSessionId ?? null)
     ) {
       return previous.items
     }
     const visible = inputs.limit === undefined
       ? inputs.sessions
       : inputs.sessions.slice(0, inputs.limit)
-    const items = formatSessionItems(visible, inputs.cwd, sessionText)
+    const items = formatSessionItems(visible, inputs.cwd, sessionText, inputs.openSessionId)
     this.entries.set(slot, {
       sessions: inputs.sessions,
       cwd: inputs.cwd,
       textVersion: inputs.textVersion,
+      openSessionId: inputs.openSessionId ?? null,
       items,
     })
     return items

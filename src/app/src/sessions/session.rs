@@ -12,6 +12,18 @@ use crate::types::SessionMeta;
 use crate::types::TranscriptEntry;
 use crate::types::TranscriptItem;
 
+/// Outcome of appending one engine-turn batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurnAppend {
+    /// Transcript generation after the batch.
+    pub next_seq: u64,
+    /// Context items (user / assistant / tool) another writer persisted
+    /// between the caller's expected generation and where the batch actually
+    /// landed. Stats, notices, and markers never count: they do not enter the
+    /// model context, so a compaction planned without them loses nothing.
+    pub interleaved_context_items: usize,
+}
+
 pub struct Session {
     storage: Arc<dyn Storage>,
     meta: RwLock<SessionMeta>,
@@ -256,17 +268,50 @@ impl Session {
         Ok(())
     }
 
-    /// Append items produced by an Engine turn and return the resulting
-    /// transcript generation. If another writer advanced the session after the
-    /// turn was built, reload the persisted transcript and append this logical
-    /// batch at the new tail instead of surfacing a sequence conflict.
+    /// Append items produced by an Engine turn. If another writer advanced the
+    /// session after the turn was built, append this logical batch at the new
+    /// tail instead of surfacing a sequence conflict, and report how many
+    /// *context* items landed in between so the caller can tell a harmless
+    /// stats/notice write from conversation content the engine never saw.
     pub async fn write_items_at(
         &self,
         items: Vec<TranscriptItem>,
         expected_seq: u64,
-    ) -> Result<u64> {
-        self.commit_items(items, None, Some(expected_seq), false)
-            .await
+    ) -> Result<TurnAppend> {
+        let (base_seq, next_seq) = self
+            .commit_items(items, None, Some(expected_seq), false)
+            .await?;
+        let interleaved_context_items = if base_seq == expected_seq {
+            0
+        } else {
+            self.count_context_items_between(expected_seq, base_seq)
+                .await?
+        };
+        Ok(TurnAppend {
+            next_seq,
+            interleaved_context_items,
+        })
+    }
+
+    /// Context items persisted with `from_seq < seq <= to_seq`.
+    async fn count_context_items_between(&self, from_seq: u64, to_seq: u64) -> Result<usize> {
+        if to_seq <= from_seq {
+            return Ok(0);
+        }
+        let session_id = self.meta.read().await.session_id.clone();
+        let entries = self
+            .storage
+            .list_entries(ListTranscriptEntries {
+                session_id,
+                run_id: None,
+                after_seq: Some(from_seq),
+                limit: None,
+            })
+            .await?;
+        Ok(entries
+            .iter()
+            .filter(|entry| entry.seq <= to_seq && entry.item.is_context_item())
+            .count())
     }
 
     /// Persist a compact control point and publish its replacement context in
@@ -290,18 +335,20 @@ impl Session {
         Ok(())
     }
 
+    /// Returns `(base_seq, next_seq)`: the generation the batch was appended
+    /// onto and the generation after it.
     async fn commit_items(
         &self,
         mut items: Vec<TranscriptItem>,
         replacement: Option<Vec<TranscriptItem>>,
         expected_seq: Option<u64>,
         is_compaction: bool,
-    ) -> Result<u64> {
+    ) -> Result<(u64, u64)> {
         const MAX_CONFLICT_RETRIES: usize = 8;
 
         let mut state = self.state.lock().await;
         if items.is_empty() {
-            return Ok(state.next_seq);
+            return Ok((state.next_seq, state.next_seq));
         }
         let mut payload_hash = state.llm_payload_hash;
         dedupe_llm_request_payload(&mut payload_hash, &mut items);
@@ -344,6 +391,7 @@ impl Session {
                 .compare_and_append_entries(state.next_seq, entries)
                 .await?
             {
+                let base_seq = state.next_seq;
                 state.next_seq = state.next_seq.saturating_add(items.len() as u64);
                 state.llm_payload_hash = payload_hash;
                 update_compact_seed(&mut state.compact_seed, &items);
@@ -368,7 +416,7 @@ impl Session {
                         state.transcript.extend(items.clone());
                     }
                 }
-                return Ok(state.next_seq);
+                return Ok((base_seq, state.next_seq));
             }
 
             let persisted = self

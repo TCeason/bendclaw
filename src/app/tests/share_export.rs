@@ -292,3 +292,51 @@ async fn unsupported_notices_are_skipped_without_failing_the_batch(
     assert_eq!(session.load_all_entries().await?.len(), 2);
     Ok(())
 }
+
+#[test]
+fn share_export_shows_applied_prunes_with_their_task() -> Result<(), Box<dyn std::error::Error>> {
+    let meta = SessionMeta::new("session".into(), "/project".into(), "test-model".into());
+    let rows = vec![
+        row(1, json!({"type":"user", "text":"hello"}))?,
+        // Verdicts only: bookkeeping, not shown.
+        row(
+            2,
+            json!({"type":"stats", "kind":"context_pruned", "data":{
+                "decided":{"verdicts":[], "context_tokens":100, "pending_tokens":50, "requests":1, "elapsed_ms":3},
+                "applied":null, "context_window":200000}}),
+        )?,
+        row(
+            3,
+            json!({"type":"stats", "kind":"context_pruned", "data":{
+                "decided":{"verdicts":[], "context_tokens":26000, "pending_tokens":0, "requests":2, "elapsed_ms":900,
+                    "user_requests":[
+                        {"message_index":0, "text":"hi", "probability":0.05, "in_play":false},
+                        {"message_index":6, "text":"analyse   whether jev\nscores persist", "probability":0.9, "in_play":true},
+                        {"message_index":10, "text":"what triggers a prune?", "probability":null, "in_play":true}
+                    ]},
+                "applied":{"removed":1, "truncated":11, "skipped":0, "before_tokens":26000, "after_tokens":11000,
+                    "before_messages":40, "after_messages":39, "trigger":"savings"},
+                "context_window":200000}}),
+        )?,
+        // Legacy shape without user_requests still renders.
+        row(
+            4,
+            json!({"type":"stats", "kind":"context_pruned", "data":{
+                "applied":{"removed":2, "truncated":0, "skipped":0, "before_tokens":900, "after_tokens":400,
+                    "before_messages":10, "after_messages":8, "trigger":"cold_cache"}}}),
+        )?,
+    ];
+    let share = export_session(&meta, &rows, "test");
+    let entries = share.data["entries"].as_array().ok_or("entries missing")?;
+    assert_eq!(entries.len(), 3, "user + two applied prunes");
+    assert_eq!(entries[1]["customType"], "evot.prune");
+    assert_eq!(
+        entries[1]["content"],
+        "✂ jev prune · removed 1 · truncated 11 · 26k → 11k tokens · savings ≥ 20% of context\nTask: [6] analyse whether jev scores persist · [10] what triggers a prune?"
+    );
+    assert_eq!(
+        entries[2]["content"],
+        "✂ jev prune · removed 2 · truncated 0 · 900 → 400 tokens · cache cold"
+    );
+    Ok(())
+}

@@ -13,12 +13,24 @@ export interface SessionRecognition extends SessionWithText {
 
 const RECENT_LIMIT = 6
 const EXCERPT_CHARS = 2400
+/** What the pane shows of each turn. Telling sessions apart needs the first
+ *  sentences of the first and last request, not whole replies. */
+const REQUEST_CHARS = 320
+const ANSWER_CHARS = 480
 
 function excerpt(text: string): string {
   const chars = Array.from(text.trim())
   return chars.length > EXCERPT_CHARS
     ? `${chars.slice(0, EXCERPT_CHARS).join('')}\n[Excerpt — resume session to read more]`
     : chars.join('')
+}
+
+/** First `cap` characters on one paragraph; the pane is for recognising a
+ *  session, resume is for reading it. */
+function glimpse(text: string, cap: number): string[] {
+  const flat = text.replace(/\s*\n\s*/g, ' ').trim()
+  const chars = Array.from(flat)
+  return [chars.length > cap ? `${chars.slice(0, cap).join('').trimEnd()}…` : flat]
 }
 
 function visibleText(item: TranscriptItem, clip = true): { role: 'user' | 'assistant'; text: string } | undefined {
@@ -56,9 +68,11 @@ export function enrichSessionRecognition(session: SessionWithText, transcript: T
 }
 
 /**
- * Recognition order: where the session left off, then what it was asked first.
- * Each turn appears once — a single-turn session shows its only request rather
- * than the same sentence twice under two headings.
+ * Recognition order: what the session was asked first, where it left off,
+ * then a glimpse of the last answer. The two requests are what tells one
+ * session from another; a long reply pushed them below the fold. Each turn
+ * appears once — a single-turn session shows its only request rather than the
+ * same sentence twice under two headings.
  */
 export function recognitionSections(session: SessionRecognition): string[] {
   const detail = session.recognition
@@ -73,9 +87,9 @@ export function recognitionSections(session: SessionRecognition): string[] {
   const openingIsRequest = Boolean(openingPrefix) && Boolean(request?.text.includes(openingPrefix))
 
   const lines: string[] = []
-  if (answer) lines.push('# Latest assistant response', ...answer.text.split('\n'), '')
-  if (request) lines.push('# Latest request', ...request.text.split('\n'), '')
-  if (detail.opening && !openingIsRequest) lines.push('# Original goal', ...detail.opening.split('\n'), '')
+  if (detail.opening) lines.push('# Started with', `› ${glimpse(detail.opening, REQUEST_CHARS)[0]}`, '')
+  if (request && !openingIsRequest) lines.push('# Latest request', `› ${glimpse(request.text, REQUEST_CHARS)[0]}`, '')
+  if (answer) lines.push('# Latest response', ...glimpse(answer.text, ANSWER_CHARS), '')
   if (lines.length === 0) lines.push('# Conversation', 'No user requests or assistant responses yet.')
   return lines
 }

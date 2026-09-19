@@ -203,7 +203,7 @@ describe('repl resume helpers', () => {
     expect(lines.slice(2)).toEqual(['', '# Started with', '› only ask'])
   })
 
-  test('recognition pane leads with the latest result, latest request and original goal', () => {
+  test('recognition pane leads with the opening, then the latest request, then a glimpse of the answer', () => {
     const transcript: TranscriptItem[] = [
       { type: 'user', text: 'Build a Hacker News summary task' },
       { type: 'assistant', content: [{ type: 'text', text: 'Created the summary task.' }] },
@@ -220,8 +220,8 @@ describe('repl resume helpers', () => {
       transcript,
     )
     const joined = sessionPreviewLines(sessions[0]!, session).join('\n')
-    expect(joined.indexOf('# Latest assistant response')).toBeLessThan(joined.indexOf('# Latest request'))
-    expect(joined.indexOf('# Latest request')).toBeLessThan(joined.indexOf('# Original goal'))
+    expect(joined.indexOf('# Started with')).toBeLessThan(joined.indexOf('# Latest request'))
+    expect(joined.indexOf('# Latest request')).toBeLessThan(joined.indexOf('# Latest response'))
     expect(joined).toContain('Updated the schedule to hourly')
     expect(joined).toContain('Send the result hourly')
     expect(joined).toContain('Build a Hacker News summary task')
@@ -240,9 +240,14 @@ describe('repl resume helpers', () => {
       { type: 'assistant', content: [{ type: 'text', text: 'answer ' + 'y'.repeat(6000) }] },
     ])
     const joined = sessionPreviewLines(sessions[0]!, long).join('\n')
-    expect(joined).toContain('Excerpt — resume session')
-    expect(joined).toContain('# Latest request')
+    // A one-turn session: its only request is the opening, shown once, and
+    // both turns are glimpses rather than walls of text.
+    expect(joined).toContain('# Started with')
+    expect(joined).not.toContain('# Latest request')
     expect(joined).toContain('goal ')
+    expect(joined).toContain('answer ')
+    expect(joined).toContain('…')
+    expect(joined.length).toBeLessThan(1500)
   })
 
   test('formatSessionItems hides the source column when every row shares one source', () => {
@@ -331,4 +336,15 @@ describe('repl resume helpers', () => {
     expect(next.items[1]!.preview).toEqual(['filled'])
     expect(next.allItems[1]!.preview).toEqual(['filled'])
   })
+
+  test('the session this REPL is in says so instead of its age', () => {
+    const items = formatSessionItems(sessions, '/work', () => undefined, sessions[0]!.session_id)
+    const open = items.find(item => item.id === sessions[0]!.session_id)!
+    const other = items.find(item => item.id === sessions[1]!.session_id)!
+    expect(open.detail).toContain('● open')
+    expect(other.detail).not.toContain('● open')
+    expect(open.preview?.[1]).toContain('this session')
+    expect(other.preview?.[1]).not.toContain('this session')
+  })
+
 })

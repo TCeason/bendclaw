@@ -26,6 +26,15 @@ pub enum AssistantContentType {
     Thinking,
 }
 
+/// One reviewed tool call, an item of `tool_calls_reviewed`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReviewedCallPayload {
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub arguments: String,
+    pub relevance: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RunEventPayload {
@@ -187,6 +196,19 @@ pub enum RunEventPayload {
         #[serde(default)]
         will_retry: bool,
     },
+    /// The judge reviewed a window of recent tool calls for relevance.
+    ToolCallsReviewed {
+        calls: Vec<ReviewedCallPayload>,
+    },
+    /// The judge asked and/or applied a prune at run end.
+    ContextPruned {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        decided: Option<evot_engine::context::compaction::DecideReport>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        applied: Option<evot_engine::context::compaction::ApplyReport>,
+        #[serde(default)]
+        context_window: usize,
+    },
     RunFinished {
         text: String,
         usage: UsageSummary,
@@ -269,6 +291,8 @@ impl RunEventPayload {
             Self::ContextCompactionStarted { .. } => "context_compaction_started",
             Self::ContextCompactionPhase { .. } => "context_compaction_phase",
             Self::ContextCompactionCompleted { .. } => "context_compaction_completed",
+            Self::ToolCallsReviewed { .. } => "tool_calls_reviewed",
+            Self::ContextPruned { .. } => "context_pruned",
             Self::RunFinished { .. } => "run_finished",
             Self::Error { .. } => "error",
         }

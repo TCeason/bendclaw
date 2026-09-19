@@ -16,6 +16,8 @@ mod limits;
 mod memory;
 #[path = "context/plan.rs"]
 mod plan;
+#[path = "context/prune.rs"]
+mod prune;
 #[path = "context/remote.rs"]
 mod remote;
 #[path = "context/summarizer.rs"]

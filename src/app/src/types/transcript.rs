@@ -87,6 +87,8 @@ pub enum CompactReason {
     Threshold,
     Overflow,
     Manual,
+    /// Judge-decided prune applied at run end (no summary written).
+    Prune,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

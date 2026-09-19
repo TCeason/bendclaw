@@ -263,6 +263,8 @@ impl TestHarness {
             context_config: self.context_config,
             compaction_context: None,
             compaction_fallback_context: None,
+            judge: None,
+            prune_ledger: None,
             initial_compaction_state: None,
             execution_limits: self.execution_limits,
             cache_config: self.cache_config,
@@ -313,6 +315,8 @@ impl TestHarness {
             context_config: self.context_config,
             compaction_context: None,
             compaction_fallback_context: None,
+            judge: None,
+            prune_ledger: None,
             initial_compaction_state: None,
             execution_limits: self.execution_limits,
             cache_config: self.cache_config,
@@ -373,6 +377,7 @@ impl TestOutput {
                 AgentEvent::MessageStart { .. } => "MessageStart",
                 AgentEvent::MessageEnd { .. } => "MessageEnd",
                 AgentEvent::MessageUpdate { .. } => "MessageUpdate",
+                AgentEvent::ToolCallsReviewed { .. } => "ToolCallsReviewed",
                 AgentEvent::ToolExecutionStart { .. } => "ToolExecStart",
                 AgentEvent::ToolExecutionUpdate { .. } => "ToolExecUpdate",
                 AgentEvent::ToolExecutionEnd { .. } => "ToolExecEnd",
@@ -386,6 +391,7 @@ impl TestOutput {
                 AgentEvent::ContextCompactionStarted { .. } => "CompactionStart",
                 AgentEvent::ContextCompactionPhase { .. } => "CompactionPhase",
                 AgentEvent::ContextCompactionEnd { .. } => "CompactionEnd",
+                AgentEvent::ContextPruned { .. } => "ContextPruned",
             })
             .collect()
     }
@@ -510,6 +516,8 @@ pub fn make_config(provider: MockProvider) -> AgentLoopConfig {
         context_config: None,
         compaction_context: None,
         compaction_fallback_context: None,
+        judge: None,
+        prune_ledger: None,
         initial_compaction_state: None,
         execution_limits: None,
         cache_config: CacheConfig::default(),

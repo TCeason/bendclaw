@@ -10,6 +10,7 @@ pub use event::AgentErrorKind;
 pub use event::AgentEvent;
 pub use event::LlmCallRequest;
 pub use event::LlmCallStats;
+pub use event::ReviewedCall;
 pub use event::StreamDelta;
 pub use llm::CacheConfig;
 pub use llm::CacheStrategy;

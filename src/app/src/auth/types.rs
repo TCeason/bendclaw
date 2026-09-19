@@ -58,6 +58,17 @@ pub struct FreeModelOption {
     /// older servers, which keeps the catalog's own order.
     #[serde(default)]
     pub sort_order: i64,
+    /// `chat` (default) answers in the conversation; `judge` answers typed
+    /// questions about it (TypeSafe Jev) and never generates text. Judges are
+    /// kept out of the picker and used for side decisions such as pruning.
+    #[serde(default)]
+    pub role: String,
+}
+
+impl FreeModelOption {
+    pub fn is_judge(&self) -> bool {
+        self.role.eq_ignore_ascii_case("judge")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

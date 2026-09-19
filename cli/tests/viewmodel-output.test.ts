@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeAll } from 'bun:test'
 import { buildOutputBlocks, THINKING_FOLD_ROWS } from '../src/term/viewmodel/output.js'
 import { blocksToLines, styledLineToAnsi, paintBackground, line, colored, dim } from '../src/term/viewmodel/types.js'
-import { buildUserMessage, buildAssistantLines, buildToolCard, type OutputLine } from '../src/render/output.js'
+import { buildUserMessage, buildAssistantLines, buildToolCard, buildEventCard, type OutputLine } from '../src/render/output.js'
 import { getTheme } from '../src/render/theme/index.js'
 import { assistantMessageToOutputLines } from '../src/render/assistant.js'
 import { colorizeUnifiedDiff } from '../src/render/diff.js'
@@ -315,6 +315,16 @@ describe('buildOutputBlocks', () => {
     const lines = result.split('\n')
     const toolIdx = lines.findIndex(l => l.includes('bash'))
     expect(lines[toolIdx - 1]).toBe('')
+  })
+
+  test('jev prune card has space above it', () => {
+    const result = renderPlain([
+      { id: 'a1', kind: 'assistant', text: 'text' },
+      ...buildEventCard('[JEV] ✂ · removed 1 · truncated 2 · 26k → 11k (−15k)'),
+    ])
+    const lines = result.split('\n')
+    const pruneIdx = lines.findIndex(l => l.includes('jev prune'))
+    expect(lines[pruneIdx - 1]).toBe('')
   })
 
   test('long tool command wraps instead of truncating', () => {

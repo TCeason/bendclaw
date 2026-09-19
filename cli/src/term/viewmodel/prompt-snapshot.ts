@@ -55,5 +55,6 @@ export function promptFromSnapshot(input: PromptSnapshot): PromptVMInput {
     backgroundStopPending: input.backgroundStopPending,
     backgroundPanelDownAvailable: shouldDownOpenPanel({ editorEmpty: empty, running: input.backgroundProcessCount }),
     thinkingLevel: config?.thinkingLevel ?? '',
+    judge: config?.judge,
   }
 }

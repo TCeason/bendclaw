@@ -118,7 +118,6 @@ export interface ToolBreakdownEntry {
 }
 
 export interface CompactRecord {
-  level: number
   beforeTokens?: number
   afterTokens?: number
   from_tokens?: number
@@ -149,7 +148,7 @@ export interface MessageStats {
 // ---------------------------------------------------------------------------
 
 export interface VerboseEvent {
-  kind: 'llm_call' | 'llm_retry' | 'llm_completed' | 'compact_call' | 'compact_done'
+  kind: 'llm_call' | 'llm_retry' | 'llm_completed' | 'compact_call' | 'compact_done' | 'jev_decided' | 'jev_applied' | 'jev_review'
   text: string
   expandedText?: string
 }

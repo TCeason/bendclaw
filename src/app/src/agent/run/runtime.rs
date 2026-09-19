@@ -251,7 +251,13 @@ async fn drive_one_turn(
     let mut turn_transcripts: Vec<TranscriptItem> = Vec::new();
     let mut saved_count: usize = 0;
     let mut expected_seq = transcript_seq;
-    let mut transcript_rebased = false;
+    // Set once another writer lands *conversation* content the engine never
+    // saw (e.g. a second client's user message). A compaction planned from
+    // the engine's context would silently drop it, so persistence is skipped.
+    // Stats/notice writes advance the sequence too, but carry no context, so
+    // they must not block compaction — a 39-minute run with one background
+    // task notice used to summarize 500k tokens and then throw the result away.
+    let mut context_rebased = false;
     let mut persistence_failed = false;
     let mut turn_count: u32 = 0;
     let mut outcome = TurnOutcome {
@@ -271,12 +277,15 @@ async fn drive_one_turn(
         let batch_len = new_items.len();
         let current_expected = *expected;
         async move {
-            let next_seq = if new_items.is_empty() {
-                current_expected
+            let append = if new_items.is_empty() {
+                crate::sessions::TurnAppend {
+                    next_seq: current_expected,
+                    interleaved_context_items: 0,
+                }
             } else {
                 session.write_items_at(new_items, current_expected).await?
             };
-            Ok::<(usize, u64), crate::error::EvotError>((batch_len, next_seq))
+            Ok::<(usize, crate::sessions::TurnAppend), crate::error::EvotError>((batch_len, append))
         }
     };
 
@@ -335,11 +344,10 @@ async fn drive_one_turn(
                     )
                     .await
                     {
-                        Ok((written, next_seq)) => {
-                            transcript_rebased |=
-                                next_seq != expected_seq.saturating_add(written as u64);
+                        Ok((written, append)) => {
+                            context_rebased |= append.interleaved_context_items > 0;
                             saved_count = saved_count.saturating_add(written);
-                            expected_seq = next_seq;
+                            expected_seq = append.next_seq;
                         }
                         Err(error) => {
                             emit_persistence_error(tx, run_id, session_id, turn_count, &error);
@@ -349,13 +357,13 @@ async fn drive_one_turn(
                         }
                     }
 
-                    if transcript_rebased {
+                    if context_rebased {
                         tracing::warn!(
                             stage = "run",
                             status = "compaction_skipped_after_rebase",
                             run_id,
                             session_id,
-                            "skipping stale automatic compaction after concurrent transcript activity"
+                            "skipping stale automatic compaction: another writer added context items during this run"
                         );
                     } else {
                         let mut new_context = from_agent_messages(&messages);
@@ -409,11 +417,10 @@ async fn drive_one_turn(
                 )
                 .await
                 {
-                    Ok((written, next_seq)) => {
-                        transcript_rebased |=
-                            next_seq != expected_seq.saturating_add(written as u64);
+                    Ok((written, append)) => {
+                        context_rebased |= append.interleaved_context_items > 0;
                         saved_count = saved_count.saturating_add(written);
-                        expected_seq = next_seq;
+                        expected_seq = append.next_seq;
                     }
                     Err(error) => {
                         emit_persistence_error(tx, run_id, session_id, turn_count, &error);

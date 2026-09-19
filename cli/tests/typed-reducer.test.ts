@@ -125,9 +125,9 @@ describe('typed run reducer', () => {
     const retried = applyEvent(initial, { ...event, kind: 'api_retry', payload: { attempt: 1, delay_ms: 100, error: 'busy' } })
     expect(retried.verboseEvents.at(-1)?.kind).toBe('llm_retry')
     const compacted = applyEvent(initial, { ...event, kind: 'context_compaction_completed', payload: {
-      result: { type: 'level_compacted', level: 2, before_estimated_tokens: 100, after_estimated_tokens: 25 },
+      result: { type: 'compacted', before_message_count: 10, after_message_count: 4, before_tokens: 100, after_tokens: 25, messages_evicted: 6, current_run_reclaimed: 0 },
     } })
-    expect(compacted.currentRunStats.compactHistory).toEqual([{ level: 2, beforeTokens: 100, afterTokens: 25 }])
+    expect(compacted.currentRunStats.compactHistory).toEqual([{ beforeTokens: 100, afterTokens: 25 }])
   })
 
   test('first llm_call_started of a process prints the context line from its own window', () => {

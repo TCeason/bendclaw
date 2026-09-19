@@ -1,17 +1,25 @@
 //! Compaction controller — integrates trigger, planner, and executor into the agent loop.
 
+use std::sync::Arc;
+
 use tokio_util::sync::CancellationToken;
 
 use super::config::CompactionConfig;
 use super::executor;
 use super::executor::ExecutionResult;
 use super::plan;
+use super::prune::ApplyReport;
+use super::prune::ApplyTrigger;
+use super::prune::DecideReport;
+use super::prune::PruneLedger;
+use super::prune::PruneOptions;
 use super::summarizer::mode::SummarizerContext;
 use super::summary::LlmPolicy;
 use super::summary::SummaryContexts;
 use super::trigger::TriggerInput;
 use super::trigger::{self};
 use super::types::*;
+use crate::context::tokens::total_tokens;
 use crate::types::AgentMessage;
 
 /// Threshold-compaction suppression key (droid-style): once a threshold
@@ -34,6 +42,22 @@ pub struct CompactionController {
     /// compactions update the existing summary instead of restarting.
     state: CompactionState,
     observer: Option<CompactionObserver>,
+    /// Judge for the lossless prune branch; `None` keeps the summary-only
+    /// behaviour. With a judge, threshold compaction is replaced by the
+    /// decide/apply cycle in [`PruneLedger`] and summaries remain only for
+    /// overflow and explicit requests.
+    judge: Option<Arc<dyn crate::judge::Judge>>,
+    prune_options: PruneOptions,
+    /// Shared with the session so verdicts survive across runs; a run holds
+    /// it only while it prunes, and runs of one session never overlap.
+    ledger: Arc<tokio::sync::Mutex<PruneLedger>>,
+}
+
+/// What one run-end prune step did, for the event stream.
+#[derive(Debug, Clone, Default)]
+pub struct PruneOutcome {
+    pub decided: Option<DecideReport>,
+    pub applied: Option<ApplyReport>,
 }
 
 impl CompactionController {
@@ -45,7 +69,107 @@ impl CompactionController {
             threshold_suppression: None,
             state: CompactionState::default(),
             observer: None,
+            judge: None,
+            prune_options: PruneOptions::default(),
+            ledger: Arc::new(tokio::sync::Mutex::new(PruneLedger::default())),
         }
+    }
+
+    /// Share the prune ledger across runs of a session.
+    pub fn with_prune_ledger(mut self, ledger: Arc<tokio::sync::Mutex<PruneLedger>>) -> Self {
+        self.ledger = ledger;
+        self
+    }
+
+    /// Enable the prune branch: the judge decides continuously which tool
+    /// calls still matter; edits are applied in cache-friendly batches, and
+    /// threshold summaries are switched off in favour of them.
+    pub fn with_judge(mut self, judge: Arc<dyn crate::judge::Judge>) -> Self {
+        self.judge = Some(judge);
+        self
+    }
+
+    pub fn has_judge(&self) -> bool {
+        self.judge.is_some()
+    }
+
+    /// True when the judge has a say and has not been asked yet in this
+    /// process: the run start of a resumed session is then the same kind of
+    /// boundary as a run end.
+    pub async fn prune_pending_first_ask(&self) -> bool {
+        self.judge.is_some() && self.ledger.lock().await.is_fresh()
+    }
+
+    /// Run-end prune step: ask the judge when the context grew enough, apply
+    /// pending verdicts when they pay for the cache miss or the cache is cold.
+    /// Never edits mid-run; the runner calls this once per completed run.
+    pub async fn prune_after_run(
+        &mut self,
+        messages: &mut Vec<AgentMessage>,
+        context_tokens: usize,
+        now_ms: u64,
+        cancel: CancellationToken,
+    ) -> PruneOutcome {
+        let Some(judge) = self.judge.clone() else {
+            return PruneOutcome::default();
+        };
+        let mut outcome = PruneOutcome::default();
+        let ledger = self.ledger.clone();
+        let mut ledger = ledger.lock().await;
+        if ledger.should_decide(messages, context_tokens, &self.prune_options) {
+            notify_compaction_phase(&self.observer, CompactionPhase::Pruning);
+            match ledger
+                .decide(messages, judge.as_ref(), &self.prune_options, cancel)
+                .await
+            {
+                Ok(report) => {
+                    tracing::info!(
+                        verdicts = report.verdicts.len(),
+                        pending_tokens = report.pending_tokens,
+                        requests = report.requests,
+                        elapsed_ms = report.elapsed_ms,
+                        "judge prune: decided"
+                    );
+                    outcome.decided = Some(report);
+                }
+                Err(error) => tracing::warn!(error = %error, "judge prune: decide failed"),
+            }
+        }
+        if let Some(trigger) = ledger.apply_trigger(context_tokens, now_ms, &self.prune_options) {
+            outcome.applied = Some(self.apply_with(&mut ledger, messages, trigger, now_ms));
+        }
+        ledger.note_request(now_ms);
+        outcome
+    }
+
+    fn apply_with(
+        &mut self,
+        ledger: &mut PruneLedger,
+        messages: &mut Vec<AgentMessage>,
+        trigger: ApplyTrigger,
+        now_ms: u64,
+    ) -> ApplyReport {
+        let (pruned, report) = ledger.apply(std::mem::take(messages), &self.prune_options, trigger);
+        *messages = pruned;
+        if report.removed + report.truncated > 0 {
+            self.last_compaction_ts = Some(now_ms);
+            tracing::info!(
+                removed = report.removed,
+                truncated = report.truncated,
+                skipped = report.skipped,
+                before_tokens = report.before_tokens,
+                after_tokens = report.after_tokens,
+                trigger = ?report.trigger,
+                "judge prune: applied"
+            );
+        }
+        notify_compaction_phase(&self.observer, CompactionPhase::Complete);
+        report
+    }
+
+    pub fn with_prune_options(mut self, options: PruneOptions) -> Self {
+        self.prune_options = options;
+        self
     }
 
     /// Seed cross-compaction state (e.g. restored from a persisted session).
@@ -231,6 +355,11 @@ impl CompactionController {
             }
 
             TriggerDecision::Threshold { context_tokens } => {
+                if self.judge.is_some() {
+                    // The prune branch owns steady-state size; summaries stay
+                    // for overflow only, so their effects can be told apart.
+                    return CompactionResponse::skip();
+                }
                 self.threshold_compact(messages, context_tokens, current_model, contexts, cancel)
                     .await
             }
@@ -268,7 +397,7 @@ impl CompactionController {
         if self.config.context_window == 0 {
             return CompactionResponse::skip();
         }
-        if estimated_tokens < self.config.trigger_threshold() {
+        if estimated_tokens < self.config.trigger_threshold() || self.judge.is_some() {
             self.clear_suppression_for(current_model);
             return CompactionResponse::skip();
         }
@@ -382,6 +511,54 @@ impl CompactionController {
         // message. Remove only the exact message recorded in state so the
         // summarizer receives it once via `previous_summary`, not again as
         // ordinary conversation text.
+        if let Some(judge) = self.judge.clone() {
+            // The summary is about to rebuild the cache prefix anyway, so the
+            // prune is free now: ask the judge about everything still
+            // undecided (a resumed session has never been asked), apply, and
+            // if the lossless cut alone brings the context back under the
+            // threshold the lossy summary is not needed at all.
+            let ledger = self.ledger.clone();
+            let mut ledger = ledger.lock().await;
+            notify_compaction_phase(&self.observer, CompactionPhase::Pruning);
+            let before_tokens = total_tokens(messages);
+            let before_messages = messages.len();
+            if let Err(error) = ledger
+                .decide(
+                    messages,
+                    judge.as_ref(),
+                    &self.prune_options,
+                    cancel.clone(),
+                )
+                .await
+            {
+                tracing::warn!(error = %error, "judge prune before compaction: decide failed");
+            }
+            let report = if ledger.pending_count() > 0 {
+                let now = crate::context::now_ms();
+                Some(self.apply_with(&mut ledger, messages, ApplyTrigger::BeforeCompaction, now))
+            } else {
+                None
+            };
+            drop(ledger);
+            let after_tokens = total_tokens(messages);
+            let fits = after_tokens.saturating_add(request_overhead_tokens)
+                <= self.config.trigger_threshold();
+            if fits && report.as_ref().is_some_and(|r| r.removed + r.truncated > 0) {
+                notify_compaction_phase(&self.observer, CompactionPhase::Complete);
+                return Some(CompactionStats {
+                    summary: None,
+                    before_message_count: before_messages,
+                    after_message_count: messages.len(),
+                    before_tokens,
+                    after_tokens,
+                    messages_evicted: before_messages.saturating_sub(messages.len()),
+                    current_run_reclaimed: 0,
+                    method: Some(CompactionMethod::Prune),
+                    fallback_reason: None,
+                    remote_blob_bytes: None,
+                });
+            }
+        }
         let removed_summary = self
             .state
             .context_summary_message

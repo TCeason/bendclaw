@@ -1567,7 +1567,7 @@ async fn turn_write_rebases_after_external_advancement_without_losing_messages()
             content: vec![],
         }])
         .await?;
-    let resulting_seq = first
+    let append = first
         .write_items_at(
             vec![TranscriptItem::User {
                 text: "stale run".into(),
@@ -1576,7 +1576,11 @@ async fn turn_write_rebases_after_external_advancement_without_losing_messages()
             expected_seq,
         )
         .await?;
-    assert_eq!(resulting_seq, 2);
+    assert_eq!(append.next_seq, 2);
+    assert_eq!(
+        append.interleaved_context_items, 1,
+        "an external user message is context the run never saw"
+    );
 
     let entries = first_storage
         .list_entries(ListTranscriptEntries {
@@ -1599,6 +1603,117 @@ async fn turn_write_rebases_after_external_advancement_without_losing_messages()
         &entries[1].item,
         TranscriptItem::User { text, .. } if text == "stale run"
     ));
+    Ok(())
+}
+
+/// A background-task notice (or any stats item) written by the same process
+/// during a run advances the sequence but is not conversation content. The
+/// turn write must land after it and report zero interleaved context items so
+/// the run's compaction is still persisted.
+#[tokio::test]
+async fn turn_write_after_stats_notice_reports_no_interleaved_context() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+    let session = Session::new(
+        "sess-notice-during-run".into(),
+        "/tmp".into(),
+        "model".into(),
+        storage.clone(),
+    )
+    .await?;
+    let (_, _, expected_seq) = session.context_snapshot().await;
+
+    // Same Session handle, as the CLI's ui_notice path does mid-run.
+    session
+        .write_items(vec![TranscriptItem::Stats {
+            kind: "ui_notice".into(),
+            data: serde_json::json!({ "text": "completed in background" }),
+        }])
+        .await?;
+    let append = session
+        .write_items_at(
+            vec![TranscriptItem::User {
+                text: "turn prompt".into(),
+                content: vec![],
+            }],
+            expected_seq,
+        )
+        .await?;
+    assert_eq!(append.next_seq, 2);
+    assert_eq!(append.interleaved_context_items, 0);
+
+    // Now the compaction planned against the advanced generation is accepted.
+    session
+        .write_compact(
+            compact_item("summary", 1),
+            vec![TranscriptItem::User {
+                text: "summary".into(),
+                content: vec![],
+            }],
+            append.next_seq,
+        )
+        .await?;
+    let entries = storage
+        .list_entries(ListTranscriptEntries {
+            session_id: "sess-notice-during-run".into(),
+            run_id: None,
+            after_seq: None,
+            limit: None,
+        })
+        .await?;
+    assert!(matches!(
+        entries.last().map(|entry| &entry.item),
+        Some(TranscriptItem::Compact { .. })
+    ));
+    Ok(())
+}
+
+/// External context and a stats item interleaved together: only the context
+/// item is counted.
+#[tokio::test]
+async fn turn_write_counts_only_context_items_among_interleaved_writes() -> TestResult {
+    let dir = TempDir::new()?;
+    let first_storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+    let first = Session::new(
+        "sess-mixed-interleave".into(),
+        "/tmp".into(),
+        "model".into(),
+        first_storage,
+    )
+    .await?;
+    let second_storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+    let second = Session::open("sess-mixed-interleave", second_storage)
+        .await?
+        .ok_or_else(|| missing_error("missing second session handle"))?;
+    let (_, _, expected_seq) = first.context_snapshot().await;
+
+    second
+        .write_items(vec![
+            TranscriptItem::Stats {
+                kind: "ui_notice".into(),
+                data: serde_json::json!({}),
+            },
+            TranscriptItem::User {
+                text: "external".into(),
+                content: vec![],
+            },
+            TranscriptItem::Stats {
+                kind: "ui_notice".into(),
+                data: serde_json::json!({}),
+            },
+        ])
+        .await?;
+    let append = first
+        .write_items_at(
+            vec![TranscriptItem::User {
+                text: "run prompt".into(),
+                content: vec![],
+            }],
+            expected_seq,
+        )
+        .await?;
+    assert_eq!(append.next_seq, 4);
+    assert_eq!(append.interleaved_context_items, 1);
     Ok(())
 }
 

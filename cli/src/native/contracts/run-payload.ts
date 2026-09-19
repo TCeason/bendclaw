@@ -1,4 +1,4 @@
-import { array, boolean, json, nullable, object, oneOf, optional, tagged, text, toolDetail, uint, type Infer } from './schema.js'
+import { array, boolean, json, nullable, number, object, oneOf, optional, tagged, text, toolDetail, uint, type Infer } from './schema.js'
 
 const usage = object({ input: uint, output: uint, cache_read: optional(uint), cache_write: optional(uint) })
 const metrics = object({ duration_ms: uint, ttfb_ms: uint, ttft_ms: uint, streaming_ms: uint, chunk_count: uint })
@@ -13,13 +13,13 @@ const assistantBlock = tagged('type', {
   thinking: object({ type: oneOf('thinking'), text, metadata: optional(nullable(json)) }),
   tool_call: object({ type: oneOf('tool_call'), id: text, name: text, input: json, metadata: optional(nullable(json)) }),
 })
-const reason = oneOf('threshold', 'overflow', 'manual')
+const reason = oneOf('threshold', 'overflow', 'manual', 'prune')
 const compactionResult = tagged('type', {
   no_op: object({ type: oneOf('no_op') }),
   compacted: object({
     type: oneOf('compacted'), before_message_count: uint, after_message_count: uint,
     before_tokens: uint, after_tokens: uint, messages_evicted: uint, current_run_reclaimed: uint,
-    method: optional(nullable(oneOf('remote', 'local', 'remote_failed_local'))),
+    method: optional(nullable(oneOf('prune', 'remote', 'local', 'remote_failed_local'))),
     remote_blob_bytes: optional(nullable(uint)), fallback_reason: optional(nullable(text)),
   }),
 })
@@ -63,8 +63,33 @@ export const runPayloadSchemas = {
     reserve_tokens: optional(uint), trigger_threshold: optional(uint), system_prompt_tokens: optional(uint),
     tool_definition_tokens: optional(uint), context_window: uint, will_retry: optional(boolean), message_stats: optional(nullable(messageStats)),
   }),
-  context_compaction_phase: object({ phase: oneOf('planning', 'remote', 'local_fallback', 'local', 'complete') }),
+  context_compaction_phase: object({ phase: oneOf('pruning', 'planning', 'remote', 'local_fallback', 'local', 'complete') }),
   context_compaction_completed: object({ reason, result: compactionResult, summary: optional(nullable(text)), context_window: optional(uint), will_retry: optional(boolean) }),
+  tool_calls_reviewed: object({
+    calls: array(object({ tool_call_id: text, tool_name: text, arguments: text, relevance: number })),
+  }),
+  context_pruned: object({
+    decided: optional(nullable(object({
+      verdicts: array(object({
+        call_id: text, tool_name: text, arguments: text,
+        decision: oneOf('keep', 'truncate', 'remove'),
+        keep_call: optional(nullable(number)), keep_result: optional(nullable(number)),
+        saves_tokens: uint,
+      })),
+      context_tokens: uint, pending_tokens: uint, requests: uint, elapsed_ms: uint,
+      // Evidence for the verdicts; studied offline, not rendered.
+      user_requests: optional(array(object({
+        message_index: uint, text, probability: optional(nullable(number)), in_play: boolean,
+      }))),
+      batches: optional(array(object({ from: uint, to: uint, state_tokens: uint, call_ids: array(text) }))),
+    }))),
+    applied: optional(nullable(object({
+      removed: uint, truncated: uint, skipped: uint,
+      before_tokens: uint, after_tokens: uint, before_messages: uint, after_messages: uint,
+      trigger: oneOf('savings', 'cold_cache', 'before_compaction', 'manual'),
+    }))),
+    context_window: optional(uint),
+  }),
   run_finished: object({
     text, usage, turn_count: uint, duration_ms: uint, transcript_count: uint,
     compact_history: optional(array(object({ level: uint, from_tokens: uint, to_tokens: uint, action_map: text }))),

@@ -13,7 +13,7 @@ export function manualCompactionLines(outcome: Compacted): { compact: OutputLine
       type: 'compacted', before_message_count: outcome.messages_before,
       after_message_count: outcome.messages_after, before_tokens: outcome.tokens_before,
       after_tokens: outcome.tokens_after, messages_evicted: outcome.messages_evicted,
-      current_run_reclaimed: outcome.current_run_reclaimed, compaction_level: outcome.compaction_level,
+      current_run_reclaimed: outcome.current_run_reclaimed,
       method: outcome.method ?? 'local', remote_blob_bytes: outcome.remote_blob_bytes,
       fallback_reason: outcome.fallback_reason,
     },

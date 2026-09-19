@@ -22,6 +22,10 @@ pub struct EngineOptions {
     pub prompt_cache_key: Option<String>,
     pub provider_override: Option<Arc<dyn evot_engine::provider::StreamProvider>>,
     pub compaction_state: Option<evot_engine::CompactionState>,
+    /// Judge for the prune branch of auto-compaction; `None` = summaries only.
+    pub judge: Option<Arc<dyn evot_engine::judge::Judge>>,
+    /// The session's prune ledger, shared across its runs.
+    pub prune_ledger: Arc<tokio::sync::Mutex<evot_engine::context::compaction::PruneLedger>>,
 }
 
 pub(super) fn build_engine(
@@ -67,6 +71,8 @@ pub(super) fn build_engine(
         .with_path_guard(options.path_guard)
         .with_thinking(options.thinking_level)
         .with_compaction_state_opt(options.compaction_state)
+        .with_judge(options.judge)
+        .with_prune_ledger(Some(options.prune_ledger))
         .with_prompt_cache_key_opt(options.prompt_cache_key)
         .with_spill_opt(
             options

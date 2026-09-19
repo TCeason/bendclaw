@@ -52,6 +52,8 @@ mod feishu_sink_test;
 mod feishu_state_test;
 #[path = "id_validation_test.rs"]
 mod id_validation_test;
+#[path = "judge_trace_test.rs"]
+mod judge_trace_test;
 #[path = "manual_compact_llm_test.rs"]
 mod manual_compact_llm_test;
 mod model_catalog_test;

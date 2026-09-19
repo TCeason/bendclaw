@@ -161,6 +161,19 @@ fn default_compact_reason() -> CompactReason {
     CompactReason::Threshold
 }
 
+/// One run-end step of the judge-driven prune branch. `decided` records the
+/// verdicts with their probabilities so the judge's quality can be evaluated
+/// offline; `applied` is present when the context was actually edited.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextPrunedStats {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided: Option<evot_engine::context::compaction::DecideReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied: Option<evot_engine::context::compaction::ApplyReport>,
+    #[serde(default)]
+    pub context_window: usize,
+}
+
 // ---------------------------------------------------------------------------
 // TranscriptStats — aggregating enum
 // ---------------------------------------------------------------------------
@@ -173,6 +186,7 @@ pub enum TranscriptStats {
     ToolFinished(ToolFinishedStats),
     ContextCompactionStarted(ContextCompactionStartedStats),
     ContextCompactionCompleted(ContextCompactionCompletedStats),
+    ContextPruned(ContextPrunedStats),
     RunFinished(RunFinishedStats),
 }
 
@@ -186,6 +200,7 @@ impl TranscriptStats {
             Self::ToolFinished(_) => "tool_finished",
             Self::ContextCompactionStarted(_) => "context_compaction_started",
             Self::ContextCompactionCompleted(_) => "context_compaction_completed",
+            Self::ContextPruned(_) => "context_pruned",
             Self::RunFinished(_) => "run_finished",
         }
     }
@@ -200,6 +215,7 @@ impl TranscriptStats {
             Self::ToolFinished(s) => serde_json::to_value(s),
             Self::ContextCompactionStarted(s) => serde_json::to_value(s),
             Self::ContextCompactionCompleted(s) => serde_json::to_value(s),
+            Self::ContextPruned(s) => serde_json::to_value(s),
             Self::RunFinished(s) => serde_json::to_value(s),
         }
         .unwrap_or_default();
@@ -233,6 +249,9 @@ impl TranscriptStats {
             "context_compaction_completed" => serde_json::from_value(data.clone())
                 .ok()
                 .map(Self::ContextCompactionCompleted),
+            "context_pruned" => serde_json::from_value(data.clone())
+                .ok()
+                .map(Self::ContextPruned),
             "run_finished" => serde_json::from_value(data.clone())
                 .ok()
                 .map(Self::RunFinished),

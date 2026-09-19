@@ -24,6 +24,10 @@
 - **Coordinated execution.** Shells run in the background while the model advances independent work, waits for required results, and picks up completion notifications. Less idle time between thinking and doing.
 - **Affordable.** Free and low-cost hosted models, or bring your own keys.
 
+## Jev prune
+
+Instead of summarising old context, evot deletes what no longer matters. After each run a small judge model ([TypeSafe Jev](https://typesafe.ai)) works out which of your requests are still in play, then asks of every old tool call: does the task still depend on it, and will its result be read again? Calls that fail both go; stale results are truncated. Nothing is summarised, and compaction only runs if pruning alone is not enough.
+
 ## Performance
 
 Same task and environment, three agents × three models. Cost and tool calls—not wall-clock speed.

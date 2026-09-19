@@ -111,6 +111,8 @@ pub(super) fn apply_cloud_provider(config: &mut Config) -> Result<()> {
     let mut thinking_levels = std::collections::HashMap::new();
     let mut model_tiers = std::collections::HashMap::new();
     let mut model_sorts = std::collections::HashMap::new();
+    let judges: std::collections::HashSet<String> = judge_model_ids(&cache.response);
+    let mut judge: Option<crate::conf::JudgeEndpoint> = None;
     for model in &cache.response.models {
         if let Ok(level) = thinking_level_from_str(&model.thinking_level) {
             thinking_levels.insert(model.id.clone(), level);
@@ -124,15 +126,33 @@ pub(super) fn apply_cloud_provider(config: &mut Config) -> Result<()> {
     // back to the order the server wants its groups shown in.
     let mut groups = cache.response.providers;
     groups.sort_by_key(|group| group.sort_order);
-    for group in groups {
-        if group.models.is_empty() {
-            continue;
-        }
+    for mut group in groups {
         let name = normalize_provider_name(&group.name);
         validate_provider_name(&name)?;
         let protocol = parse_protocol(&group.protocol).map_err(|_| {
             EvotError::Conf(format!("unsupported cloud protocol: {}", group.protocol))
         })?;
+        // A judge is not something to chat with: it leaves the picker and
+        // becomes the session's judge endpoint (first one published wins).
+        let (judge_models, chat_models): (Vec<String>, Vec<String>) = group
+            .models
+            .into_iter()
+            .partition(|model| judges.contains(model));
+        if judge.is_none() {
+            if let Some(model) = judge_models.into_iter().next() {
+                judge = Some(crate::conf::JudgeEndpoint {
+                    provider: name.clone(),
+                    protocol: protocol.clone(),
+                    base_url: group.base_url.clone(),
+                    api_key: group.api_key.clone(),
+                    model,
+                });
+            }
+        }
+        group.models = chat_models;
+        if group.models.is_empty() {
+            continue;
+        }
         // Cloud OpenAI groups (`evot-pro-openai`, …) are named by the server,
         // so they never match the first-party `openai` / `grok` transport
         // profiles. The catalog still lists reasoning models on those routes
@@ -175,6 +195,7 @@ pub(super) fn apply_cloud_provider(config: &mut Config) -> Result<()> {
     config.cloud_thinking_levels = thinking_levels;
     config.cloud_model_tiers = model_tiers;
     config.cloud_model_sorts = model_sorts;
+    config.judge = judge;
 
     // The catalog owns the landing spot, so a stale cloud selection (e.g. a
     // Free provider left in the env file) yields to it. BYOK always wins: a
@@ -192,4 +213,44 @@ pub(super) fn apply_cloud_provider(config: &mut Config) -> Result<()> {
         config.llm.model_override = None;
     }
     Ok(())
+}
+
+fn judge_model_ids(response: &crate::auth::ModelsResponse) -> std::collections::HashSet<String> {
+    response
+        .models
+        .iter()
+        .filter(|model| model.is_judge())
+        .map(|model| model.id.clone())
+        .collect()
+}
+
+/// The judge the server currently publishes, read from the models cache the
+/// cloud sync rewrites every few seconds. Re-read per run so an operator
+/// disabling the judge model takes effect on the next run, not the next
+/// launch. `None` when logged out, no cache, or no `role=judge` model.
+pub fn current_judge_endpoint() -> Option<crate::conf::JudgeEndpoint> {
+    // Logged out: no judge.
+    crate::auth::load_auth().ok()??;
+    let cache = crate::auth::load_models_cache().ok()??;
+    let judges = judge_model_ids(&cache.response);
+    if judges.is_empty() {
+        return None;
+    }
+    let mut groups = cache.response.providers;
+    groups.sort_by_key(|group| group.sort_order);
+    groups.into_iter().find_map(|group| {
+        let model = group
+            .models
+            .iter()
+            .find(|model| judges.contains(*model))?
+            .clone();
+        let protocol = parse_protocol(&group.protocol).ok()?;
+        Some(crate::conf::JudgeEndpoint {
+            provider: normalize_provider_name(&group.name),
+            protocol,
+            base_url: group.base_url,
+            api_key: group.api_key,
+            model,
+        })
+    })
 }

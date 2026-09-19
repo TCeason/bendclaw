@@ -23,6 +23,12 @@ export const uint: Schema<number> = { read(value, path) {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) invalid(path)
   return value
 } }
+/** A finite JSON number, fractions included (probabilities, ratios). */
+export const number: Schema<number> = { read(value, path) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) invalid(path)
+  return value
+} }
+
 export const json: Schema<unknown> = { read(value, path) {
   if (value === undefined) invalid(path)
   return value

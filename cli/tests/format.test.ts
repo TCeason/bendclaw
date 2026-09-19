@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test'
 import stringWidth from 'string-width'
-import { padRight, relativeTime, renderBar, renderPositionBar } from '../src/render/format.js'
+import { padRight, relativeTime, renderBar } from '../src/render/format.js'
 
 describe('padRight', () => {
   test('pads short string with spaces', () => {
@@ -101,38 +101,6 @@ describe('renderBar', () => {
     expect(renderBar(5, 10, Infinity)).toBe('')
     expect(renderBar(Infinity, 10, 4)).toBe('░░░░')
     expect(renderBar(5, NaN, 4)).toBe('░░░░')
-  })
-})
-
-describe('renderPositionBar', () => {
-  test('keeps unchanged marker consistent for L3', () => {
-    const { bar, legend } = renderPositionBar(10, [{ index: 2, end_index: 4, method: 'MessagesEvicted' }], 3)
-    expect(bar).toBe('[··EEE·····]')
-    expect(legend).toBe('·=unchanged/kept  E=MessagesEvicted')
-  })
-
-  test('kept ranges visible when proportional mapping would hide them', () => {
-    // 251 messages, indices 2–240 dropped, kept: [0,1] and [241,250]
-    const actions = [{ index: 2, end_index: 240, method: 'MessagesEvicted' }]
-    const { bar } = renderPositionBar(251, actions, 3)
-    // Both kept ranges must have at least one '·'
-    const chars = bar.slice(1, -1) // strip [ ]
-    expect(chars.length).toBe(40)
-    // First kept range [0,1] → slot 0 must be '·'
-    expect(chars[0]).toBe('·')
-    // Last kept range [241,250] → last slot(s) must include '·'
-    const lastDot = chars.lastIndexOf('·')
-    expect(lastDot).toBeGreaterThan(chars.length - 3) // near the end
-  })
-
-  test('no kept ranges means all action slots', () => {
-    // Every message has an action — no gaps to preserve
-    const actions = [{ index: 0, end_index: 99, method: 'MessagesEvicted' }]
-    const { bar } = renderPositionBar(100, actions, 3)
-    const chars = bar.slice(1, -1)
-    expect(chars.length).toBe(40)
-    expect(chars).not.toContain('·')
-    expect(chars).toContain('─100─')
   })
 })
 

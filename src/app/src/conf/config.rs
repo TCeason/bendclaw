@@ -233,6 +233,21 @@ pub struct Config {
     /// Catalog display rank per cloud model id (higher shows earlier).
     pub cloud_model_sorts: HashMap<String, i64>,
     pub cloud_providers: HashSet<String>,
+    /// The judge model the server published, if any: answers typed questions
+    /// about the conversation and drives lossless context pruning. Never a
+    /// chat provider; never in the picker.
+    pub judge: Option<JudgeEndpoint>,
+}
+
+/// Where a judge model lives. It rides on the cloud gateway like any other
+/// model, so the same key and protocol apply; only its use differs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JudgeEndpoint {
+    pub provider: String,
+    pub protocol: Protocol,
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
 }
 
 impl Config {
@@ -252,6 +267,7 @@ impl Config {
             cloud_model_tiers: HashMap::new(),
             cloud_model_sorts: HashMap::new(),
             cloud_providers: HashSet::new(),
+            judge: None,
         }
     }
 

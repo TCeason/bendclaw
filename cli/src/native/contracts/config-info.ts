@@ -30,6 +30,8 @@ export interface ConfigInfo {
   baseUrl: string | null
   availableModels: ModelOption[]
   thinkingLevel: string
+  /** Judge model (Jev) the catalog publishes; present = judge prune is on. */
+  judge?: string
 }
 
 function invalid(path: string): never {
@@ -59,6 +61,7 @@ function validateConfigInfo(value: unknown): asserts value is ConfigInfo {
   protocol(value.protocol, '$.protocol')
   field(value.hasApiKey, 'boolean', '$.hasApiKey')
   if (value.baseUrl !== null) field(value.baseUrl, 'string', '$.baseUrl')
+  optional(value, 'judge', 'string', '$')
   if (!Array.isArray(value.availableModels)) invalid('$.availableModels')
   value.availableModels.forEach((entry: unknown, index: number) => {
     const path = `$.availableModels[${index}]`

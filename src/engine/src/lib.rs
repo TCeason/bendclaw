@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod context;
 pub mod host;
+pub mod judge;
 pub mod provider;
 pub mod retry;
 mod runner;

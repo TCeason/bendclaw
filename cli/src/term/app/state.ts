@@ -30,6 +30,10 @@ export interface AppState {
   askUserRequest: AskUserRequest | null
   /** Session-level cumulative token stats (not reset between runs) */
   sessionTokens: SessionTokenStats
+  /** Judge model the catalog publishes; set = judge-driven prune branch is on.
+   *  Mirrors ConfigInfo.judge and follows the cloud sync, so a server-side
+   *  switch shows up within one sync interval. */
+  judge?: string
 }
 
 export interface SessionTokenStats {

@@ -26,6 +26,7 @@ impl NapiCompaction {
         let observer_phase = Arc::clone(&phase);
         let observer: evot::api::ManualCompactionObserver = Arc::new(move |next| {
             let value = match next {
+                evot::api::ManualCompactionPhase::Pruning => "pruning",
                 evot::api::ManualCompactionPhase::Planning => "planning",
                 evot::api::ManualCompactionPhase::Remote => "remote",
                 evot::api::ManualCompactionPhase::LocalFallback => "local_fallback",

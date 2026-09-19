@@ -175,6 +175,8 @@ import {
 import { TerminalTitle } from './title.js'
 import {
   formatLogPaths,
+  judgeTracePath,
+  logAnalysisPrompt,
   handleClipCommand,
   handleCopyCommand,
   handleEnvCommand,
@@ -712,7 +714,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const snapshot = resumeCache.metadata ?? []
     if (snapshot.length > 0) {
       const items = resumeItems.format(
-        { sessions: snapshot, cwd: agent.cwd, textVersion: resumeCache.textVersion, limit: 20 },
+        { sessions: snapshot, cwd: agent.cwd, textVersion: resumeCache.textVersion, limit: 20, openSessionId: sessionId },
         id => resumeCache.sessionText(id),
       )
       return resumeSelectorState(items)
@@ -737,7 +739,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const current = currentResumeCommandWindowState(generation)
     if (!current || current.rename) return false
     const items = resumeItems.format(
-      { sessions, cwd: agent.cwd, textVersion: resumeCache.textVersion, limit },
+      { sessions, cwd: agent.cwd, textVersion: resumeCache.textVersion, limit, openSessionId: sessionId },
       id => resumeCache.sessionText(id),
     )
     const {
@@ -883,7 +885,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           const current = currentResumeCommandWindowState(generation)
           if (!current || current.rename) return
           const fullItems = resumeItems.format(
-            { sessions: sessionsWithText, cwd: agent.cwd, textVersion: resumeCache.textVersion },
+            { sessions: sessionsWithText, cwd: agent.cwd, textVersion: resumeCache.textVersion, openSessionId: sessionId },
             id => resumeCache.sessionText(id),
           )
           if (updateResumeCommandWindow(generation, selectorExpandItems(current, fullItems))) {
@@ -941,7 +943,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       // Focus moved on, or the list was replaced: a later focus reloads from
       // the cache, so there is nothing to reconcile here.
       if (!surface || surface.state.rename || !stillFocused || stillFocused.id !== id) return
-      surface.apply(selectorReplaceItem(surface.state, id, applySessionText(stillFocused, text, agent.cwd)))
+      surface.apply(selectorReplaceItem(surface.state, id, applySessionText(stillFocused, text, agent.cwd, sessionId)))
       renderer.requestRender()
     })
   }
@@ -1182,6 +1184,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // Re-read backend config after a model switch so the footer reflects the
     // new provider's effective thinking level (it can differ per provider).
     try { configInfo = agent.configInfo() } catch {}
+    if (appState.judge !== configInfo?.judge) appState = { ...appState, judge: configInfo?.judge }
   }
   refreshConfigInfo()
 
@@ -2567,7 +2570,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       clearAll()
       const logPath = screenLog.filePath
       if (logPath) {
-        const text = formatLogPaths(logPath, rendererTrace.filePath, renderDiagnostics.summary())
+        const text = formatLogPaths(logPath, rendererTrace.filePath, renderDiagnostics.summary(), judgeTracePath(sessionId))
         commitSystem('sys-log', text ?? `  Log: ${logPath}`)
       }
       else commitSystem('sys-log', '  No active screen log.')
@@ -3217,6 +3220,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   function reloadCloudContent(fresh = cloudCampaigns()): void {
     refreshCampaigns(adSlot, fresh, hasPremiumModel(configInfo), Date.now())
     try { configInfo = agent.configInfo() } catch {}
+    // The judge follows the catalog: switching it off on the server turns the
+    // `jev prune` marker off here on the next sync, and the engine re-reads
+    // the same cache per run.
+    if (appState.judge !== configInfo?.judge) appState = { ...appState, judge: configInfo?.judge }
   }
 
   // Live sync: re-fetch the cloud catalog so new notices, ads and models
@@ -3408,7 +3415,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         .map(id => allSessions.find(s => s.session_id === id))
         .filter((s): s is SessionMeta => Boolean(s))
       if (ranked.length === 0) return
-      const items = formatSessionItems(ranked, agent.cwd, id => resumeCache.sessionText(id))
+      const items = formatSessionItems(ranked, agent.cwd, id => resumeCache.sessionText(id), sessionId)
       invalidateExplicitResumeSelector()
       overlay = {
         kind: 'selector',
@@ -3426,7 +3433,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const cached = resumeCache.withText ?? resumeCache.metadata
     const items = cached === null
       ? []
-      : formatSessionItems(cached, agent.cwd, id => resumeCache.sessionText(id))
+      : formatSessionItems(cached, agent.cwd, id => resumeCache.sessionText(id), sessionId)
     overlay = {
       kind: 'selector',
       state: {
@@ -3453,7 +3460,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         renderer.requestRender()
         return
       }
-      const metaItems = formatSessionItems(allSessions, agent.cwd, id => resumeCache.sessionText(id))
+      const metaItems = formatSessionItems(allSessions, agent.cwd, id => resumeCache.sessionText(id), sessionId)
       overlay = {
         kind: 'selector',
         state: selectorExpandItems(current, metaItems),
@@ -3531,11 +3538,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     } else if (!query) {
       const logPath = screenLog.filePath
       if (logPath) {
-        const text = formatLogPaths(logPath, rendererTrace.filePath, renderDiagnostics.summary())
+        const text = formatLogPaths(logPath, rendererTrace.filePath, renderDiagnostics.summary(), judgeTracePath(sid))
         commitSystem('sys-log', text ?? `  Log: ${logPath}`)
       }
       else if (sid) {
-        const text = formatLogPaths(join(logDir, `${sid}.screen.log`))
+        const text = formatLogPaths(join(logDir, `${sid}.screen.log`), null, null, judgeTracePath(sid))
         commitSystem('sys-log', text ?? `  Log: ${join(logDir, `${sid}.screen.log`)}`)
       }
       else commitSystem('sys-log', `  Log dir: ${logDir} (no active session)`)
@@ -3544,18 +3551,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     } else {
       // /log <query> — fork agent to analyze log
       const logPath = join(logDir, `${sid}.screen.log`)
-      const systemPrompt = [
-        'You are in a temporary log analysis session.',
-        'This session is not persisted and does not affect the main session context.',
-        '',
-        `Screen log file to analyze:\n${logPath}`,
-        '',
-        'Rules:',
-        '- Read relevant log sections before answering; do not guess',
-        '- Prefer partial reads; avoid loading the entire file at once',
-        '- Use search to locate key information when needed',
-        '- Do not modify any files',
-      ].join('\n')
+      const systemPrompt = logAnalysisPrompt(logPath, judgeTracePath(sid))
       try {
         const forked = agent.fork(systemPrompt)
         logMode = forked

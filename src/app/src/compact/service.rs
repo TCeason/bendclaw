@@ -50,6 +50,8 @@ pub async fn compact(
                 .saturating_sub(messages_after)
                 .saturating_add(1),
             current_run_reclaimed: 0,
+            // Published addon field from the leveled-compaction era; the CLI
+            // no longer reads it. Kept at its last value for old readers.
             compaction_level: 3,
             used_fallback: result.used_fallback,
             method: details.method,

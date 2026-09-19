@@ -869,6 +869,30 @@ describe('prompt footer', () => {
     expect(footer).toBe('~/github/evotai/evot (main) │ gpt-5.6-sol@anthropic • high │ context: 38.9% (105.8k/272k)')
   })
 
+  test('badges the context with jev prune while the catalog publishes a judge', () => {
+    const home = process.env.HOME || process.env.USERPROFILE || '/tmp/home'
+    const footer = blocksToLines(buildPromptFooterBlocks(defaultInput({
+      columns: 160,
+      cwd: `${home}/github/evotai/evot`,
+      gitBranch: 'main',
+      model: 'gpt-5.6-sol',
+      provider: 'anthropic',
+      thinkingLevel: 'high',
+      contextTokens: 105800,
+      contextWindow: 272000,
+      judge: 'jev-latest',
+    }))).map(stripAnsi)[0]!
+
+    expect(footer).toBe('~/github/evotai/evot (main) │ gpt-5.6-sol@anthropic • high │ context: 38.9% (105.8k/272k) • jev prune')
+  })
+
+  test('shows the jev prune badge before the first call, and never without a judge', () => {
+    const on = blocksToLines(buildPromptFooterBlocks(defaultInput({ columns: 160, judge: 'jev-latest' }))).map(stripAnsi)[0]!
+    expect(on).toContain('│ jev prune')
+    const off = blocksToLines(buildPromptFooterBlocks(defaultInput({ columns: 160 }))).map(stripAnsi)[0]!
+    expect(off).not.toContain('jev')
+  })
+
   test('carries no cache segment: per-call cache usage belongs to the spinner', () => {
     const footerAt = (columns: number) => blocksToLines(buildPromptFooterBlocks(defaultInput({
       columns,

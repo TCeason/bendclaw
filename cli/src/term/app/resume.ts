@@ -115,8 +115,10 @@ export function sessionPreviewLines(
   session: SessionMeta,
   text?: SessionRecognition,
   showCwd = false,
+  open = false,
 ): string[] {
   const facts = [shortModel(session), `${session.turns || 0} turns`, sessionSpan(session)]
+  if (open) facts.unshift('this session')
   if (session.source === 'automation') facts.unshift('task run')
   if (showCwd) facts.push(shortenSessionCwd(session.cwd))
   const lines = [sanitizeSessionTitle(session.custom_title ?? session.title), facts.filter(Boolean).join(' · ')]
@@ -237,13 +239,15 @@ function formatSessionItem(
   otherCwd: boolean,
   showSource: boolean,
   text: SessionWithText | undefined,
+  open: boolean,
 ): SelectorItem {
   // The source column only earns its space when it tells rows apart.
   const badge = sessionSourceBadge(s.source)
   const source = showSource ? `${padRight(badge, 6)} ` : ''
   const title = padRight(sanitizeSessionTitle(s.custom_title ?? s.title), TITLE_COLUMN_WIDTH)
   const turns = padRight(s.turns ? `${s.turns} turns` : '', 10)
-  const time = relativeTime(s.updated_at)
+  // The session this REPL is in says so where the others show their age.
+  const time = open ? '● open' : relativeTime(s.updated_at)
   const cwd = otherCwd ? `  ${shortenSessionCwd(s.cwd)}` : ''
   return {
     label,
@@ -263,7 +267,7 @@ function formatSessionItem(
     searchText: `${s.custom_title ?? ''} ${s.title ?? ''} ${badge} ${text?.search_text
       ?? `${s.session_id} ${s.cwd} ${s.source} ${s.provider ?? ''} ${s.model}`}`,
     contextPrefix: otherCwd ? `${shortenSessionCwd(s.cwd)} · ` : undefined,
-    preview: sessionPreviewLines(s, text, otherCwd),
+    preview: sessionPreviewLines(s, text, otherCwd, open),
   }
 }
 
@@ -281,6 +285,7 @@ export function formatSessionItems(
   sessions: SessionMeta[],
   currentCwd: string,
   sessionText: (sessionId: string) => SessionWithText | undefined = () => undefined,
+  openSessionId?: string | null,
 ): SelectorItem[] {
   const labels = sessionIdLabels(sessions)
   const showSource = mixedSources(sessions)
@@ -291,6 +296,7 @@ export function formatSessionItems(
       otherCwd,
       showSource,
       sessionText(session.session_id),
+      session.session_id === openSessionId,
     ),
   )
 }
@@ -302,10 +308,10 @@ export function formatSessionItems(
  * selector's lowercased-search cache is keyed on: rebuilding the whole list
  * would throw that away on every focus move.
  */
-export function applySessionText(item: SelectorItem, text: SessionWithText, currentCwd: string): SelectorItem {
+export function applySessionText(item: SelectorItem, text: SessionWithText, currentCwd: string, openSessionId?: string | null): SelectorItem {
   return {
     ...item,
     searchText: `${text.custom_title ?? ''} ${text.title ?? ''} ${text.search_text}`,
-    preview: sessionPreviewLines(text, text, text.cwd !== currentCwd),
+    preview: sessionPreviewLines(text, text, text.cwd !== currentCwd, text.session_id === openSessionId),
   }
 }

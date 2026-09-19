@@ -96,6 +96,7 @@ export function toolActionLabel(toolName: string): string {
     case 'plan': return 'Planning'
     case 'skill': return 'Loading skill'
     case 'compact': return 'Compacting'
+    case 'compact_prune': return 'Asking judge which tool calls still matter'
     case 'compact_remote': return 'Compacting remote'
     case 'compact_local': return 'Compacting local'
     case 'compact_local_fallback': return 'Compacting local fallback'

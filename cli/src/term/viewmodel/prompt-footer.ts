@@ -26,6 +26,10 @@ export interface PromptFooterVM {
   gitBranch: string | null
   contextTokens: number
   contextWindow: number
+  /** Judge model the catalog publishes; set = judge-driven context pruning
+   *  is on. Shown as a badge so the user knows the context is being pruned,
+   *  not only summarised. */
+  judge?: string
   backgroundProcessCount: number
   backgroundStopHint?: string
   backgroundStopPending?: boolean
@@ -202,13 +206,20 @@ function buildFooterCandidate(
         ? ` (${formatContextTokens(input.contextTokens)}/${formatContextTokens(input.contextWindow)})`
         : ''
       const text = `context: ${contextPercent.toFixed(1)}%${detail}${warning}`
-      groups.push([
+      const context: StyledSpan[] = [
         contextPercent > 90
           ? colored(text, 'red')
           : contextPercent > 70
             ? colored(text, 'yellow')
             : dim(text),
-      ])
+      ]
+      // The badge rides with the context number it acts on.
+      if (input.judge) context.push(dim(' • '), colored('jev prune', 'cyan'))
+      groups.push(context)
+    } else if (layout.context !== 'hidden' && input.judge) {
+      // Before the first call there is no context number yet; the badge still
+      // tells the user the branch is on.
+      groups.push([colored('jev prune', 'cyan')])
     }
     return groups.flatMap((group, index) => index === 0 ? group : [dim(' │ '), ...group])
   }

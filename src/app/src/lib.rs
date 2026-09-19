@@ -12,6 +12,7 @@ pub mod conversation;
 pub mod delivery;
 pub mod error;
 pub mod gateway;
+pub mod judge;
 pub mod models;
 pub mod observability;
 pub mod search;

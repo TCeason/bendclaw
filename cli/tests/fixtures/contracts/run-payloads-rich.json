@@ -29,5 +29,17 @@
   {
     "kind":"assistant_completed",
     "payload":{"content":[{"type":"thinking","text":"reason","metadata":null},{"type":"tool_call","id":"call","name":"custom","input":null,"metadata":null}],"usage":null,"stop_reason":"tool_use","error_message":null}
+  },
+  {
+    "kind":"context_pruned",
+    "payload":{
+      "decided":{
+        "verdicts":[{"call_id":"call","tool_name":"bash","arguments":"{\"command\":\"true\"}","decision":"remove","keep_call":0.12,"keep_result":0.04,"saves_tokens":900}],
+        "context_tokens":5000,"pending_tokens":900,"requests":2,"elapsed_ms":320,
+        "user_requests":[{"message_index":0,"text":"hi","probability":0.05,"in_play":false},{"message_index":4,"text":"fix the flaky test","probability":null,"in_play":true}],
+        "batches":[{"from":1,"to":6,"state_tokens":1200,"call_ids":["call"]}]
+      },
+      "applied":null,"context_window":120000
+    }
   }
 ]

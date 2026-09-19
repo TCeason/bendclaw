@@ -758,7 +758,9 @@ describe('buildVerboseEvent', () => {
         current_run_reclaimed: 0,
       },
     })
-    expect(completed).toContain('[COMPACT] ✓ · remote · threshold · L3')
+    expect(completed).toContain('[COMPACT] ✓ · remote · threshold · 48 → 12 msgs')
+    expect(completed).not.toContain('L3')
+    expect(completed).toContain('    summary   evicted 36 msgs · reclaimed 0')
     expect(completed).toContain('168k → 24k')
     expect(completed).toContain('blob 1.5 KB')
     expect(isVisibleEvent(completed)).toBe(true)
@@ -787,38 +789,40 @@ describe('buildVerboseEvent', () => {
     expect(isVisibleEvent('[COMPACT] ✓ · skipped · within budget')).toBe(false)
   })
 
-  test('formats compact verbose with status symbols and preserves details', () => {
+  test('formats compaction started without a level and a prune compaction as a lossless cut', () => {
     const started = formatCompactionStarted({
-      level: 'L1',
       messages_count: 48,
       estimated_tokens: 168000,
       context_window: 200000,
       token_breakdown: { system: 8000, user: 24000, assistant: 18000, tool: 118000 },
     })
-    expect(started).toContain('[COMPACT] ● · L1 · 48 msgs')
+    expect(started).toContain('[COMPACT] ● · 48 msgs')
+    expect(started).not.toContain('L1')
     expect(started).toContain('    context   ')
     expect(started).toContain('    tokens    sys 8k · user 24k · asst 18k · tool 118k')
 
-    const completed = formatCompactionCompleted({
+    const pruned = formatCompactionCompleted({
+      reason: 'threshold',
+      context_window: 200000,
       result: {
-        type: 'level_done',
-        level: 1,
-        messages_before: 48,
-        messages_after: 35,
-        tokens_before: 168000,
-        tokens_after: 126000,
-        context_window: 200000,
-        map: '[··OHHH··SS] ',
-        legend: '·=unchanged/kept  O=Outline  H=HeadTail  S=Summarized',
-        result: '↓ outlined 2, head-tail 3',
-        details: ['changed 5/48', '#12 read_file HeadTail ~18k → ~4k (−14k)'],
+        type: 'compacted',
+        method: 'prune',
+        before_message_count: 256,
+        after_message_count: 170,
+        before_tokens: 74000,
+        after_tokens: 32000,
+        messages_evicted: 86,
+        current_run_reclaimed: 0,
       },
     })
-    expect(completed).toContain('[COMPACT] ✓ · L1 · 48 → 35 msgs · saved 42k (25%)')
-    expect(completed).toContain('    context   ')
-    expect(completed).toContain('    map       [··OHHH··SS]   · kept   O Outline   H HeadTail   S Summarized')
-    expect(completed).toContain('    summary   outlined 2 · head-tail 3')
-    expect(completed).toContain('    actions   #12 read_file HeadTail 18k → 4k (−14k)')
+    const lines = pruned.split('\n')
+    expect(lines[0]).toBe('[COMPACT] ✓ · jev prune · no summary · threshold · 256 → 170 msgs · 74k → 32k · saved 42k (57%)')
+    expect(pruned).not.toContain('L3')
+    expect(pruned).not.toContain('reclaimed')
+    expect(lines.at(-1)).toBe('    summary   removed 86 stale tool msgs')
+    const card = buildEventCard(pruned)
+    expect(card[0]!.text).toBe('✦ compact')
+    expect(card[1]!.text).toContain('jev prune · no summary')
   })
 })
 

@@ -79,6 +79,7 @@ pub enum ManualCompactionOutcome {
         context_window: usize,
         messages_evicted: usize,
         current_run_reclaimed: usize,
+        /// Deprecated wire field, always 3; compaction has no levels anymore.
         compaction_level: usize,
         used_fallback: bool,
         #[serde(skip_serializing_if = "Option::is_none")]

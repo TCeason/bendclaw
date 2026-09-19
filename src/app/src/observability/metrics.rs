@@ -73,12 +73,12 @@ pub struct ToolAggStats {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactRecord {
+    /// Deprecated wire field from leveled compaction; compaction has no
+    /// levels anymore. Still serialized for old readers, never read.
     pub level: u8,
     pub from_tokens: usize,
     pub to_tokens: usize,
-    /// Per-message action map: each char represents one original message.
-    /// `.` = kept, `O` = Outline, `H` = HeadTail, `S` = Summarized,
-    /// `D` = Dropped, `C` = Cleared, `X` = OversizeCapped
+    /// Deprecated wire field from leveled compaction; always empty.
     pub action_map: String,
 }
 

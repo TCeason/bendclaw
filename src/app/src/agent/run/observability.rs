@@ -106,6 +106,9 @@ impl StatsAggregator {
                     self.compact_history.push(record);
                 }
             }
+            // Applied prunes reach the compact history through their own
+            // CompactionCompleted record; the decide rounds are evaluation data.
+            TranscriptStats::ContextPruned(_) => {}
             TranscriptStats::RunFinished(s) => {
                 self.run_duration_ms = Some(s.duration_ms);
                 self.run_usage = Some(s.usage.clone());

@@ -4,7 +4,7 @@
  * Used by both reducer.ts (real-time streaming) and transcript.ts (history replay)
  * to produce identical output from stats event data.
  */
-import { formatDuration, humanTokens, renderBar, renderPositionBar, type CompactionAction } from './format.js'
+import { formatDuration, humanTokens, renderBar } from './format.js'
 import { formatCacheHitPercent } from './cache.js'
 import { streamTokenRate } from '../provider/stream-rate.js'
 
@@ -45,11 +45,14 @@ function msgBreakdown(ms: MessageStats | undefined): string {
   return parts.length > 0 ? ` · ${parts.join(' / ')}` : ''
 }
 
-function contextLine(used: number, contextWindow: number, saved?: number): string | undefined {
+function contextLine(used: number, contextWindow: number, saved?: number, judge?: string): string | undefined {
   if (contextWindow <= 0 || used <= 0) return undefined
   const pct = ((used / contextWindow) * 100).toFixed(0)
   const suffix = saved && saved > 0 ? `  (−${humanTokens(saved)})` : ''
-  return `    context   ${renderBar(used, contextWindow, 20)}   ${humanTokens(used)} / ${humanTokens(contextWindow)} · ${pct}%${suffix}`
+  // The catalog decides whether the judge-driven prune branch is on; say so
+  // where the number it acts on is shown.
+  const branch = judge ? ` · jev prune` : ''
+  return `    context   ${renderBar(used, contextWindow, 20)}   ${humanTokens(used)} / ${humanTokens(contextWindow)} · ${pct}%${suffix}${branch}`
 }
 
 function roleTokensLine(parts: string[]): string | undefined {
@@ -136,31 +139,6 @@ function compactMsgBreakdown(cms: MessageStats | undefined): string {
   return msgBreakdown(normalized)
 }
 
-function normalizeSummary(summary: string): string {
-  return summary.replace(/^↓\s*/, '').replace(/,\s*/g, ' · ')
-}
-
-function compactLegend(legend: string): string {
-  return legend
-    .replace(/·=unchanged\/kept/g, '· kept')
-    .replace(/·=kept/g, '· kept')
-    .replace(/([A-Z])=([A-Za-z]+)/g, '$1 $2')
-    .replace(/\s{2,}/g, '   ')
-}
-
-function formatAction(a: CompactionAction, prefix: string): string {
-  const idx = a.index ?? 0
-  const endIdx = a.end_index
-  const idxStr = endIdx != null ? `#${idx}..#${endIdx}` : `#${idx}`
-  const toolName = a.tool_name ?? ''
-  const method = a.method ?? 'unknown'
-  const bTok = a.before_tokens ?? 0
-  const aTok = a.after_tokens ?? 0
-  const saved = bTok - aTok
-  const name = method === 'Summarized' ? `turn(${1 + (a.related_count ?? 0)} msgs)` : toolName
-  return `${prefix}${idxStr.padEnd(8)} ${name.padEnd(11)} ${method.padEnd(12)} ${humanTokens(bTok).padStart(5)} → ${humanTokens(aTok).padStart(5)}   −${humanTokens(saved)}`
-}
-
 // ---------------------------------------------------------------------------
 // LLM call started
 // ---------------------------------------------------------------------------
@@ -187,7 +165,7 @@ export function formatLlmCallStarted(data: Record<string, unknown>): string {
       : ms
         ? sysTok + toolDefTok + (ms.user_tokens ?? 0) + (ms.assistant_tokens ?? 0) + (ms.tool_result_tokens ?? 0) + (ms.image_tokens ?? 0)
         : 0
-    const line = contextLine(total, contextWindow)
+    const line = contextLine(total, contextWindow, undefined, data.judge as string | undefined)
     if (line) lines.push(line)
   }
 
@@ -310,9 +288,7 @@ export function formatCompactionStarted(data: Record<string, unknown>): string {
   const sysTok = (data.system_prompt_tokens as number) ?? 0
   const toolDefTok = (data.tool_definition_tokens as number) ?? 0
   const cms = (data.message_stats as MessageStats | undefined) ?? (data.token_breakdown as MessageStats | undefined)
-  const level = (data.level as string | undefined) ?? (data.level_name as string | undefined)
-  const header = level ? `${level} · ${msgCount} msgs${compactMsgBreakdown(cms)}` : `${msgCount} msgs${compactMsgBreakdown(cms)}`
-  const lines: string[] = [`[COMPACT] ● · ${header}`]
+  const lines: string[] = [`[COMPACT] ● · ${msgCount} msgs${compactMsgBreakdown(cms)}`]
 
   const ctx = contextLine(estTokens, contextWindow)
   if (ctx) lines.push(ctx)
@@ -374,23 +350,28 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
       const reclaimed = (result.current_run_reclaimed as number) ?? 0
       const contextWindow = ((data.context_window as number) ?? 0)
       const method = (result.method as string | undefined) ?? 'local'
-      const methodLabel = method === 'remote'
-        ? 'remote'
-        : method === 'remote_failed_local'
-          ? 'remote failed → local'
-          : 'local'
       const remoteBlobBytes = (result.remote_blob_bytes as number | undefined) ?? 0
       const blobLabel = remoteBlobBytes > 0
         ? ` · blob ${remoteBlobBytes >= 1024 ? `${(remoteBlobBytes / 1024).toFixed(1)} KB` : `${remoteBlobBytes} B`}`
         : ''
-
-      const level = (result.compaction_level as number | undefined) ?? (evicted > 0 ? 3 : 0)
-      const summary = `evicted ${evicted} msgs · reclaimed ${reclaimed}`
-
       const reason = (data.reason as string | undefined) ?? 'threshold'
       const reasonLabel = reason === 'overflow' ? 'overflow recovery' : reason
+
+      // A prune compaction is the judge cutting stale tool calls until the
+      // context fits again; nothing was summarised, nothing was lost.
+      const methodLabel = method === 'prune'
+        ? 'jev prune · no summary'
+        : method === 'remote'
+          ? 'remote'
+          : method === 'remote_failed_local'
+            ? 'remote failed → local'
+            : 'local'
+      const summary = method === 'prune'
+        ? `removed ${evicted} stale tool msgs`
+        : `evicted ${evicted} msgs · reclaimed ${reclaimed}`
+
       const lines: string[] = []
-      lines.push(`[COMPACT] ✓ · ${methodLabel} · ${reasonLabel} · L${level} · ${beforeMsgs} → ${afterMsgs} msgs · ${humanTokens(before)} → ${humanTokens(after)} · saved ${humanTokens(saved)} (${savedPct}%)${blobLabel}`)
+      lines.push(`[COMPACT] ✓ · ${methodLabel} · ${reasonLabel} · ${beforeMsgs} → ${afterMsgs} msgs · ${humanTokens(before)} → ${humanTokens(after)} · saved ${humanTokens(saved)} (${savedPct}%)${blobLabel}`)
 
       const ctx = contextLine(after, contextWindow, saved)
       if (ctx) lines.push(ctx)
@@ -403,100 +384,179 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
       return lines.join('\n')
     }
 
-    case 'level_done':
-    case 'level_compacted': {
-      const level = (result.level as number) ?? 0
-      const beforeMsgs = ((result.before_message_count as number) ?? (result.messages_before as number)) ?? 0
-      const afterMsgs = ((result.after_message_count as number) ?? (result.messages_after as number)) ?? 0
-      const before = ((result.before_estimated_tokens as number) ?? (result.tokens_before as number)) ?? 0
-      const after = ((result.after_estimated_tokens as number) ?? (result.tokens_after as number)) ?? 0
-      const saved = before - after
-      const savedPct = before > 0 ? ((saved / before) * 100).toFixed(0) : '0'
-      const msgsDropped = (result.messages_dropped as number) ?? 0
-      const deltaMsgs = beforeMsgs - afterMsgs
-
-      const allActions = result.actions as CompactionAction[] | undefined
-      const sorted = allActions
-        ? [...allActions]
-            .filter(a => a.method !== 'Skipped')
-            .sort((a, b) => {
-              const sa = (a.before_tokens ?? 0) - (a.after_tokens ?? 0)
-              const sb = (b.before_tokens ?? 0) - (b.after_tokens ?? 0)
-              return sb - sa
-            })
-        : []
-
-      const { bar: generatedPosBar, legend: generatedLegend } = renderPositionBar(beforeMsgs, sorted, level)
-      const posBar = (result.map as string | undefined)?.trim() || generatedPosBar
-      const legend = (result.legend as string | undefined) || generatedLegend
-
-      let summary: string
-      if (level === 1) {
-        const summarized = sorted.filter(a => a.method === 'Summarized')
-        if (summarized.length > 0) {
-          const totalMsgs = summarized.reduce((s, a) => s + 1 + (a.related_count ?? 0), 0)
-          summary = `summarized ${summarized.length} turns (${totalMsgs} msgs → ${summarized.length} summaries)`
-        } else {
-          const explicitSummary = result.result as string | undefined
-          if (explicitSummary) {
-            summary = normalizeSummary(explicitSummary)
-          } else {
-            const outlineCount = sorted.filter(a => a.method === 'Outline').length
-            const headtailCount = sorted.filter(a => a.method === 'HeadTail').length
-            const parts: string[] = []
-            if (outlineCount > 0) parts.push(`outlined ${outlineCount}`)
-            if (headtailCount > 0) parts.push(`head-tail ${headtailCount}`)
-            summary = parts.length > 0 ? parts.join(' · ') : 'no changes'
-          }
-        }
-      } else if (level === 2) {
-        const kept = Math.max(afterMsgs - 1, 0)
-        summary = `dropped ${msgsDropped} msgs · kept ${kept} + 1 marker`
-      } else {
-        summary = deltaMsgs > 0 ? `dropped ${deltaMsgs} msgs` : 'no changes'
-      }
-
-      const lines: string[] = []
-      lines.push(`[COMPACT] ✓ · L${level} · ${beforeMsgs} → ${afterMsgs} msgs · saved ${humanTokens(saved)} (${savedPct}%)`)
-
-      const contextWindow = ((data.context_window as number) ?? (result.context_window as number)) ?? 0
-      const ctx = contextLine(after, contextWindow, saved)
-      if (ctx) lines.push(ctx)
-
-      lines.push(`    summary   ${summary}`)
-      lines.push(`    map       ${legend ? `${posBar}   ${compactLegend(legend)}` : posBar}`)
-
-      const explicitDetails = result.details as string[] | undefined
-      if (explicitDetails && explicitDetails.length > 0) {
-        const [, ...rest] = explicitDetails
-        const details = rest.length > 0 ? rest : explicitDetails
-        const TOP = 3
-        const TAIL = 2
-        const shown = details.length <= TOP + TAIL ? details : [...details.slice(0, TOP), `… ${details.length - TOP - TAIL} more`, ...details.slice(details.length - TAIL)]
-        const [first, ...tail] = shown
-        lines.push(`    actions   ${(first ?? '').replace(/~/g, '')}`)
-        for (const line of tail) lines.push(`              ${line.replace(/~/g, '')}`)
-      } else if (sorted.length > 0) {
-        const TOP = 3
-        const TAIL = 2
-        const shown = sorted.length <= TOP + TAIL ? sorted : [...sorted.slice(0, TOP), ...sorted.slice(sorted.length - TAIL)]
-        const omitted = sorted.length - shown.length
-        const omittedTokens = sorted.length > shown.length
-          ? sorted.slice(TOP, sorted.length - TAIL).reduce((sum, a) => sum + ((a.before_tokens ?? 0) - (a.after_tokens ?? 0)), 0)
-          : 0
-
-        for (let i = 0; i < shown.length; i++) {
-          if (i === TOP && omitted > 0) {
-            lines.push(`              … ${omitted} more   −${humanTokens(omittedTokens)}`)
-          }
-          lines.push(formatAction(shown[i], i === 0 ? '    actions   ' : '              '))
-        }
-      }
-
-      return lines.join('\n')
-    }
-
     default:
       return `[COMPACT] ✓ · ${type}`
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// Judge prune (decide / apply)
+// ---------------------------------------------------------------------------
+
+interface PruneVerdict {
+  call_id: string
+  tool_name: string
+  arguments: string
+  decision: 'keep' | 'truncate' | 'remove'
+  keep_call?: number | null
+  keep_result?: number | null
+  saves_tokens: number
+}
+
+interface PruneRequest {
+  message_index: number
+  text: string
+  probability?: number | null
+  in_play: boolean
+}
+
+interface PruneDecided {
+  verdicts: PruneVerdict[]
+  context_tokens: number
+  pending_tokens: number
+  requests: number
+  elapsed_ms: number
+  user_requests?: PruneRequest[]
+}
+
+interface PruneApplied {
+  removed: number
+  truncated: number
+  skipped: number
+  before_tokens: number
+  after_tokens: number
+  before_messages: number
+  after_messages: number
+  trigger: 'savings' | 'cold_cache' | 'before_compaction' | 'manual'
+}
+
+const APPLY_TRIGGER_LABEL: Record<PruneApplied['trigger'], string> = {
+  savings: 'savings ≥ 20% of context',
+  cold_cache: 'cache cold',
+  before_compaction: 'before compaction',
+  manual: 'manual',
+}
+
+function pct(value: number | null | undefined): string {
+  return value === null || value === undefined ? '  –' : `${Math.round(value * 100).toString().padStart(3)}%`
+}
+
+/**
+ * One judge round. The header is the summary; the task line says which user
+ * requests the verdicts were judged against; each verdict follows as a
+ * detail line so the stream can collapse them behind ctrl+o:
+ *   [JEV] · 14 judged · remove 9 · truncate 2 · keep 3 · −38k pending · 2 req · 310ms
+ *       task  [31] 88% analyse whether… · [61] 91% what triggers… · closed [0] 5% hi · [2] 20% fix the…
+ *       remove   Read  {"path":"src/a.ts"}   call 12% · result  4% · −3.1k
+ */
+export function formatJevDecided(decided: PruneDecided, contextWindow: number): string {
+  const counts = { keep: 0, truncate: 0, remove: 0 }
+  for (const v of decided.verdicts) counts[v.decision] += 1
+  const parts = [
+    `${decided.verdicts.length} judged`,
+    `remove ${counts.remove}`,
+    `truncate ${counts.truncate}`,
+    `keep ${counts.keep}`,
+    `−${humanTokens(decided.pending_tokens)} pending`,
+    `${decided.requests} req`,
+    formatDuration(decided.elapsed_ms),
+  ]
+  const lines = [`[JEV] · ${parts.join(' · ')}`]
+  const ctx = contextLine(decided.context_tokens, contextWindow)
+  if (ctx) lines.push(ctx)
+  const task = formatJevTask(decided.user_requests ?? [])
+  if (task) lines.push(`    ${task}`)
+  for (const v of decided.verdicts) {
+    const args = v.arguments.length > 60 ? `${v.arguments.slice(0, 57)}…` : v.arguments
+    const saved = v.saves_tokens > 0 ? ` · −${humanTokens(v.saves_tokens)}` : ''
+    lines.push(`    ${v.decision.padEnd(8)} ${v.tool_name}  ${args}   call ${pct(v.keep_call)} · result ${pct(v.keep_result)}${saved}`)
+  }
+  return lines.join('\n')
+}
+
+const TASK_TEXT_CHARS = 24
+
+/**
+ * The user requests a decide round judged against, in play first, closed
+ * after. Empty when the round recorded none (older sessions, single request).
+ */
+export function formatJevTask(requests: PruneRequest[]): string {
+  if (requests.length === 0) return ''
+  const one = (r: PruneRequest): string => {
+    const text = r.text.replace(/\s+/g, ' ').trim()
+    const short = text.length > TASK_TEXT_CHARS ? `${text.slice(0, TASK_TEXT_CHARS - 1)}…` : text
+    const p = r.probability === null || r.probability === undefined ? '' : `${Math.round(r.probability * 100)}% `
+    return `[${r.message_index}] ${p}${short}`
+  }
+  const inPlay = requests.filter(r => r.in_play).map(one)
+  const closed = requests.filter(r => !r.in_play).map(one)
+  const parts = [`task  ${inPlay.join(' · ')}`]
+  if (closed.length > 0) parts.push(`closed ${closed.join(' · ')}`)
+  return parts.join(' · ')
+}
+
+/**
+ *   [JEV] ✂ · removed 9 · truncated 2 · 120k → 82k (−38k) · cache cold
+ */
+export function formatJevApplied(applied: PruneApplied, contextWindow: number): string {
+  const saved = applied.before_tokens - applied.after_tokens
+  const parts = [
+    `removed ${applied.removed}`,
+    `truncated ${applied.truncated}`,
+    `${humanTokens(applied.before_tokens)} → ${humanTokens(applied.after_tokens)} (−${humanTokens(Math.max(saved, 0))})`,
+    `${applied.before_messages} → ${applied.after_messages} msgs`,
+    APPLY_TRIGGER_LABEL[applied.trigger],
+  ]
+  if (applied.skipped > 0) parts.push(`${applied.skipped} skipped`)
+  const lines = [`[JEV] ✂ · ${parts.join(' · ')}`]
+  const ctx = contextLine(applied.after_tokens, contextWindow, saved)
+  if (ctx) lines.push(ctx)
+  return lines.join('\n')
+}
+
+
+// ---------------------------------------------------------------------------
+// Judge review of a tool-call window
+// ---------------------------------------------------------------------------
+
+export interface ReviewedCall {
+  tool_call_id: string
+  tool_name: string
+  arguments: string
+  relevance: number
+}
+
+/** Below this the judge thinks the call did not serve the task. */
+const OFF_TASK_BELOW = 0.4
+
+/**
+ * The verbose record of one review window, every score included:
+ *   [JEV] review · 6 calls · 2 off-task · avg 61%
+ *       14%  Read  {"path":"docs/notes.md"}
+ */
+export function formatToolCallsReviewed(calls: ReviewedCall[]): string {
+  const off = calls.filter(call => call.relevance < OFF_TASK_BELOW)
+  const avg = calls.length ? calls.reduce((sum, call) => sum + call.relevance, 0) / calls.length : 0
+  const lines = [`[JEV] review · ${calls.length} calls · ${off.length} off-task · avg ${Math.round(avg * 100)}%`]
+  for (const call of calls) {
+    lines.push(`    ${`${Math.round(call.relevance * 100)}%`.padStart(4)}  ${call.tool_name}  ${call.arguments}`)
+  }
+  return lines.join('\n')
+}
+
+/**
+ * The one line the user sees, and only when the window looks off-task: at
+ * least two calls, or a third of the window, below the threshold.
+ *   ⚑ jev: 2 of the last 6 tool calls look off-task · Read docs/notes.md 14% · Bash ls -R 22%
+ */
+export function reviewNotice(calls: ReviewedCall[]): string | undefined {
+  const off = calls.filter(call => call.relevance < OFF_TASK_BELOW)
+  if (off.length < 2 && off.length * 3 < calls.length) return undefined
+  const shown = off.slice(0, 3).map(call => {
+    const args = call.arguments.replace(/^\{|\}$/g, '').replace(/"(\w+)":/g, '$1=').replace(/"/g, '')
+    return `${call.tool_name} ${args.length > 40 ? `${args.slice(0, 37)}…` : args} ${Math.round(call.relevance * 100)}%`
+  })
+  const more = off.length > shown.length ? ` · +${off.length - shown.length}` : ''
+  return `  ⚑ jev: ${off.length} of the last ${calls.length} tool calls look off-task · ${shown.join(' · ')}${more}`
 }

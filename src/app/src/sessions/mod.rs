@@ -11,3 +11,4 @@ pub use queries::SessionQueries;
 pub use service::SessionSelection;
 pub use service::SessionService;
 pub use session::Session;
+pub use session::TurnAppend;
