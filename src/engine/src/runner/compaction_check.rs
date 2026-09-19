@@ -145,10 +145,16 @@ pub(super) async fn check_compaction(
         .after_response_with_contexts(messages, &usage, &current_model, contexts, cancel.clone())
         .await;
 
-    // Error/all-zero responses do not provide a direct context size. Estimate
-    // only from the selected model's latest real usage plus trailing messages;
-    // without that model-specific anchor there is no compaction decision. This
-    // prevents a model switch from compacting against the old model's boundary.
+    // Error/all-zero responses do not provide a direct context size. Mirror
+    // pi's `estimateContextTokens`: anchor on the selected model's latest real
+    // usage plus trailing messages when one exists; otherwise the full local
+    // estimate of the current history is the only size we have and still
+    // guards the window. Some gateways never report usage on tool_use
+    // responses (kimi-k3 via evot-pro), so a long tool-heavy run would
+    // otherwise grow past the model's limit with no compaction at all. The
+    // byte heuristic overcounts, which errs toward compacting early — the
+    // safe side of the window. A foreign model's usage is never the anchor,
+    // so a model switch cannot compact against the old model's boundary.
     // Any response the trigger already classified (overflow, exhausted, failed
     // recovery) must not re-enter through the estimate fallback.
     let anchor_estimate = if response.action == AfterResponseAction::Continue
@@ -156,10 +162,14 @@ pub(super) async fn check_compaction(
         && response.reason.is_none()
         && (usage_rejected || needs_usage_anchor_estimate(assistant_message))
     {
-        tracker.estimate_context_tokens_from_anchor_for_model(
-            messages,
-            Some(&current_model.provider),
-            Some(&current_model.model),
+        Some(
+            tracker
+                .estimate_context_tokens_from_anchor_for_model(
+                    messages,
+                    Some(&current_model.provider),
+                    Some(&current_model.model),
+                )
+                .unwrap_or(local_estimate),
         )
     } else {
         None

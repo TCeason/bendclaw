@@ -118,8 +118,9 @@ impl ContextTracker {
 
     /// Estimate from a real provider usage anchor, or return `None` when no
     /// valid post-compaction response exists. Compaction checks use this form to
-    /// match pi: zero-usage/error responses may fall back to prior usage, but
-    /// must not trigger from a full-history local estimate alone.
+    /// match pi: zero-usage/error responses fall back to the latest prior usage
+    /// of the selected model, and only when none exists does the caller size
+    /// the full history locally.
     pub fn estimate_context_tokens_from_anchor_for_model(
         &self,
         messages: &[AgentMessage],

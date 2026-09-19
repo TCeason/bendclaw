@@ -746,7 +746,8 @@ async fn test_model_switch_sends_first_request_without_precompaction() {
         provider: "local".into(),
         usage: Usage {
             // Deliberately above the new model's 8,750-token threshold. This
-            // belongs to old-model and must not trigger pre-prompt compaction.
+            // belongs to old-model and must not trigger pre-prompt compaction;
+            // the history's own local estimate (~3.3k tokens) stays below it.
             input: 9_000,
             output: 100,
             total_tokens: 9_100,
@@ -760,7 +761,7 @@ async fn test_model_switch_sends_first_request_without_precompaction() {
         system_prompt: "test".into(),
         messages: vec![
             AgentMessage::Llm(Message::user("pinned")),
-            AgentMessage::Llm(Message::user("x".repeat(80_000))),
+            AgentMessage::Llm(Message::user("x".repeat(1_000))),
             AgentMessage::Llm(Message::user("recent ".repeat(1_700))),
             old_assistant,
         ],
@@ -1374,13 +1375,72 @@ async fn test_failed_summarizer_still_sends_the_main_request() {
 }
 
 #[tokio::test]
-async fn test_no_usage_anchor_defers_to_provider() {
+async fn test_no_usage_anchor_compacts_from_local_estimate() {
+    use evotengine::context::ContextConfig;
+
+    // No assistant in the history carries usage (e.g. a gateway that never
+    // reports usage on tool_use responses). pi's `estimateContextTokens` then
+    // sizes the whole history locally; over the threshold that must compact
+    // before the prompt is sent instead of growing past the window forever.
+    let output = TestHarness::new()
+        .responses(vec![
+            // Consumed by the compaction summarizer before the prompt.
+            MockResponse::Text("summary".into()),
+            MockResponse::Text("provider accepted request".into()),
+        ])
+        .prior_messages(
+            (0..10)
+                .flat_map(|index| {
+                    [
+                        AgentMessage::Llm(Message::user(format!(
+                            "history {index} {}",
+                            "x".repeat(400)
+                        ))),
+                        assistant_msg_for_test("tool-use answer without usage"),
+                    ]
+                })
+                .collect(),
+        )
+        .context_config(ContextConfig {
+            max_context_tokens: 1_100,
+            system_prompt_tokens: 0,
+            advertised_context_window: None,
+            reserve_tokens: Some(137),
+            trigger_tokens: None,
+            keep_recent_tokens: Some(220),
+        })
+        .run("continue")
+        .await;
+
+    let compact_index = output
+        .events
+        .iter()
+        .position(|event| matches!(event, AgentEvent::ContextCompactionEnd { .. }))
+        .expect("zero-usage history over the threshold must compact from the local estimate");
+    let call_index = output
+        .events
+        .iter()
+        .position(|event| matches!(event, AgentEvent::LlmCallStart { .. }))
+        .expect("the prompt must still be sent");
+    assert!(
+        compact_index < call_index,
+        "compaction must precede the request"
+    );
+    assert!(output.messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::Llm(Message::Assistant { content, .. })
+            if content.iter().any(|block| matches!(block, Content::Text { text } if text == "provider accepted request"))
+    )));
+}
+
+#[tokio::test]
+async fn test_no_usage_anchor_below_threshold_does_not_compact() {
     use evotengine::context::ContextConfig;
 
     let output = TestHarness::new()
         .responses(vec![MockResponse::Text("provider accepted request".into())])
         .prior_messages(vec![
-            AgentMessage::Llm(Message::user("x".repeat(4_000))),
+            AgentMessage::Llm(Message::user("x".repeat(400))),
             assistant_msg_for_test("pinned assistant"),
         ])
         .context_config(ContextConfig {
@@ -1397,17 +1457,11 @@ async fn test_no_usage_anchor_defers_to_provider() {
     assert!(output
         .events
         .iter()
+        .all(|event| !matches!(event, AgentEvent::ContextCompactionEnd { .. })));
+    assert!(output
+        .events
+        .iter()
         .any(|event| matches!(event, AgentEvent::LlmCallStart { .. })));
-    assert!(output.messages.iter().any(|message| matches!(
-        message,
-        AgentMessage::Llm(Message::Assistant { content, .. })
-            if content.iter().any(|block| matches!(block, Content::Text { text } if text == "provider accepted request"))
-    )));
-    assert!(output.events.iter().all(|event| !matches!(
-        event,
-        AgentEvent::Error { error }
-            if error.message.contains("request was not sent")
-    )));
 }
 
 fn assistant_msg_for_test(text: &str) -> AgentMessage {

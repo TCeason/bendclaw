@@ -130,6 +130,17 @@ describe('typed run reducer', () => {
     expect(compacted.currentRunStats.compactHistory).toEqual([{ level: 2, beforeTokens: 100, afterTokens: 25 }])
   })
 
+  test('first llm_call_started of a process prints the context line from its own window', () => {
+    const initial = createInitialState('model', '/tmp')
+    const started = apply(initial, 'llm_call_started', {
+      turn: 1, attempt: 0, injected_count: 0, model: 'kimi-k3', message_count: 3, message_bytes: 1,
+      estimated_context_tokens: 120_000, system_prompt_tokens: 4_000, tool_count: 0, context_window: 1_000_000,
+    })
+    const text = started.verboseEvents.at(-1)?.text ?? ''
+    expect(text).toContain('context')
+    expect(text).toContain('120k / 1M')
+  })
+
   test('implausible provider usage keeps the engine estimate for the footer', () => {
     const initial = createInitialState('model', '/tmp')
     const started = apply(initial, 'llm_call_started', {

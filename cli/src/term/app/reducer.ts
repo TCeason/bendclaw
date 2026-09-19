@@ -238,7 +238,9 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         ...p,
         model,
         turn,
-        context_window: state.currentRunStats.contextWindow,
+        // The event carries the window for this request; the previous state
+        // is only a fallback (it is 0 on the first call of a process).
+        context_window: p.context_window ?? state.currentRunStats.contextWindow,
       }
       const text = formatLlmCallStarted(data)
 

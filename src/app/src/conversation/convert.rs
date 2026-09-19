@@ -84,6 +84,16 @@ pub fn transcript_from_agent_message(message: &evot_engine::AgentMessage) -> Tra
     }
 }
 
+/// Timestamp for history items whose original time was not persisted.
+///
+/// `ContextTracker` only trusts an assistant's usage as a context anchor when
+/// that assistant is not older than any message before it. Stamping replayed
+/// user / tool-result items with the resume time would make every stored
+/// assistant look stale, discard the provider's own token counts, and fall back
+/// to the full-history byte estimate (which showed "212%" of the window after a
+/// resume). Zero means "time unknown" and never invalidates an anchor.
+const HISTORY_TIMESTAMP_UNKNOWN: u64 = 0;
+
 /// Convert a single TranscriptItem to an engine AgentMessage.
 pub fn agent_message_from_transcript(item: &TranscriptItem) -> evot_engine::AgentMessage {
     match item {
@@ -116,7 +126,7 @@ pub fn agent_message_from_transcript(item: &TranscriptItem) -> evot_engine::Agen
             };
             evot_engine::AgentMessage::Llm(evot_engine::Message::User {
                 content,
-                timestamp: evot_engine::now_ms(),
+                timestamp: HISTORY_TIMESTAMP_UNKNOWN,
             })
         }
         TranscriptItem::Assistant {
@@ -150,7 +160,7 @@ pub fn agent_message_from_transcript(item: &TranscriptItem) -> evot_engine::Agen
                 text: content.clone(),
             }],
             is_error: *is_error,
-            timestamp: evot_engine::now_ms(),
+            timestamp: HISTORY_TIMESTAMP_UNKNOWN,
             retention: evot_engine::Retention::Normal,
         }),
         TranscriptItem::System { text } => evot_engine::AgentMessage::Extension(
@@ -166,7 +176,7 @@ pub fn agent_message_from_transcript(item: &TranscriptItem) -> evot_engine::Agen
                         .as_user_text()
                         .unwrap_or_default(),
                 }],
-                timestamp: evot_engine::now_ms(),
+                timestamp: HISTORY_TIMESTAMP_UNKNOWN,
             })
         }
         // Marker items should never reach conversion — filtered by resolve_transcript.
