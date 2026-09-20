@@ -151,6 +151,21 @@ describe('repl selector control', () => {
     expect(handleSelectorControl(state, key('enter'))).toEqual({ kind: 'select-model', spec: 'anthropic:claude' })
   })
 
+  test('model space switches and saves the row as the account default', () => {
+    const state = createAppSelectorState('model', 'Select model', [{ label: 'claude', id: 'anthropic:claude', detail: 'anthropic' }])
+    expect(handleSelectorControl(state, { type: 'char', char: ' ' })).toEqual({ kind: 'pin-default-model', spec: 'anthropic:claude' })
+    // Space never leaks into the filter: model ids carry no spaces.
+    expect(handleSelectorControl(state, { type: 'char', char: ' ' }).kind).not.toBe('update')
+  })
+
+  test('space stays a filter character outside the live model picker', () => {
+    const task = createAppSelectorState('taskModel', 'Task model', [{ label: 'claude', id: 'anthropic:claude' }])
+    const action = handleSelectorControl(task, { type: 'char', char: ' ' })
+    expect(action.kind).toBe('update')
+    const resume = handleSelectorControl(createAppSelectorState('resume', RESUME_SELECTOR_TITLE, items), { type: 'char', char: ' ' })
+    expect(resume.kind).toBe('update')
+  })
+
   test('skill inventory enter is read-only', () => {
     const state = createAppSelectorState('skill', SKILL_SELECTOR_TITLE, [{ label: 'review', id: 'review' }])
     expect(handleSelectorControl(state, key('enter'))).toEqual({ kind: 'none' })

@@ -1,4 +1,5 @@
 import type { ConfigInfo } from '../../native/contracts/config-info.js'
+import type { Hint } from '../design/key-hints.js'
 import {
   selectorFocusOn,
   type SelectorEffort,
@@ -10,14 +11,25 @@ import { currentModelSpec, modelOptions, modelSelectorItems } from './provider.j
 import { RESUME_SELECTOR_TITLE } from './resume.js'
 
 /** One factory for preview and explicitly opened model windows. */
+/** Enter uses a model for this session only; Space also saves it to the
+ *  account so every new session (on any machine) starts there. */
+export const MODEL_WINDOW_HINTS: Hint[] = [
+  { keys: ['up', 'down'], action: 'move' },
+  { keys: 'enter', action: 'use' },
+  { keys: 'space', action: 'set default' },
+  { keys: 'type', action: 'filter' },
+  { keys: 'escape', action: 'close' },
+]
+
 export function createModelWindow(config: ConfigInfo | undefined, model: string, listFocused = false): SelectorState {
   const models = modelOptions(config, model)
   const activeSpec = currentModelSpec(config, model)
   return selectorFocusOn({
-    ...createAppSelectorState('model', 'Models', modelSelectorItems(models, activeSpec, config?.thinkingLevel)),
+    ...createAppSelectorState('model', 'Models', modelSelectorItems(models, activeSpec, config?.thinkingLevel, config?.defaultModel)),
     presentation: 'model',
     circularNavigation: true,
     listFocused,
+    hints: MODEL_WINDOW_HINTS,
   }, item => item.id === activeSpec)
 }
 

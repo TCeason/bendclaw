@@ -67,7 +67,15 @@ fn config_info_contract_round_trips_shared_fixtures() -> TestResult {
             serde_json::from_str::<serde_json::Value>(&written)?,
             original
         );
-        let legacy: LegacyConfigInfo = serde_json::from_str(&written)?;
+        // The strict legacy reader predates the additive-optional top-level
+        // keys (`judge`, `defaultModel`); a c922f341 client ignored unknown
+        // keys, so stripping them is what that reader actually saw.
+        let mut for_legacy: serde_json::Value = serde_json::from_str(&written)?;
+        if let Some(object) = for_legacy.as_object_mut() {
+            object.remove("judge");
+            object.remove("defaultModel");
+        }
+        let legacy: LegacyConfigInfo = serde_json::from_value(for_legacy)?;
         assert_eq!(legacy.provider, current.provider);
         assert_eq!(legacy.protocol, current.protocol);
         assert_eq!(legacy.env_path, current.env_path);
@@ -76,6 +84,19 @@ fn config_info_contract_round_trips_shared_fixtures() -> TestResult {
         assert_eq!(legacy.available_models, current.available_models);
         assert_eq!(legacy.thinking_level, current.thinking_level);
     }
+    // The account default is additive-optional: legacy payloads read as "no
+    // pin" and writers omit the key rather than emit an empty marker.
+    let legacy_fixture: ConfigInfo = serde_json::from_str(include_str!(
+        "../../../cli/tests/fixtures/contracts/config-info-legacy.json"
+    ))?;
+    assert_eq!(legacy_fixture.default_model, None);
+    let current_fixture: ConfigInfo = serde_json::from_str(include_str!(
+        "../../../cli/tests/fixtures/contracts/config-info-current.json"
+    ))?;
+    assert_eq!(
+        current_fixture.default_model.as_deref(),
+        Some("fixture-model")
+    );
     Ok(())
 }
 

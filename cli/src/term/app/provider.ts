@@ -145,6 +145,7 @@ export function modelSelectorItems(
   options: ModelOption[],
   activeSpec: string,
   activeLevel?: string,
+  defaultModel?: string,
 ): SelectorItem[] {
   const items: SelectorItem[] = []
   let lastGroup: string | undefined
@@ -158,12 +159,16 @@ export function modelSelectorItems(
     const label = formatModelOptionLabel(option)
     const active = option.spec === activeSpec
     const effort = modelEffort(option, active ? activeLevel || undefined : undefined)
+    // The account pin is a cloud wire id; a BYOK model with the same id is a
+    // different thing and never inherits the star.
+    const pinned = defaultModel !== undefined && isCloudModel(option) && option.model === defaultModel
     items.push({
       label,
       ...(detail ? { detail } : {}),
       id: option.spec,
       group,
       selected: active,
+      ...(pinned ? { pinned } : {}),
       ...(effort ? { effort } : {}),
       searchText: `${label} ${option.model} ${option.free?.tagline ?? ''} ${detail} ${option.protocol ?? ''}`,
     })

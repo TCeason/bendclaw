@@ -19,6 +19,8 @@ export interface SelectorItem {
   header?: boolean
   /** Marks the active choice without mixing status into detail text. */
   selected?: boolean
+  /** Marks the account's saved default (the row new sessions start on). */
+  pinned?: boolean
   /** Opaque identifier (e.g. full session id) — not displayed. */
   id?: string
   /** Extra text searched but not displayed (e.g. full session id, cwd). */

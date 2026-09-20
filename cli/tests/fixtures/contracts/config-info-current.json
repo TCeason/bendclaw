@@ -13,5 +13,6 @@
     },
     { "provider": "byok", "protocol": "openai_responses", "model": "custom", "spec": "byok:custom" }
   ],
-  "thinkingLevel": "high"
+  "thinkingLevel": "high",
+  "defaultModel": "fixture-model"
 }

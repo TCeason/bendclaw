@@ -7,9 +7,12 @@ import current from './fixtures/contracts/config-info-current.json'
 // decoder so a future field removal/type change cannot update both unnoticed.
 function legacyReader(json: string): void {
   const value = JSON.parse(json)
-  expect(Object.keys(value).sort()).toEqual([
+  // Top-level additive-optional fields a c922f341 reader simply ignored.
+  const additive = ['judge', 'defaultModel']
+  expect(Object.keys(value).filter(key => !additive.includes(key)).sort()).toEqual([
     'availableModels', 'baseUrl', 'envPath', 'hasApiKey', 'protocol', 'provider', 'thinkingLevel',
   ])
+  if (value.defaultModel !== undefined) expect(typeof value.defaultModel).toBe('string')
   for (const key of ['provider', 'envPath', 'thinkingLevel']) expect(typeof value[key]).toBe('string')
   expect(['anthropic', 'openai', 'openai_responses']).toContain(value.protocol)
   expect(typeof value.hasApiKey).toBe('boolean')
@@ -63,6 +66,12 @@ describe('ConfigInfo boundary', () => {
     const json = JSON.stringify(current)
     legacyReader(json)
     expect(decodeConfigInfo(json)).toEqual(current)
+    expect(decodeConfigInfo(json).defaultModel).toBe('fixture-model')
+  })
+
+  test('legacy payloads carry no account default and none is fabricated', () => {
+    expect(decodeConfigInfo(JSON.stringify(legacy)).defaultModel).toBeUndefined()
+    expect(() => decodeConfigInfo(JSON.stringify({ ...current, defaultModel: 7 }))).toThrow('$.defaultModel')
   })
 
   test('empty cloud metadata and nullable base URL are valid', () => {
@@ -96,6 +105,11 @@ describe('ConfigInfo boundary', () => {
     for (const key of Object.keys(current)) {
       const payload: Record<string, unknown> = { ...current }
       delete payload[key]
+      // The account default is additive-optional: absent means "no pin".
+      if (key === 'defaultModel') {
+        expect(decodeConfigInfo(JSON.stringify(payload)).defaultModel).toBeUndefined()
+        continue
+      }
       expect(() => decodeConfigInfo(JSON.stringify(payload))).toThrow(`$.${key}`)
     }
   })

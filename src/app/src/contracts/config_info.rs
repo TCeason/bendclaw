@@ -17,4 +17,8 @@ pub struct ConfigInfo {
     /// context pruning is on for this client.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub judge: Option<String>,
+    /// The account's pinned landing model (cloud wire id) from the server, so
+    /// the picker can mark it. Absent when the account has no pin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
 }

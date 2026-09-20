@@ -1194,11 +1194,22 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
   refreshConfigInfo()
 
-  // Every explicit model switch also becomes the account default, so the next
-  // `evot` (here or on another machine) starts on it. Best effort: a refused or
-  // unreachable server must not undo the live switch the user just made.
-  const pinDefaultModel = () => {
-    agent.pinDefaultModel().catch(() => {})
+  /** Save the live model as the account default (Space in the picker). The
+   *  switch already happened, so a refused or unreachable server only costs
+   *  the pin, never the model the user is now on. */
+  async function pinDefaultModel(label: string): Promise<void> {
+    try {
+      const pinned = await agent.pinDefaultModel()
+      if (pinned === null) {
+        commitSystem('sys-model-pin', chalk.dim(`  ${label} is a local provider — its default lives in evot.env, not on your account`))
+      } else {
+        refreshConfigInfo()
+        commitSystem('sys-model-pin', chalk.dim(`  ★ ${label} is now the default for new sessions on this account`))
+      }
+    } catch (err) {
+      commitSystem('sys-model-pin', chalk.red(`  Could not save default model: ${errorText(err)}`))
+    }
+    renderer.requestRender()
   }
 
   const premiumAccount = hasPremiumModel(configInfo)
@@ -3088,7 +3099,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (name === '/model' && args) {
       refreshConfigInfo()
       appState = { ...appState, model: agent.model }
-      pinDefaultModel()
     }
 
     if (name === '/plan') {
@@ -3466,7 +3476,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
     const models = modelOptions(configInfo, agent.model)
     const activeSpec = currentModelSpec(configInfo, agent.model)
-    const rebuilt = () => modelSelectorItems(models, activeSpec, configInfo?.thinkingLevel)
+    const rebuilt = () => modelSelectorItems(models, activeSpec, configInfo?.thinkingLevel, configInfo?.defaultModel)
     if (overlay.kind === 'selector' && overlay.state.owner === SELECTOR_OWNER.model) {
       overlay = {
         kind: 'selector',
@@ -3821,7 +3831,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         renderer.requestRender()
         return
       }
-      case 'select-model': {
+      case 'select-model':
+      case 'pin-default-model': {
         overlay = { kind: 'none' }
         focusedCommandWindowGeneration = null
         nextCommandWindowGeneration()
@@ -3847,7 +3858,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           const model = selected?.model ?? agent.model
           const provider = selected?.provider ?? configInfo?.provider ?? ''
           appState = { ...appState, model }
-          pinDefaultModel()
           const label = formatModelLabel(model, provider, selected?.group_label)
           // Effort shares the model's status slot: they were chosen together, so
           // reporting them apart would read as two unrelated switches.
@@ -3857,6 +3867,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             text: `  Model → ${label}${effort ? ` · thinking ${effort}` : ''}`,
             shareEvents: modelShareEvents(provider, model, effort),
           })
+          if (action.kind === 'pin-default-model') void pinDefaultModel(label)
         } catch (err) {
           commitSystem('sys-model-err', chalk.red(`  Failed to switch model: ${errorText(err)}`))
         }

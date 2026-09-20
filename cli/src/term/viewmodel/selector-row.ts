@@ -64,6 +64,12 @@ export function buildSelectorRow(item: SelectorItem, options: SelectorRowOptions
       ? [{ text: `${detailGap}${item.detail}`, hex: selectionMutedHex, bg }]
       : highlightSelectorMatches(`${detailGap}${item.detail}`, query, { dim: true })
     : []
+  const pinned = item.pinned
+    ? [
+        { text: ' ', ...(bg ? { bg } : {}) },
+        { text: '★', hex: brandHex, ...(bg ? { bg } : {}) },
+      ]
+    : []
   const selected = item.selected
     ? [
         { text: ' ', ...(bg ? { bg } : {}) },
@@ -72,7 +78,7 @@ export function buildSelectorRow(item: SelectorItem, options: SelectorRowOptions
     : []
 
   return {
-    spans: [prefix, ...label, ...detail, ...selected],
+    spans: [prefix, ...label, ...detail, ...pinned, ...selected],
     ...(bg ? { bg } : {}),
   }
 }

@@ -486,6 +486,7 @@ impl NapiAgent {
             available_models: available,
             thinking_level,
             judge: config.judge.as_ref().map(|judge| judge.model.clone()),
+            default_model: config.cloud_default_model.clone(),
         };
         serde_json::to_string(&info).map_err(|e| Error::from_reason(format!("serialize: {e}")))
     }
