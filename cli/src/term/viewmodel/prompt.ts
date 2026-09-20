@@ -78,11 +78,11 @@ function overflowLabel(arrow: '↑' | '↓', count: number): string | undefined 
 }
 
 /**
- * The top border label. Mode and scroll overflow compete for one slot, so they
- * share it: `╭─ plan · ↑ 3 lines ──╮`. Mode leads because it says what pressing
+ * The top rule label. Mode and scroll overflow compete for one slot, so they
+ * share it: `── plan · ↑ 3 lines ────`. Mode leads because it says what pressing
  * enter will do, while overflow only says where you are in a draft.
  *
- * The label carries the mode as text, not just as border hue — colour alone
+ * The label carries the mode as text, not just as rule hue — colour alone
  * fails on monochrome terminals and for colour-blind users.
  */
 function topLabel(modes: string[], overflow: string | undefined): string | undefined {
@@ -121,8 +121,8 @@ export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOpt
   )
   // The candidate list already gives the composer height, so the blank-row
   // floor only applies when no menu is open. Otherwise the two stack and push
-  // the candidates away from what you typed. Rails are what make the blanks
-  // read as composer space, so an unframed terminal gets none.
+  // the candidates away from what you typed. The caret indent is what makes
+  // the blanks read as composer space, so an unframed terminal gets none.
   const filler = completionLines.length > 0 || !frame.framed
     ? 0
     : Math.max(0, minInputRows(rows) - inputRows.length)
@@ -133,23 +133,25 @@ export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOpt
   const blank = () => frame.row(line(plain('')))
 
   const blocks: ViewBlock[] = []
-  // On a very short terminal the border rows are two of very few, and the
+  // On a very short terminal the rule rows are two of very few, and the
   // transcript needs them more than the composer needs an outline. The caret
   // still marks the row as the place you type, and the footer takes the mode
   // back over.
   if (frame.ruled) blocks.push(block([frame.top(topLabel(modeLabels, overflowLabel('↑', start)))], options.attachedAbove ? 0 : 1))
+  // The caret leads the first visible row only. Wrapped and later lines sit
+  // flush underneath, the way a multi-line shell prompt continues.
   blocks.push(block([
     ...Array.from({ length: above }, blank),
-    ...inputRows.map(frame.row),
+    ...inputRows.map((row, index) => frame.row(row, index === 0)),
     ...Array.from({ length: filler - above }, blank),
   ], frame.ruled ? undefined : (options.attachedAbove ? 0 : 1)))
 
   if (completionLines.length > 0) {
-    // A blank rail row separates what you typed from what is being suggested;
+    // A blank row separates what you typed from what is being suggested;
     // without it the selected candidate reads as a continuation of the input.
     // Only inside the frame: unframed terminals are too short to spend a row.
-    if (frame.framed) blocks.push(block([frame.row(line(plain('')))]))
-    blocks.push(block(completionLines.map(frame.row)))
+    if (frame.framed) blocks.push(block([blank()]))
+    blocks.push(block(completionLines.map(row => frame.row(row))))
   }
   if (frame.ruled) blocks.push(block([frame.bottom(overflowLabel('↓', visual.lines.length - end))]))
 
