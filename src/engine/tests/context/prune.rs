@@ -12,6 +12,7 @@ use evotengine::context::compaction::PruneOptions;
 use evotengine::judge::Answer;
 use evotengine::judge::Judge;
 use evotengine::judge::JudgeError;
+use evotengine::judge::JudgeLimits;
 use evotengine::judge::Question;
 use evotengine::types::*;
 use tokio_util::sync::CancellationToken;
@@ -24,6 +25,12 @@ const REQUEST_ROUND_HEAD: &str = "# User requests";
 struct FakeJudge {
     request_probs: HashMap<usize, f64>,
     fail_request_round: bool,
+    /// Fail any call-round batch asking about this call id.
+    fail_call_batch: Option<String>,
+    /// Answer call-round questions from here (by id); default 0.9.
+    call_probs: HashMap<String, f64>,
+    /// What this judge says it can take; `None` for the default (Jev).
+    limits: Option<JudgeLimits>,
     states: Mutex<Vec<(String, Vec<Question>)>>,
 }
 
@@ -73,10 +80,30 @@ impl Judge for FakeJudge {
                 })
                 .collect());
         }
+        if let Some(id) = &self.fail_call_batch {
+            if questions.iter().any(|q| q.id == format!("call_{id}")) {
+                return Err(JudgeError::Transport("input exceeds model window".into()));
+            }
+        }
         Ok(questions
             .iter()
-            .map(|q| (q.id.clone(), Answer::Noul { probability: 0.9 }))
+            .map(|q| {
+                let probability = *self.call_probs.get(&q.id).unwrap_or(&0.9);
+                (q.id.clone(), Answer::Noul { probability })
+            })
             .collect())
+    }
+
+    fn limits(&self) -> JudgeLimits {
+        self.limits.unwrap_or_default()
+    }
+}
+
+/// A judge that takes two questions per request: one candidate per batch.
+fn one_call_per_batch() -> JudgeLimits {
+    JudgeLimits {
+        request_tokens: 22_000,
+        max_questions: 2,
     }
 }
 
@@ -285,6 +312,73 @@ async fn failed_request_round_keeps_every_request_and_still_judges_calls() {
     );
 }
 
+/// One batch failing (a 400 from Jev) must not void the others: their
+/// verdicts land, and the failed calls stay undecided for the next round.
+#[tokio::test]
+async fn failed_call_batch_keeps_other_batches_and_leaves_its_calls_undecided() {
+    let options = PruneOptions::default();
+    let judge = FakeJudge {
+        fail_call_batch: Some("c1".into()),
+        limits: Some(one_call_per_batch()),
+        ..Default::default()
+    };
+    let mut ledger = PruneLedger::default();
+    let report = match ledger
+        .decide(&history(), &judge, &options, CancellationToken::new())
+        .await
+    {
+        Ok(report) => report,
+        Err(error) => panic!("one failed batch must not fail decide: {error}"),
+    };
+    let judged: Vec<&str> = report.verdicts.iter().map(|v| v.call_id.as_str()).collect();
+    assert_eq!(judged, vec!["c2"], "only the surviving batch is recorded");
+
+    assert!(
+        report.batches.iter().any(|b| b.failed.is_some()),
+        "the failed batch is on record"
+    );
+
+    // A later round with a working judge asks about c1 again.
+    let judge = FakeJudge {
+        limits: Some(one_call_per_batch()),
+        ..Default::default()
+    };
+    let report = match ledger
+        .decide(&history(), &judge, &options, CancellationToken::new())
+        .await
+    {
+        Ok(report) => report,
+        Err(error) => panic!("decide failed: {error}"),
+    };
+    assert!(
+        report.verdicts.iter().any(|v| v.call_id == "c1"),
+        "c1 stayed undecided and is asked again"
+    );
+}
+
+/// Every batch failing is still a failed round.
+#[tokio::test]
+async fn all_call_batches_failing_fails_decide() {
+    let options = PruneOptions::default();
+    let judge = FakeJudge {
+        fail_call_batch: Some("c1".into()),
+        limits: Some(one_call_per_batch()),
+        ..Default::default()
+    };
+    let mut messages = vec![
+        user("read these"),
+        user("and this"),
+        call("c1"),
+        result("c1"),
+    ];
+    messages.extend((0..6).map(|_| assistant("…")));
+    let mut ledger = PruneLedger::default();
+    let outcome = ledger
+        .decide(&messages, &judge, &options, CancellationToken::new())
+        .await;
+    assert!(outcome.is_err(), "no batch succeeded");
+}
+
 #[tokio::test]
 async fn single_request_skips_the_round() {
     let mut messages = vec![user("read these files"), call("c1"), result("c1")];
@@ -372,4 +466,336 @@ async fn call_questions_abridge_large_arguments() {
             );
         }
     }
+}
+
+// ------------------------------------------------------------ ledger cycle
+
+use evotengine::context::compaction::prune::Decision;
+use evotengine::context::compaction::ApplyTrigger;
+use evotengine::context::tokens::total_tokens;
+
+fn result_text(id: &str, text: &str) -> AgentMessage {
+    AgentMessage::Llm(Message::ToolResult {
+        tool_call_id: id.into(),
+        tool_name: "Read".into(),
+        content: vec![Content::Text { text: text.into() }],
+        is_error: false,
+        timestamp: 0,
+        retention: Retention::Normal,
+    })
+}
+
+/// One task, three judged calls (a, b, c) and a pinned recent call (d).
+fn transcript() -> Vec<AgentMessage> {
+    vec![
+        user("Fix the failing test."),
+        call("a"),
+        result_text("a", &"old file contents ".repeat(50)),
+        call("b"),
+        result_text("b", &"still relevant ".repeat(50)),
+        call("c"),
+        result_text("c", &"stale output ".repeat(50)),
+        user("continue"),
+        call("d"),
+        result_text("d", "recent"),
+    ]
+}
+
+fn short_tail() -> PruneOptions {
+    PruneOptions {
+        preserve_recent: 3,
+        decide_min_candidates: 1,
+        ..PruneOptions::default()
+    }
+}
+
+/// Keep b; keep a's call but drop its contents; remove c altogether.
+fn stale_judge() -> FakeJudge {
+    FakeJudge {
+        call_probs: HashMap::from([
+            ("result_a".into(), 0.1),
+            ("call_a".into(), 0.8),
+            ("result_c".into(), 0.05),
+            ("call_c".into(), 0.1),
+        ]),
+        ..Default::default()
+    }
+}
+
+async fn decide_with(
+    ledger: &mut PruneLedger,
+    judge: &FakeJudge,
+    messages: &[AgentMessage],
+    options: &PruneOptions,
+) -> DecideReport {
+    match ledger
+        .decide(messages, judge, options, CancellationToken::new())
+        .await
+    {
+        Ok(report) => report,
+        Err(error) => panic!("decide failed: {error}"),
+    }
+}
+
+fn tool_result_text(messages: &[AgentMessage], id: &str) -> Option<String> {
+    messages.iter().find_map(|m| match m {
+        AgentMessage::Llm(Message::ToolResult {
+            tool_call_id,
+            content,
+            ..
+        }) if tool_call_id == id => content.iter().find_map(|c| match c {
+            Content::Text { text } => Some(text.clone()),
+            _ => None,
+        }),
+        _ => None,
+    })
+}
+
+#[tokio::test]
+async fn deciding_records_verdicts_without_editing() {
+    let mut ledger = PruneLedger::default();
+    let messages = transcript();
+    let report = decide_with(&mut ledger, &stale_judge(), &messages, &short_tail()).await;
+    assert_eq!(report.verdicts.len(), 3);
+    let by_id: HashMap<_, _> = report
+        .verdicts
+        .iter()
+        .map(|v| (v.call_id.as_str(), v))
+        .collect();
+    assert_eq!(by_id["a"].decision, Decision::Truncate);
+    assert_eq!(by_id["b"].decision, Decision::Keep);
+    assert_eq!(by_id["c"].decision, Decision::Remove);
+    assert_eq!(by_id["c"].keep_result, Some(0.05));
+    assert_eq!(ledger.pending_count(), 2);
+    assert!(ledger.pending_tokens() > 0 && report.pending_tokens == ledger.pending_tokens());
+    assert_eq!(messages.len(), transcript().len(), "decide edits nothing");
+}
+
+#[tokio::test]
+async fn applying_edits_once_and_clears_the_ledger() {
+    let mut ledger = PruneLedger::default();
+    let messages = transcript();
+    decide_with(&mut ledger, &stale_judge(), &messages, &short_tail()).await;
+    let (pruned, report) = ledger.apply(messages, &short_tail(), ApplyTrigger::Manual);
+
+    assert_eq!(
+        (report.removed, report.truncated, report.skipped),
+        (1, 1, 0)
+    );
+    assert!(report.after_tokens < report.before_tokens);
+    assert_eq!(
+        pruned.len(),
+        transcript().len() - 2,
+        "c's call and result are gone"
+    );
+    let a = tool_result_text(&pruned, "a").unwrap_or_default();
+    assert!(a.contains("more chars pruned"), "{a}");
+    assert_eq!(ledger.pending_count(), 0);
+}
+
+#[tokio::test]
+async fn apply_waits_for_savings_or_a_cold_cache() {
+    let mut ledger = PruneLedger::default();
+    let messages = transcript();
+    decide_with(&mut ledger, &stale_judge(), &messages, &short_tail()).await;
+    let strict = PruneOptions {
+        apply_min_share: 0.99,
+        ..short_tail()
+    };
+    let context = total_tokens(&messages);
+    ledger.note_request(1_000_000);
+    assert_eq!(
+        ledger.apply_trigger(context, 1_000_000 + 1_000, &strict),
+        None
+    );
+    assert_eq!(
+        ledger.apply_trigger(context, 1_000_000 + strict.cache_ttl_ms, &strict),
+        Some(ApplyTrigger::ColdCache)
+    );
+    let generous = PruneOptions {
+        apply_min_share: 0.01,
+        ..short_tail()
+    };
+    assert_eq!(
+        ledger.apply_trigger(context, 1_000_000 + 1_000, &generous),
+        Some(ApplyTrigger::Savings)
+    );
+}
+
+#[tokio::test]
+async fn a_ledger_that_never_saw_a_request_treats_the_cache_as_cold() {
+    let mut ledger = PruneLedger::default();
+    let messages = transcript();
+    decide_with(&mut ledger, &stale_judge(), &messages, &short_tail()).await;
+    let strict = PruneOptions {
+        apply_min_share: 0.99,
+        ..short_tail()
+    };
+    // No `note_request` ever: a resumed session has no warm prefix to protect.
+    assert_eq!(
+        ledger.apply_trigger(total_tokens(&messages), 1, &strict),
+        Some(ApplyTrigger::ColdCache)
+    );
+}
+
+#[tokio::test]
+async fn decide_asks_about_the_oldest_candidates_first_and_caps_requests() {
+    let mut ledger = PruneLedger::default();
+    let messages = transcript(); // candidates a, b, c in that order
+    let judge = FakeJudge {
+        limits: Some(one_call_per_batch()),
+        ..stale_judge()
+    };
+    let options = PruneOptions {
+        max_requests_per_decide: 2,
+        ..short_tail()
+    };
+    let report = decide_with(&mut ledger, &judge, &messages, &options).await;
+    assert_eq!(
+        report.requests, 3,
+        "one user-request round, two call rounds"
+    );
+    assert_eq!(report.batches.len(), 2);
+    let asked: Vec<&str> = report.verdicts.iter().map(|v| v.call_id.as_str()).collect();
+    assert_eq!(asked, vec!["a", "b"], "c waits for the next round");
+    assert!(!ledger.is_fresh());
+    assert!(
+        ledger.should_decide(
+            &messages,
+            total_tokens(&messages) + options.decide_growth_tokens,
+            &options
+        ),
+        "c is still undecided"
+    );
+}
+
+#[tokio::test]
+async fn decide_is_rate_limited_by_context_growth() {
+    let mut ledger = PruneLedger::default();
+    let messages = transcript();
+    let options = short_tail();
+    let context = total_tokens(&messages);
+    assert!(ledger.should_decide(&messages, context, &options));
+    decide_with(&mut ledger, &stale_judge(), &messages, &options).await;
+    assert!(!ledger.should_decide(&messages, context, &options));
+    assert!(
+        !ledger.should_decide(&messages, context + options.decide_growth_tokens, &options),
+        "b was kept and a/c are pending: nothing new to ask about"
+    );
+}
+
+#[tokio::test]
+async fn unanswered_questions_never_delete() {
+    struct Silent;
+    #[async_trait]
+    impl Judge for Silent {
+        async fn ask(
+            &self,
+            _: &str,
+            _: &[Question],
+            _: CancellationToken,
+        ) -> Result<HashMap<String, Answer>, JudgeError> {
+            Ok(HashMap::new())
+        }
+    }
+    let mut ledger = PruneLedger::default();
+    let report = match ledger
+        .decide(
+            &transcript(),
+            &Silent,
+            &short_tail(),
+            CancellationToken::new(),
+        )
+        .await
+    {
+        Ok(report) => report,
+        Err(error) => panic!("decide failed: {error}"),
+    };
+    assert!(report.verdicts.iter().all(|v| v.decision == Decision::Keep));
+    assert_eq!(ledger.pending_count(), 0);
+}
+
+// ------------------------------------------------------------------ state
+
+#[tokio::test]
+async fn state_shows_the_task_and_the_judged_calls_with_their_results() {
+    let judge = FakeJudge::default();
+    let mut ledger = PruneLedger::default();
+    decide_with(&mut ledger, &judge, &transcript(), &short_tail()).await;
+    let states = judge.call_states();
+    assert_eq!(states.len(), 1, "a, b, c fit one batch");
+    let state = &states[0];
+    assert!(state.starts_with("# Task"), "{state}");
+    assert!(state.contains("[0] Fix the failing test."), "{state}");
+    assert!(state.contains("t0 call read"), "{state}");
+    assert!(
+        state.contains("t0 Read -> ok"),
+        "results are shown, not just noted: {state}"
+    );
+    assert!(state.contains("later messages follow"), "{state}");
+}
+
+#[tokio::test]
+async fn state_is_fitted_to_the_judges_request_budget() {
+    let judge = FakeJudge {
+        limits: Some(JudgeLimits {
+            request_tokens: 700,
+            max_questions: 40,
+        }),
+        ..Default::default()
+    };
+    let mut ledger = PruneLedger::default();
+    let report = decide_with(&mut ledger, &judge, &transcript(), &short_tail()).await;
+    for batch in &report.batches {
+        assert!(
+            batch.state_tokens <= 700,
+            "state {} tokens for a 700-token budget",
+            batch.state_tokens
+        );
+    }
+    assert_eq!(
+        report.verdicts.len(),
+        3,
+        "a tight budget still judges every call"
+    );
+}
+
+#[tokio::test]
+async fn a_batch_reads_only_its_own_stretch_of_the_conversation() {
+    let judge = FakeJudge {
+        limits: Some(one_call_per_batch()),
+        ..Default::default()
+    };
+    let mut ledger = PruneLedger::default();
+    let report = decide_with(&mut ledger, &judge, &transcript(), &short_tail()).await;
+    assert_eq!(report.batches.len(), 3);
+    let last = report
+        .batches
+        .iter()
+        .find(|b| b.call_ids == ["c"])
+        .unwrap_or_else(|| panic!("c has its own batch: {:?}", report.batches));
+    assert_eq!((last.from, last.to), (5, 6), "c's call and result only");
+    let state = judge
+        .call_states()
+        .into_iter()
+        .find(|s| s.contains("(messages 5–6"))
+        .unwrap_or_default();
+    assert!(state.contains("t0 call"), "{state}");
+    assert!(!state.contains("t1 call"), "{state}");
+}
+
+#[test]
+fn judge_token_estimate_counts_cjk_by_character() {
+    use evotengine::judge::estimate_tokens;
+    assert_eq!(estimate_tokens("abcdefgh"), 2);
+    assert_eq!(estimate_tokens("上下文裁剪"), 5);
+    assert!(estimate_tokens(&"中".repeat(100_000)) > 90_000);
+}
+
+#[test]
+fn judge_limits_follow_the_published_window() {
+    let limits = JudgeLimits::for_window(128_000);
+    assert!(limits.request_tokens > JudgeLimits::JEV.request_tokens);
+    assert!(limits.request_tokens < 128_000);
+    assert_eq!(JudgeLimits::default(), JudgeLimits::JEV);
 }

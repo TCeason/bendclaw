@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use evot_engine::judge::Judge;
+use evot_engine::judge::JudgeLimits;
 use evot_engine::judge::ProviderJudge;
 use evot_engine::provider::AnthropicProvider;
 use evot_engine::provider::OpenAiCompatProvider;
@@ -41,7 +42,9 @@ pub fn current_for_session(session_dir: Option<&Path>) -> Option<Arc<dyn Judge>>
 }
 
 /// Build the judge for a published endpoint. `None` when no judge is
-/// published, which keeps every judge-driven feature switched off.
+/// published, which keeps every judge-driven feature switched off. The
+/// server's context window sizes requests when it publishes one; otherwise
+/// the engine's default for the judge model applies.
 pub fn from_endpoint(endpoint: Option<&JudgeEndpoint>) -> Option<Arc<dyn Judge>> {
     let endpoint = endpoint?;
     let provider: Arc<dyn StreamProvider> = match endpoint.protocol {
@@ -60,10 +63,14 @@ pub fn from_endpoint(endpoint: Option<&JudgeEndpoint>) -> Option<Arc<dyn Judge>>
         None,
         Some(false),
     );
-    Some(Arc::new(ProviderJudge::new(
+    let mut judge = ProviderJudge::new(
         provider,
         endpoint.model.clone(),
         endpoint.api_key.clone(),
         Some(model_config),
-    )))
+    );
+    if let Some(window) = endpoint.context_window {
+        judge = judge.with_limits(JudgeLimits::for_window(window as usize));
+    }
+    Some(Arc::new(judge))
 }

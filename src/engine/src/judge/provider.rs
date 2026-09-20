@@ -16,6 +16,7 @@ use super::wire;
 use super::Answer;
 use super::Judge;
 use super::JudgeError;
+use super::JudgeLimits;
 use super::Question;
 use crate::context::now_ms;
 use crate::provider::ModelConfig;
@@ -34,6 +35,7 @@ pub struct ProviderJudge {
     model: String,
     api_key: String,
     model_config: Option<ModelConfig>,
+    limits: JudgeLimits,
 }
 
 impl ProviderJudge {
@@ -48,7 +50,14 @@ impl ProviderJudge {
             model: model.into(),
             api_key: api_key.into(),
             model_config,
+            limits: JudgeLimits::default(),
         }
+    }
+
+    /// Size requests for a judge model other than the default one.
+    pub fn with_limits(mut self, limits: JudgeLimits) -> Self {
+        self.limits = limits;
+        self
     }
 
     fn request(&self, state: &str, questions: &[Question]) -> StreamConfig {
@@ -125,5 +134,9 @@ impl Judge for ProviderJudge {
             _ => None,
         });
         wire::parse_answers(questions, text, tool_input)
+    }
+
+    fn limits(&self) -> JudgeLimits {
+        self.limits
     }
 }

@@ -11,6 +11,7 @@
 //! and reads answers back; `provider` sends that through an ordinary
 //! [`StreamProvider`], so no separate HTTP client exists.
 
+mod limits;
 mod provider;
 pub mod relevance;
 mod wire;
@@ -18,6 +19,8 @@ mod wire;
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+pub use limits::estimate_tokens;
+pub use limits::JudgeLimits;
 pub use provider::ProviderJudge;
 use tokio_util::sync::CancellationToken;
 
@@ -104,6 +107,10 @@ pub enum JudgeError {
 }
 
 /// Ask several questions about one state in a single round trip.
+///
+/// The judge also says how large a request it takes and how it counts
+/// tokens, so callers size their state to the model in use rather than to
+/// one they assume. Wrappers forward both.
 #[async_trait]
 pub trait Judge: Send + Sync {
     async fn ask(
@@ -112,4 +119,14 @@ pub trait Judge: Send + Sync {
         questions: &[Question],
         cancel: CancellationToken,
     ) -> Result<HashMap<String, Answer>, JudgeError>;
+
+    /// How much one request may carry.
+    fn limits(&self) -> JudgeLimits {
+        JudgeLimits::default()
+    }
+
+    /// Tokens this judge's tokenizer sees in `text`, approximately.
+    fn estimate_tokens(&self, text: &str) -> usize {
+        estimate_tokens(text)
+    }
 }

@@ -70,11 +70,21 @@ pub struct FreeModelOption {
     /// kept out of the picker and used for side decisions such as pruning.
     #[serde(default)]
     pub role: String,
+    /// Context window in tokens, when the server publishes it. Zero (and
+    /// absent on older servers) means unknown: the client falls back to its
+    /// own per-model default.
+    #[serde(default)]
+    pub context_window: u32,
     #[serde(flatten, default)]
     pub extra: ExtraFields,
 }
 
 impl FreeModelOption {
+    /// The published window, if any.
+    pub fn context_window(&self) -> Option<u32> {
+        (self.context_window > 0).then_some(self.context_window)
+    }
+
     pub fn is_judge(&self) -> bool {
         self.role.eq_ignore_ascii_case("judge")
     }

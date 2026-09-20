@@ -111,6 +111,7 @@ pub(super) fn apply_cloud_provider(config: &mut Config) -> Result<()> {
     let mut thinking_levels = std::collections::HashMap::new();
     let mut model_tiers = std::collections::HashMap::new();
     let mut model_sorts = std::collections::HashMap::new();
+    let context_windows = context_windows(&cache.response);
     let judges: std::collections::HashSet<String> = judge_model_ids(&cache.response);
     let mut judge: Option<crate::conf::JudgeEndpoint> = None;
     for model in &cache.response.models {
@@ -145,6 +146,7 @@ pub(super) fn apply_cloud_provider(config: &mut Config) -> Result<()> {
                     protocol: protocol.clone(),
                     base_url: group.base_url.clone(),
                     api_key: group.api_key.clone(),
+                    context_window: context_windows.get(&model).copied(),
                     model,
                 });
             }
@@ -194,6 +196,7 @@ pub(super) fn apply_cloud_provider(config: &mut Config) -> Result<()> {
     }
     config.cloud_thinking_levels = thinking_levels;
     config.cloud_model_tiers = model_tiers;
+    config.cloud_context_windows = context_windows;
     config.cloud_model_sorts = model_sorts;
     config.cloud_default_model =
         Some(cache.response.default_model.trim().to_string()).filter(|model| !model.is_empty());
@@ -217,6 +220,17 @@ pub(super) fn apply_cloud_provider(config: &mut Config) -> Result<()> {
     Ok(())
 }
 
+/// Context windows the server published, by model id.
+fn context_windows(
+    response: &crate::auth::ModelsResponse,
+) -> std::collections::HashMap<String, u32> {
+    response
+        .models
+        .iter()
+        .filter_map(|model| Some((model.id.clone(), model.context_window()?)))
+        .collect()
+}
+
 fn judge_model_ids(response: &crate::auth::ModelsResponse) -> std::collections::HashSet<String> {
     response
         .models
@@ -238,6 +252,7 @@ pub fn current_judge_endpoint() -> Option<crate::conf::JudgeEndpoint> {
     if judges.is_empty() {
         return None;
     }
+    let context_windows = context_windows(&cache.response);
     let mut groups = cache.response.providers;
     groups.sort_by_key(|group| group.sort_order);
     groups.into_iter().find_map(|group| {
@@ -252,6 +267,7 @@ pub fn current_judge_endpoint() -> Option<crate::conf::JudgeEndpoint> {
             protocol,
             base_url: group.base_url,
             api_key: group.api_key,
+            context_window: context_windows.get(&model).copied(),
             model,
         })
     })

@@ -1,6 +1,5 @@
-//! Tests for the compact memory extraction module.
+//! Tests for the cumulative compaction state and its extractors.
 
-use evotengine::context::compaction::memory::MemoryInput;
 use evotengine::context::compaction::memory::{self};
 use evotengine::context::compaction::types::CompactionState;
 use evotengine::types::*;
@@ -64,113 +63,56 @@ fn tool_result_msg(id: &str, name: &str, content: &str) -> AgentMessage {
     })
 }
 
-fn extract_memory_text(msg: &AgentMessage) -> &str {
-    match msg {
-        AgentMessage::Llm(Message::User { content, .. }) => {
-            if let Some(Content::Text { text }) = content.first() {
-                text.as_str()
-            } else {
-                ""
-            }
-        }
-        _ => "",
-    }
-}
-
 #[test]
-fn memory_summary_contains_message_count() {
-    let evicted = vec![user_msg("hello"), assistant_msg("hi")];
-    let input = MemoryInput {
-        evicted: &evicted,
-        split_turn_prefix: None,
-        prev_state: None,
-    };
-    let memory_summary = memory::build(&input);
-    let text = extract_memory_text(&memory_summary);
-    assert!(text.contains("2 messages removed"));
-}
-
-#[test]
-fn memory_extracts_user_requests() {
+fn extracts_user_requests_from_evicted_messages() {
     let evicted = vec![
-        user_msg("Fix the typo in main.rs"),
-        assistant_msg("Done, fixed the typo."),
-        user_msg("Add a test for the parser"),
-        assistant_msg("Added parser_test.rs"),
+        user_msg("Fix the typo"),
+        assistant_msg("done"),
+        user_msg("Add a test"),
+        assistant_msg("added"),
     ];
-    let input = MemoryInput {
-        evicted: &evicted,
-        split_turn_prefix: None,
-        prev_state: None,
-    };
-    let memory_summary = memory::build(&input);
-    let text = extract_memory_text(&memory_summary);
-    assert!(text.contains("Completed requests"));
-    assert!(text.contains("Fix the typo"));
-    assert!(text.contains("Add a test"));
+    let requests = memory::extract_user_requests(&evicted);
+    assert!(requests.iter().any(|r| r.contains("Fix the typo")));
+    assert!(requests.iter().any(|r| r.contains("Add a test")));
 }
 
 #[test]
-fn memory_extracts_file_ops() {
+fn extracts_file_ops_split_by_read_and_modified() {
     let evicted = vec![
-        user_msg("read the config"),
+        user_msg("edit things"),
         tool_call_msg("c1", "Read", "/src/config.rs"),
-        tool_result_msg("c1", "Read", "pub struct Config {}"),
+        tool_result_msg("c1", "Read", "..."),
         tool_call_msg("c2", "Write", "/src/new_file.rs"),
         tool_result_msg("c2", "Write", "ok"),
-        assistant_msg("Done."),
     ];
-    let input = MemoryInput {
-        evicted: &evicted,
-        split_turn_prefix: None,
-        prev_state: None,
-    };
-    let memory_summary = memory::build(&input);
-    let text = extract_memory_text(&memory_summary);
-    assert!(text.contains("config.rs") || text.contains("Files read"));
-    assert!(text.contains("new_file.rs") || text.contains("Files modified"));
+    let ops = memory::extract_file_ops(&evicted, None);
+    assert!(ops.read.contains("/src/config.rs"));
+    assert!(ops.modified().contains(&"/src/new_file.rs".to_string()));
 }
 
 #[test]
-fn memory_includes_last_conclusion() {
+fn latest_assistant_text_is_the_last_reply() {
     let evicted = vec![
-        user_msg("explain the architecture"),
-        assistant_msg("The system uses a layered approach with clear separation of concerns."),
+        user_msg("plan"),
+        assistant_msg("first thought"),
+        assistant_msg("I chose the layered approach"),
     ];
-    let input = MemoryInput {
-        evicted: &evicted,
-        split_turn_prefix: None,
-        prev_state: None,
+    let conclusion = match memory::latest_assistant_text(&evicted) {
+        Some(text) => text,
+        None => panic!("an assistant reply exists"),
     };
-    let memory_summary = memory::build(&input);
-    let text = extract_memory_text(&memory_summary);
-    assert!(text.contains("Last assistant conclusion"));
-    assert!(text.contains("layered approach"));
+    assert!(conclusion.contains("layered approach"));
 }
 
 #[test]
-fn memory_with_split_turn_prefix() {
+fn split_turn_prefix_file_ops_join_the_state() {
     let prefix = vec![
-        user_msg("refactor the module"),
-        tool_call_msg("c1", "Edit", "/src/mod.rs"),
-        tool_result_msg("c1", "Edit", "updated"),
+        tool_call_msg("p1", "Read", "/src/prefix.rs"),
+        tool_result_msg("p1", "Read", "..."),
     ];
-    let evicted = vec![
-        user_msg("first task"),
-        assistant_msg("done"),
-        user_msg("refactor the module"),
-        tool_call_msg("c1", "Edit", "/src/mod.rs"),
-        tool_result_msg("c1", "Edit", "updated"),
-    ];
-    let input = MemoryInput {
-        evicted: &evicted,
-        split_turn_prefix: Some(&prefix),
-        prev_state: None,
-    };
-    let memory_summary = memory::build(&input);
-    let text = extract_memory_text(&memory_summary);
-    assert!(text.contains("Current turn context"));
-    assert!(text.contains("refactor the module"));
+    let state = memory::build_state(&[user_msg("refactor the module")], Some(&prefix), None);
+    assert!(state.file_ops.read.contains("/src/prefix.rs"));
+    assert_eq!(state.generation, 1);
 }
 
 #[test]
@@ -201,19 +143,4 @@ fn memory_accumulates_state_from_prev() {
     assert!(state
         .completed_requests
         .contains(&"old request".to_string()));
-}
-
-#[test]
-fn memory_summary_is_user_message() {
-    let evicted = vec![user_msg("hi"), assistant_msg("hello")];
-    let input = MemoryInput {
-        evicted: &evicted,
-        split_turn_prefix: None,
-        prev_state: None,
-    };
-    let memory_summary = memory::build(&input);
-    assert!(matches!(
-        memory_summary,
-        AgentMessage::Llm(Message::User { .. })
-    ));
 }

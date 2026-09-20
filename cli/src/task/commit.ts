@@ -17,6 +17,7 @@ import {
   type TaskModelPickerRequest,
 } from './model-picker.js'
 import type { TaskFlowState } from './prompt.js'
+import { instructionDiff } from './instruction-diff.js'
 import { BROADCAST_TARGET } from './types.js'
 
 const DEFAULT_TIMEOUT_SECONDS = 900
@@ -204,22 +205,29 @@ function createConfirmationFields(
     .map(([key, value]) => `${key}: ${String(value)}`)
 }
 
-/** Old → new for the fields this request actually touches, so a confirmation
- *  never restates configuration the user did not ask to change. */
+/** One field this request changes. */
+interface FieldChange {
+  label: string
+  before: string
+  after: string
+}
+
+/** The fields this request actually touches, so a confirmation never
+ *  restates configuration the user did not ask to change. */
 function taskUpdateChanges(
   patch: Record<string, unknown>,
   flow: TaskFlowState,
   defaults?: TaskModelDefaults,
-): string[] {
+): FieldChange[] {
   const current = flow.currentTask
   if (!current) return []
   const merged = { ...current, ...patch }
-  const changes: string[] = []
+  const changes: FieldChange[] = []
   const touched = (...keys: string[]) => keys.some(key => has(patch, key))
   const add = (label: string, before: unknown, after: unknown) => {
     const left = String(before ?? '')
     const right = String(after ?? '')
-    if (left !== right) changes.push(`${label}: ${left || '—'} → ${right || '—'}`)
+    if (left !== right) changes.push({ label, before: left, after: right })
   }
 
   if (touched('name')) add('name', current.name, merged.name)
@@ -256,6 +264,27 @@ function taskUpdateChanges(
     add('lateness', `${current.max_lateness_seconds}s`, `${merged.max_lateness_seconds}s`)
   }
   return changes
+}
+
+/** Confirmation lines. Scalar fields read `label: old → new`; the
+ *  instruction, usually a paragraph, is shown once as a diff instead of
+ *  twice in full. */
+function confirmationLines(changes: FieldChange[]): string[] {
+  return changes.flatMap(change => {
+    if (change.label === 'instruction') {
+      return [`${change.label}:`, ...instructionDiff(change.before, change.after).map(row => `  ${row}`)]
+    }
+    return [`${change.label}: ${change.before || '—'} → ${change.after || '—'}`]
+  })
+}
+
+/** One clause per field for the post-save sentence. */
+function changeSummary(changes: FieldChange[]): string {
+  return changes
+    .map(change => change.label === 'instruction'
+      ? 'instruction updated'
+      : `${change.label}: ${change.before || '—'} → ${change.after || '—'}`)
+    .join('; ')
 }
 
 /** Ready delivery, pick the model, confirm, save. Marks the flow as attempted
@@ -316,7 +345,7 @@ export async function commitTaskChange(
 
   const changes = creating ? [] : taskUpdateChanges(patch, flow, effective)
   const fields = [
-    ...(creating ? createConfirmationFields(patch, effective) : changes),
+    ...(creating ? createConfirmationFields(patch, effective) : confirmationLines(changes)),
     ...(request.extraFields ?? []),
   ]
   const answers = await context.collectAnswers({
@@ -364,7 +393,7 @@ export async function commitTaskChange(
       kind: 'saved',
       taskId: updated.task.id,
       message: changes.length > 0
-        ? `Updated ${updated.task.name}: ${changes.join('; ')}.`
+        ? `Updated ${updated.task.name}: ${changeSummary(changes)}.`
         : `Updated ${updated.task.name}: no effective changes.`,
     }
   } catch (error) {

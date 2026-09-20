@@ -1184,3 +1184,98 @@ async fn threshold_suppression_is_scoped_to_the_model() {
     assert!(third.stats.is_some(), "suppression must be per-model");
     let _ = base_ts;
 }
+
+/// A judge that wants everything gone: every question answers "no".
+struct DropAllJudge;
+
+#[async_trait::async_trait]
+impl evotengine::judge::Judge for DropAllJudge {
+    async fn ask(
+        &self,
+        _state: &str,
+        questions: &[evotengine::judge::Question],
+        _cancel: CancellationToken,
+    ) -> Result<
+        std::collections::HashMap<String, evotengine::judge::Answer>,
+        evotengine::judge::JudgeError,
+    > {
+        Ok(questions
+            .iter()
+            .map(|q| {
+                (q.id.clone(), evotengine::judge::Answer::Noul {
+                    probability: 0.0,
+                })
+            })
+            .collect())
+    }
+}
+
+fn tool_call_msg(id: &str) -> AgentMessage {
+    AgentMessage::Llm(Message::Assistant {
+        content: vec![Content::ToolCall {
+            id: id.to_string(),
+            name: "read".to_string(),
+            arguments: serde_json::json!({"path": "big.log"}),
+            metadata: None,
+        }],
+        stop_reason: evotengine::StopReason::ToolUse,
+        model: "test".into(),
+        provider: "test".into(),
+        usage: Usage::default(),
+        timestamp: 0,
+        error_message: None,
+        response_id: None,
+    })
+}
+
+/// At the threshold a judge gets to prune first; when the lossless cut is
+/// enough there is no summary at all.
+#[tokio::test]
+async fn threshold_with_judge_prunes_instead_of_summarising() {
+    let mut ctrl = CompactionController::new(config_small()).with_judge(Arc::new(DropAllJudge));
+
+    let mut messages = vec![
+        user_msg("read the log"),
+        tool_call_msg("c1"),
+        tool_result_msg("c1", &big_text(30_000)),
+    ];
+    for _ in 0..6 {
+        messages.push(assistant_msg("done"));
+    }
+
+    let usage = UsageSnapshot {
+        input: 8_500,
+        cache_read: 0,
+        cache_write: 0,
+        output: 100,
+        total_tokens: 0,
+        model: model_id(),
+        timestamp: 1000,
+        stop_reason: StopReason::Stop,
+        error_message: None,
+    };
+
+    let response = ctrl
+        .after_response(
+            &mut messages,
+            &usage,
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+    let stats = match response.stats {
+        Some(stats) => stats,
+        None => panic!("threshold with a judge must compact"),
+    };
+    assert_eq!(stats.method, Some(evotengine::CompactionMethod::Prune));
+    assert!(stats.summary.is_none(), "lossless cut was enough");
+    assert!(
+        !messages.iter().any(|m| matches!(
+            m,
+            AgentMessage::Llm(Message::ToolResult { content, .. })
+                if content.iter().any(|c| matches!(c, Content::Text { text } if text.len() > 1_000))
+        )),
+        "the big result was pruned"
+    );
+}

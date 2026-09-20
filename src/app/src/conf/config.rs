@@ -230,6 +230,10 @@ pub struct Config {
     pub cloud_thinking_levels: HashMap<String, ThinkingLevel>,
     /// Catalog tier per cloud model id (`base` / `special`).
     pub cloud_model_tiers: HashMap<String, String>,
+    /// Server-pushed context window per cloud model id. A profile's own
+    /// `_CONTEXT_WINDOW` wins over it; the engine's per-model default is the
+    /// fallback when neither is set.
+    pub cloud_context_windows: HashMap<String, u32>,
     /// Catalog display rank per cloud model id (higher shows earlier).
     pub cloud_model_sorts: HashMap<String, i64>,
     /// The account's pinned landing model from the server, if it set one and
@@ -251,6 +255,8 @@ pub struct JudgeEndpoint {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
+    /// Context window the server published for the judge model, if any.
+    pub context_window: Option<u32>,
 }
 
 impl Config {
@@ -268,6 +274,7 @@ impl Config {
             env_revision: None,
             cloud_thinking_levels: HashMap::new(),
             cloud_model_tiers: HashMap::new(),
+            cloud_context_windows: HashMap::new(),
             cloud_model_sorts: HashMap::new(),
             cloud_default_model: None,
             cloud_providers: HashSet::new(),
@@ -366,7 +373,9 @@ impl Config {
             Some(&profile.base_url),
             profile.compat_caps,
             profile.route_capabilities,
-            profile.context_window,
+            profile
+                .context_window
+                .or_else(|| self.cloud_context_windows.get(&model).copied()),
             profile.max_tokens,
             profile.supports_image,
         );

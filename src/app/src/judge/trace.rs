@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use evot_engine::judge::Answer;
 use evot_engine::judge::Judge;
 use evot_engine::judge::JudgeError;
+use evot_engine::judge::JudgeLimits;
 use evot_engine::judge::Question;
 use evot_engine::judge::QuestionKind;
 use serde::Serialize;
@@ -197,5 +198,13 @@ impl Judge for TracingJudge {
         };
         self.record(&line);
         result
+    }
+
+    fn limits(&self) -> JudgeLimits {
+        self.inner.limits()
+    }
+
+    fn estimate_tokens(&self, text: &str) -> usize {
+        self.inner.estimate_tokens(text)
     }
 }
