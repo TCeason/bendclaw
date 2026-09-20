@@ -17,6 +17,8 @@ import { createSpinnerState, advanceSpinner, formatSpinnerLine, setSpinnerPhase,
 import { carryModelEfforts, createModelWindow, createResumeWindow } from './app/selector-windows.js'
 import { buildShellFrame } from './viewmodel/shell.js'
 import { promptFromSnapshot } from './viewmodel/prompt-snapshot.js'
+import { forkTrailTitles } from './viewmodel/fork-trail.js'
+import { backNotice, exitLineageHint, forkNotice, resolveBackTarget } from './app/fork-nav.js'
 import { createAppSelectorState, isCommandSelector, isBackgroundSelector, SELECTOR_OWNER } from './app/selector-identity.js'
 import { selectorExpandItems, selectorClearQuery, selectorReplaceItem, warmSearchableText, type SelectorItem, type SelectorState } from './selector.js'
 import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
@@ -202,6 +204,8 @@ export interface ReplOptions {
   agent: Agent
   resumeSessionId?: string
   continueLatest?: boolean
+  /** Start in a fresh fork of the given session, or of the latest in cwd. */
+  forkFrom?: { sessionId?: string }
   serverPort?: number
   envFile?: string
 }
@@ -386,6 +390,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let escapeFlushTimer: ReturnType<typeof setTimeout> | undefined
   let onInputData: ((data: Buffer | string) => void) | null = null
   let sessionId: string | null = null
+  /** Fork ancestry of the current session, root → current; for exit hints. */
+  let lastLineage: SessionMeta[] = []
   let nextBackgroundLineId = 1
   let planning = false
   let logMode: import('../native/index.js').ForkedAgent | null = null
@@ -1293,7 +1299,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   if (shouldPreloadStartupSessions(opts)) {
     try {
-      preloadedSessions = await agent.listSessions(opts.continueLatest ? 0 : 20)
+      preloadedSessions = await agent.listSessions(opts.continueLatest || opts.forkFrom ? 0 : 20)
       resumeCache.replace(preloadedSessions, Boolean(opts.continueLatest))
     } catch {}
   }
@@ -1317,7 +1323,25 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   setTerminalTitle('✳')
 
-  if (opts.continueLatest) {
+  if (opts.forkFrom) {
+    const wanted = opts.forkFrom.sessionId
+    const source = wanted
+      ? preloadedSessions.find(s => s.session_id === wanted || s.session_id.startsWith(wanted))
+      : findPreviousSession(preloadedSessions, agent.cwd)
+    if (!source) {
+      commitSystem('sys-fork-err', chalk.red(wanted ? `Session not found: ${wanted}` : 'No session in this directory to fork'))
+      cleanup()
+      await sessionHook.close()
+      fastExit(1)
+    } else {
+      try {
+        const fork = await agent.forkSession(source.session_id)
+        await resumeSession(fork, forkNotice(fork, source, chalk.dim, chalk.cyan))
+      } catch (err) {
+        commitSystem('sys-fork-err', chalk.red(`Fork failed: ${errorText(err)}`))
+      }
+    }
+  } else if (opts.continueLatest) {
     const match = findPreviousSession(preloadedSessions, agent.cwd)
     if (match) {
       await resumeSession(match)
@@ -1801,7 +1825,19 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     setTerminalTitle(backgroundWaitSince !== null ? '◌ bg' : '✳', true)
   }
 
-  async function resumeSession(session: SessionMeta) {
+  /** Load the fork ancestry for the footer breadcrumb. Never fatal: a failed
+   *  lookup just shows the session as a root. */
+  async function refreshForkTrail(id: string): Promise<SessionMeta[]> {
+    let lineage: SessionMeta[] = []
+    try { lineage = await agent.sessionLineage(id) } catch {}
+    lastLineage = lineage
+    appState = { ...appState, forkTrail: forkTrailTitles(lineage) }
+    return lineage
+  }
+
+  /** Switch to `session`. `notice` replaces the default `resumed session`
+   *  line when the switch is a fork or a `/back`. */
+  async function resumeSession(session: SessionMeta, notice?: OutputLine[]) {
     try {
       const { transcript, model, provider, thinkingLevel, cwd: sessionCwd } = await prepareResume(agent, session)
 
@@ -1838,8 +1874,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       restoreLines(messagesToOutputLines(shown), messagesToOutputLines(shown, true))
       restoreLines([
         { id: 'sys-resumed-gap', kind: 'system', text: '' },
-        { id: 'sys-resumed', kind: 'system', text: chalk.dim(`  resumed session ${session.session_id.slice(0, 8)}`) },
+        ...(notice ?? [{ id: 'sys-resumed', kind: 'system' as const, text: chalk.dim(`  resumed session ${session.session_id.slice(0, 8)}`) }]),
       ])
+      await refreshForkTrail(session.session_id)
       if (sessionCwd && sessionCwd !== agent.cwd) {
         restoreLines([{
           id: 'sys-resume-cwd',
@@ -2363,7 +2400,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         cleanup()
         if (sessionId) {
           process.stdout.write(`\n\x1b[90m${'─'.repeat(80)}\x1b[0m\n`)
-          process.stdout.write(`\x1b[90mResume: evot --resume ${sessionId}\x1b[0m\n\n`)
+          process.stdout.write(`\x1b[90mResume: evot --resume ${sessionId}\x1b[0m\n`)
+          for (const hint of exitLineageHint(lastLineage)) process.stdout.write(`\x1b[90m${hint}\x1b[0m\n`)
+          process.stdout.write('\n')
         }
         exitAfterCleanup(0)
         return true
@@ -3018,6 +3057,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       // an empty, untitled session in persistent storage or /resume.
       sessionHook.endSession('new_session')
       sessionId = null
+      lastLineage = []
       appState = { ...createInitialState(appState.model, agent.cwd) }
       gitInfo.setCwd(agent.cwd)
       renderer.clearScreen()
@@ -3179,6 +3219,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
     } else if (name === '/log') {
       await handleLogCommand(args)
+    } else if (name === '/fork') {
+      await handleForkCommand(args)
+    } else if (name === '/back' || name === '/root') {
+      await handleBackCommand(name === '/root' ? 'root' : args)
     } else if (name === '/resume') {
       const query = normalizeResumeQuery(args)
       try {
@@ -3203,6 +3247,48 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
 
     renderer.requestRender()
+  }
+
+  /** `/fork [title]`: copy the current context into a new session and move there. */
+  async function handleForkCommand(title: string) {
+    if (!sessionId) {
+      commitSystem('sys-fork-none', chalk.dim('  Nothing to fork yet: send a message first.'))
+      return
+    }
+    try {
+      const parent = (await agent.sessionLineage(sessionId)).at(-1) ?? ({ session_id: sessionId } as SessionMeta)
+      const fork = await agent.forkSession(sessionId, title.trim() || undefined)
+      invalidateResumeSessionCache()
+      await resumeSession(fork, forkNotice(fork, parent, chalk.dim, chalk.cyan))
+    } catch (err) {
+      commitSystem('sys-fork-err', chalk.red(`  /fork failed: ${errorText(err)}`))
+    }
+  }
+
+  /** `/back [levels]` and `/root`: resume an ancestor along the fork chain. */
+  async function handleBackCommand(levels: string) {
+    if (!sessionId) {
+      commitSystem('sys-back-none', chalk.dim('  Not in a session.'))
+      return
+    }
+    try {
+      const lineage = await refreshForkTrail(sessionId)
+      const resolved = resolveBackTarget(lineage, levels)
+      if (resolved.kind === 'root') {
+        commitSystem('sys-back-root', chalk.dim('  Already at the root session.  /sessions lists the others.'))
+        return
+      }
+      if (resolved.kind === 'invalid') {
+        commitSystem('sys-back-arg', chalk.dim(`  /back takes a level count, e.g. /back 2 (got "${resolved.levels}").`))
+        return
+      }
+      const left = lineage[lineage.length - 1]
+      if (!left) return
+      invalidateResumeSessionCache()
+      await resumeSession(resolved.target, backNotice(left, resolved.target, resolved.skipped, chalk.dim, chalk.cyan))
+    } catch (err) {
+      commitSystem('sys-back-err', chalk.red(`  /back failed: ${errorText(err)}`))
+    }
   }
 
   /**

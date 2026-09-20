@@ -12,6 +12,7 @@ import { confirmationHint } from './confirmation-hint.js'
 import { line, block, plain, dim, colored, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
 import { finiteSize, spansWidth, truncateTailToWidth, truncateToWidth } from './width.js'
 import { BACKGROUND_PANEL_HINT_CHORD } from '../app/background-panel.js'
+import { FORK_GLYPH, formatForkTrail } from './fork-trail.js'
 
 /** The subset of prompt state the footer reads. */
 export interface PromptFooterVM {
@@ -23,6 +24,8 @@ export interface PromptFooterVM {
   logMode: boolean
   dashboardUrl: string | null
   cwd: string
+  /** Fork ancestry titles, root → current; empty or absent for non-forks. */
+  forkTrail?: string[]
   gitBranch: string | null
   contextTokens: number
   contextWindow: number
@@ -66,11 +69,25 @@ export function buildPromptFooterBlocks(
     input.backgroundStopPending,
   )
   if (chip) blocks.push(block([chip]))
-  blocks.push(
-    buildFooter(input, finiteSize(input.columns, 80), options.modeShownAbove ?? false),
-    block([line(plain(''))]),
-  )
+  blocks.push(buildFooter(input, finiteSize(input.columns, 80), options.modeShownAbove ?? false))
+  const trail = buildForkTrail(input.forkTrail ?? [], finiteSize(input.columns, 80))
+  if (trail) blocks.push(block([trail]))
+  blocks.push(block([line(plain(''))]))
   return blocks
+}
+
+/**
+ * The fork row under the status line: `└─ fork of <parent>`.
+ *
+ * It only exists for forked sessions and says just two things: this is a
+ * fork, and what it hangs off. The edge glyph is the one the `/sessions`
+ * graph uses, so the row reads in the same language as the tree there.
+ */
+function buildForkTrail(trail: readonly string[], columns: number): StyledLine | null {
+  const prefix = `${FORK_GLYPH} `
+  const text = formatForkTrail(trail, Math.max(1, columns - stringWidth(prefix)))
+  if (!text) return null
+  return line(colored(FORK_GLYPH, 'cyan'), dim(` ${text}`))
 }
 
 /**

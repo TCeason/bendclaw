@@ -85,6 +85,7 @@ mod schema_compat_test;
 mod search_test;
 #[path = "server_protocol_test.rs"]
 mod server_protocol_test;
+mod session_fork_test;
 #[path = "session_gates_test.rs"]
 mod session_gates_test;
 #[path = "session_locator_test.rs"]

@@ -62,6 +62,28 @@ impl SessionQueries {
         self.storage.get_session(id).await
     }
 
+    /// Fork ancestry of a session, root first and `id` last. The chain stops
+    /// at the first missing parent (deleted sessions make their children
+    /// roots) and refuses to loop on corrupted parent links. Unknown `id`
+    /// yields an empty chain.
+    pub async fn lineage(&self, id: &str) -> Result<Vec<SessionMeta>> {
+        let mut chain = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut cursor = Some(id.to_string());
+        while let Some(current) = cursor {
+            if !seen.insert(current.clone()) {
+                break;
+            }
+            let Some(meta) = self.storage.get_session(&current).await? else {
+                break;
+            };
+            cursor = meta.parent_session_id.clone();
+            chain.push(meta);
+        }
+        chain.reverse();
+        Ok(chain)
+    }
+
     pub async fn transcript(&self, id: &str) -> Result<Vec<TranscriptItem>> {
         if self.find(id).await?.is_none() {
             return Ok(Vec::new());

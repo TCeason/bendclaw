@@ -156,6 +156,8 @@ const SUB_COMMANDS: Record<string, string[]> = {
   '/log': ['shot', 'query'],
   '/resume': ['<id>', '<query>'],
   '/sessions': ['<id>', '<query>'],
+  '/fork': ['<title>'],
+  '/back': ['<levels>'],
   '/model': ['<name>'],
   '/harden': ['plan', 'changes', 'arch', '<subject>'],
 }

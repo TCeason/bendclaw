@@ -152,6 +152,16 @@ export class Agent {
     return this.raw.deleteSession(sessionId)
   }
 
+  /** Fork a session into a new persistent one inheriting its context. */
+  async forkSession(sourceId: string, title?: string): Promise<SessionMeta> {
+    return decodeResult(await this.raw.forkSession(sourceId, title ?? null), results.sessionMeta)
+  }
+
+  /** Fork ancestry, root first and `sessionId` last. */
+  async sessionLineage(sessionId: string): Promise<SessionMeta[]> {
+    return decodeResult(await this.raw.sessionLineage(sessionId), results.sessions)
+  }
+
   backgroundProcesses(sessionId: string): BackgroundProcess[] {
     return decodeResult(this.raw.backgroundProcesses(sessionId), results.backgroundProcesses)
   }

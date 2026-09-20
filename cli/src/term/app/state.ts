@@ -34,6 +34,8 @@ export interface AppState {
    *  Mirrors ConfigInfo.judge and follows the cloud sync, so a server-side
    *  switch shows up within one sync interval. */
   judge?: string
+  /** Fork ancestry titles, root → current. Empty for sessions that are not forks. */
+  forkTrail: string[]
 }
 
 export interface SessionTokenStats {
@@ -83,5 +85,6 @@ export function createInitialState(model: string, cwd: string): AppState {
     lastTokenAt: 0,
     askUserRequest: null,
     sessionTokens: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, contextTokens: 0, contextWindow: 0 },
+    forkTrail: [],
   }
 }

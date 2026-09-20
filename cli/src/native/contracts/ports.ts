@@ -20,6 +20,8 @@ export interface NativeAgent {
   createSession(): Promise<string>
   listSessions(limit: number | null): Promise<string>
   renameSession(id: string, title: string): Promise<string>
+  forkSession(sourceId: string, title: string | null): Promise<string>
+  sessionLineage(id: string): Promise<string>
   deleteSession(id: string): Promise<boolean>
   backgroundProcesses(id: string): string
   stopBackgroundProcess(id: string, task: string): Promise<string | null>

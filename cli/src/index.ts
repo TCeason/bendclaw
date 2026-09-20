@@ -70,6 +70,7 @@ async function main() {
         agent,
         resumeSessionId: opts.resume,
         continueLatest: opts.continueLatest,
+        forkFrom: opts.fork,
         serverPort: opts.port,
         envFile: opts.envFile,
       })
@@ -147,6 +148,7 @@ async function main() {
         agent,
         resumeSessionId: opts.resume,
         continueLatest: opts.continueLatest,
+        forkFrom: opts.fork,
         serverPort: opts.port,
         envFile: opts.envFile,
       })

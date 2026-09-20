@@ -237,6 +237,29 @@ impl NapiAgent {
         serde_json::to_string(&session).map_err(|e| Error::from_reason(format!("serialize: {e}")))
     }
 
+    /// Fork `source_id` into a new persistent session inheriting its context.
+    #[napi]
+    pub async fn fork_session(&self, source_id: String, title: Option<String>) -> Result<String> {
+        let meta = self
+            .agent
+            .fork_session(&source_id, title.as_deref())
+            .await
+            .map_err(|e| Error::from_reason(format!("fork session: {e}")))?;
+        serde_json::to_string(&meta).map_err(|e| Error::from_reason(format!("serialize: {e}")))
+    }
+
+    /// Fork ancestry, root first and `session_id` last. Empty when unknown.
+    #[napi]
+    pub async fn session_lineage(&self, session_id: String) -> Result<String> {
+        let chain = self
+            .agent
+            .sessions()
+            .lineage(&session_id)
+            .await
+            .map_err(|e| Error::from_reason(format!("session lineage: {e}")))?;
+        serde_json::to_string(&chain).map_err(|e| Error::from_reason(format!("serialize: {e}")))
+    }
+
     #[napi]
     pub async fn delete_session(&self, session_id: String) -> Result<bool> {
         self.agent

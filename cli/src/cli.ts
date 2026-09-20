@@ -7,6 +7,8 @@ export interface CliOptions {
   port?: number
   resume?: string
   continueLatest: boolean
+  /** `--fork [id]`: start in a fresh fork of `id`, or of the latest session in cwd. */
+  fork?: { sessionId?: string }
   envFile?: string
   outputFormat: 'text' | 'stream-json'
   maxTurns: number
@@ -59,6 +61,11 @@ export async function parseArgs(argv: string[]): Promise<CliOptions> {
     if (arg === '--port' && argv[i + 1]) { opts.port = parseIntArg(argv[++i], '--port'); continue }
     if ((arg === '-r' || arg === '--resume') && argv[i + 1]) { opts.resume = argv[++i]; continue }
     if (arg === '-c' || arg === '--continue') { opts.continueLatest = true; continue }
+    if (arg === '--fork') {
+      const next = argv[i + 1]
+      opts.fork = next && !next.startsWith('-') ? { sessionId: argv[++i] } : {}
+      continue
+    }
     if (arg === '--output-format' && argv[i + 1]) {
       const fmt = argv[++i]
       if (fmt !== 'text' && fmt !== 'stream-json') {
@@ -119,6 +126,7 @@ export async function printHelp() {
   console.log('  --port <number>        Dashboard port (default: 8082)')
   console.log('  -r, --resume <id>      Resume or create a session by ID')
   console.log('  -c, --continue         Resume the latest session in the current directory')
+  console.log('  --fork [id]            Start in a fork of a session (default: latest in cwd)')
   console.log('  --output-format <fmt>  text | stream-json (default: text)')
   console.log('  --max-turns <n>        Max turns (default: 512)')
   console.log('  --max-tokens <n>       Max tokens (default: 100000000)')

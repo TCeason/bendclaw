@@ -889,6 +889,19 @@ impl Agent {
             .await
     }
 
+    /// Fork `source_id` into a new persistent session that inherits its
+    /// active context. Refused while the source is running, so the fork point
+    /// never lands inside a half-written turn.
+    pub async fn fork_session(&self, source_id: &str, title: Option<&str>) -> Result<SessionMeta> {
+        let _lifecycle = self.session_lifecycle_gate(source_id).lock().await;
+        if self.has_active_run(source_id) {
+            return Err(EvotError::Session(
+                "cannot fork while the session is running".into(),
+            ));
+        }
+        self.session_service().fork(source_id, title).await
+    }
+
     pub async fn load_session(&self, id: &str) -> Result<Option<Arc<Session>>> {
         self.session_service().load(id).await
     }

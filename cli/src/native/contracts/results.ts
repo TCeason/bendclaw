@@ -13,6 +13,9 @@ export interface SessionMeta {
   cwd: string
   source?: string
   turns: number
+  /** Session this one was forked from; absent for roots and older addons. */
+  parent_session_id?: string | null
+  fork_seq?: number | null
   created_at: string
   updated_at: string
 }
@@ -67,6 +70,7 @@ const integer: Schema<number> = { read(value, path) {
 const sessionFields = {
   session_id: text, title: optional(nullable(text)), custom_title: optional(nullable(text)), schema_version: optional(uint), model: text, provider: optional(text),
   thinking_level: optional(nullable(text)), cwd: text, source: optional(text), turns: uint,
+  parent_session_id: optional(nullable(text)), fork_seq: optional(nullable(uint)),
   created_at: text, updated_at: text,
 }
 export const sessionMeta: Schema<SessionMeta> = object(sessionFields)

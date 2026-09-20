@@ -2,6 +2,7 @@ import { padRight, relativeTime } from '../../render/format.js'
 import type { SessionMeta, SessionWithText } from '../../native/index.js'
 import { PREVIEW_SECTION_PREFIX, type SelectorItem } from '../selector.js'
 import { recognitionSections, type SessionRecognition } from './session-recognition.js'
+import { orderAsForkTree } from './fork-tree.js'
 
 export const RESUME_SELECTOR_TITLE = 'Resume session'
 
@@ -43,23 +44,25 @@ function sessionHeader(label: string, group: string, searchOnly = false): Select
 function groupedSessionItems<T extends SessionMeta>(
   sessions: T[],
   currentCwd: string,
-  format: (session: T, otherCwd: boolean) => SelectorItem,
+  format: (session: T, otherCwd: boolean, edge: string) => SelectorItem,
 ): SelectorItem[] {
-  const current = sessions.filter(session => session.cwd === currentCwd)
-  const other = sessions.filter(session => session.cwd !== currentCwd)
+  // Forks nest under their parent within each group; the tree is per cwd
+  // because a fork always keeps its parent's workspace.
+  const current = orderAsForkTree(sessions.filter(session => session.cwd === currentCwd))
+  const other = orderAsForkTree(sessions.filter(session => session.cwd !== currentCwd))
   const items: SelectorItem[] = []
 
   if (current.length > 0) {
     items.push(sessionHeader(`Current cwd · ${shortenSessionCwd(currentCwd)}`, 'current-cwd'))
-    items.push(...current.map(session => ({ ...format(session, false), group: 'current-cwd' })))
+    items.push(...current.map(row => ({ ...format(row.session, false, row.edge), group: 'current-cwd' })))
   }
   if (other.length > 0) {
     // Resume defaults to the project the user is in. Cross-project history
     // remains in the search pool, but never expands the initial picker into a
     // noisy global recents list — including when this cwd has no history yet.
     items.push(sessionHeader('Other cwd', 'other-cwd', true))
-    items.push(...other.map(session => ({
-      ...format(session, true),
+    items.push(...other.map(row => ({
+      ...format(row.session, true, row.edge),
       group: 'other-cwd',
       searchOnly: true,
     })))
@@ -240,6 +243,7 @@ function formatSessionItem(
   showSource: boolean,
   text: SessionWithText | undefined,
   open: boolean,
+  edge = '',
 ): SelectorItem {
   // The source column only earns its space when it tells rows apart.
   const badge = sessionSourceBadge(s.source)
@@ -250,7 +254,8 @@ function formatSessionItem(
   const time = open ? '● open' : relativeTime(s.updated_at)
   const cwd = otherCwd ? `  ${shortenSessionCwd(s.cwd)}` : ''
   return {
-    label,
+    // The graph edge hangs off the id column, like `git log --graph`.
+    label: `${edge}${label}`,
     id: s.session_id,
     renameTitle: s.custom_title ?? s.title ?? '',
     hints: [
@@ -289,7 +294,7 @@ export function formatSessionItems(
 ): SelectorItem[] {
   const labels = sessionIdLabels(sessions)
   const showSource = mixedSources(sessions)
-  return groupedSessionItems(sessions, currentCwd, (session, otherCwd) =>
+  return groupedSessionItems(sessions, currentCwd, (session, otherCwd, edge) =>
     formatSessionItem(
       session,
       labels.get(session.session_id) ?? session.session_id,
@@ -297,6 +302,7 @@ export function formatSessionItems(
       showSource,
       sessionText(session.session_id),
       session.session_id === openSessionId,
+      edge,
     ),
   )
 }

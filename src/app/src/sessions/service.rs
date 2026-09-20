@@ -9,6 +9,7 @@ use crate::error::EvotError;
 use crate::error::Result;
 use crate::storage::Storage;
 use crate::types::SessionMeta;
+use crate::types::TranscriptEntry;
 
 pub struct SessionSelection {
     pub provider: String,
@@ -51,6 +52,58 @@ impl SessionService {
         )
         .await?;
         Ok(session.meta().await)
+    }
+
+    /// Copy a session's active context branch into a new session that records
+    /// `source_id` as its parent. The source is left untouched. Only the branch
+    /// after the latest compact/marker is copied, so the fork costs the same
+    /// context the parent currently pays for.
+    pub async fn fork(&self, source_id: &str, title: Option<&str>) -> Result<SessionMeta> {
+        let source = self
+            .storage
+            .get_session(source_id)
+            .await?
+            .ok_or_else(|| EvotError::Session(format!("session not found: {source_id}")))?;
+        let custom_title = match title.map(str::trim).filter(|t| !t.is_empty()) {
+            Some(title) => Some(crate::storage::session_title::validate(title)?),
+            None => None,
+        };
+        let entries = self.storage.load_active_entries(source_id).await?;
+
+        let mut meta = SessionMeta::new(
+            crate::types::new_id(),
+            source.cwd.clone(),
+            source.model.clone(),
+        )
+        .with_provider(source.provider.clone())
+        .with_source(source.source.as_str());
+        meta.thinking_level = source.thinking_level.clone();
+        meta.title = source.title.clone();
+        meta.custom_title = custom_title;
+        meta.turns = source.turns;
+        meta.message_count = source.message_count;
+        meta.context_tokens = source.context_tokens;
+        meta.context_budget = source.context_budget;
+        meta.span_count = source.span_count;
+        meta.parent_session_id = Some(source.session_id.clone());
+        meta.fork_seq = Some(entries.last().map(|entry| entry.seq).unwrap_or(0));
+
+        let copied: Vec<TranscriptEntry> = entries
+            .into_iter()
+            .enumerate()
+            .map(|(index, mut entry)| {
+                entry.session_id = meta.session_id.clone();
+                entry.run_id = None;
+                entry.seq = index as u64 + 1;
+                entry
+            })
+            .collect();
+
+        self.storage.save_session(meta.clone()).await?;
+        if !copied.is_empty() {
+            self.storage.append_entries(copied).await?;
+        }
+        Ok(meta)
     }
 
     /// Resolve a run's session, preserving existing workspace/source metadata.

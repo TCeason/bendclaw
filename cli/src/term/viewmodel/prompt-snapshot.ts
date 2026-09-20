@@ -7,7 +7,7 @@ import type { PromptVMInput } from './prompt.js'
 
 export interface PromptSnapshot {
   editor: EditorState
-  session: Pick<AppState, 'model' | 'cwd' | 'sessionTokens'>
+  session: Pick<AppState, 'model' | 'cwd' | 'sessionTokens'> & Partial<Pick<AppState, 'forkTrail'>>
   config?: ConfigInfo
   active: boolean
   planning: boolean
@@ -47,6 +47,7 @@ export function promptFromSnapshot(input: PromptSnapshot): PromptVMInput {
     rows: input.rows,
     placeholder: empty,
     cwd: session.cwd,
+    forkTrail: session.forkTrail ?? [],
     gitBranch: input.gitBranch,
     contextTokens: session.sessionTokens.contextTokens,
     contextWindow: session.sessionTokens.contextWindow,

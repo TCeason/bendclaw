@@ -5,8 +5,8 @@ import type { UIMessage } from './types.js'
 /** Default number of most-recent messages painted to scrollback on resume. */
 export const RESUME_DISPLAY_LIMIT = 80
 
-export function shouldPreloadStartupSessions(opts: { continueLatest?: boolean; resumeSessionId?: string }): boolean {
-  return Boolean(opts.continueLatest || opts.resumeSessionId)
+export function shouldPreloadStartupSessions(opts: { continueLatest?: boolean; resumeSessionId?: string; forkFrom?: unknown }): boolean {
+  return Boolean(opts.continueLatest || opts.resumeSessionId || opts.forkFrom)
 }
 
 export function findPreviousSession(preloaded: SessionMeta[], cwd: string): SessionMeta | undefined {

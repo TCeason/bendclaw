@@ -16,7 +16,7 @@ const VALUE_FLAGS = new Set([
 
 /**
  * Rewrite process argv so an in-place `/restart` resumes a specific session.
- * Drops `-c/--continue` and any existing `-r/--resume`, then pins `--resume`.
+ * Drops `-c/--continue`, `--fork` and any existing `-r/--resume`, then pins `--resume`.
  * Other flags stay as the user typed them.
  */
 export function argvForRestart(argv: string[], sessionId: string | null): string[] {
@@ -24,7 +24,7 @@ export function argvForRestart(argv: string[], sessionId: string | null): string
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!
     if (arg === '-c' || arg === '--continue') continue
-    if (arg === '-r' || arg === '--resume') {
+    if (arg === '--fork' || arg === '-r' || arg === '--resume') {
       if (argv[i + 1] && !argv[i + 1]!.startsWith('-')) i++
       continue
     }

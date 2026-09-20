@@ -52,6 +52,14 @@ pub struct SessionMeta {
     /// dashboard falls back to `turns` for those until the next save.
     #[serde(default)]
     pub span_count: Option<u32>,
+    /// Session this one was forked from. `None` for roots and for sessions
+    /// persisted before fork existed. A dangling id (parent deleted) makes
+    /// this session behave as a root again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
+    /// Last transcript seq of the parent at fork time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_seq: Option<u64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -76,6 +84,8 @@ impl SessionMeta {
             total_input_tokens: 0,
             total_output_tokens: 0,
             span_count: None,
+            parent_session_id: None,
+            fork_seq: None,
             created_at: now.clone(),
             updated_at: now,
         }
