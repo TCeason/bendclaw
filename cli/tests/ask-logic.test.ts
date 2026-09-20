@@ -76,6 +76,18 @@ function renderAskVM(state: ReturnType<typeof createAskState>): string {
   return lines.map(l => stripAnsi(l).replaceAll(CURSOR_MARKER, '')).join('\n')
 }
 
+describe('question text', () => {
+  test('a pre-painted line (a diff) passes through instead of being re-bolded', () => {
+    const painted = '\x1b[31m-old\x1b[39m'
+    const state = createAskState([{ header: 'Task', question: `Apply?\n${painted}`, options: [{ label: 'Confirm' }] }])
+    const raw = blocksToLines(buildOverlayBlocks({ kind: 'ask-user', state }, 80)).join('\n')
+    expect(raw).toContain(painted)
+    // The plain first line is still bold; the painted one is not wrapped in bold.
+    expect(raw).toMatch(/\x1b\[1m[^\n]*Apply\?/)
+    expect(raw).not.toMatch(/\x1b\[1m[^\n]*-old/)
+  })
+})
+
 describe('createAskState', () => {
   test('creates initial state', () => {
     const state = createAskState(singleQuestion)

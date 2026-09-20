@@ -17,7 +17,7 @@ import {
   type TaskModelPickerRequest,
 } from './model-picker.js'
 import type { TaskFlowState } from './prompt.js'
-import { instructionDiff } from './instruction-diff.js'
+import { formatDiff } from '../render/diff.js'
 import { BROADCAST_TARGET } from './types.js'
 
 const DEFAULT_TIMEOUT_SECONDS = 900
@@ -267,15 +267,25 @@ function taskUpdateChanges(
 }
 
 /** Confirmation lines. Scalar fields read `label: old → new`; the
- *  instruction, usually a paragraph, is shown once as a diff instead of
- *  twice in full. */
+ *  instruction, usually a paragraph, is shown once as a git-style diff (the
+ *  same renderer as the Edit tool's output) instead of twice in full. */
 function confirmationLines(changes: FieldChange[]): string[] {
   return changes.flatMap(change => {
     if (change.label === 'instruction') {
-      return [`${change.label}:`, ...instructionDiff(change.before, change.after).map(row => `  ${row}`)]
+      // Instructions rarely end in a newline; give both a final one so the
+      // patch has no "\ No newline at end of file" markers to show.
+      const diff = formatDiff(withNewline(change.before), withNewline(change.after))
+      return [
+        `${change.label} (+${diff.linesAdded} −${diff.linesRemoved}):`,
+        ...diff.text.split('\n'),
+      ]
     }
     return [`${change.label}: ${change.before || '—'} → ${change.after || '—'}`]
   })
+}
+
+function withNewline(text: string): string {
+  return text.endsWith('\n') ? text : `${text}\n`
 }
 
 /** One clause per field for the post-save sentence. */

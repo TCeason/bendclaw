@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import stripAnsi from 'strip-ansi'
 import {
   dispatchHostToolCall,
   HOST_TOOL_SPECS_JSON,
@@ -279,6 +280,31 @@ describe('host tools', () => {
     expect(confirmation).not.toContain('schedule:')
     expect(confirmation).not.toContain('instruction:')
     expect(confirmation).not.toContain('evot-pro-anthropic')
+  })
+
+  test('an instruction edit is confirmed as a git-style diff, not the text twice', async () => {
+    let confirmation = ''
+    const before = 'Prepare report'
+    const after = 'Prepare the weekly report'
+    const response = await dispatch({
+      tool_name: 'automation_task_update',
+      tool_call_id: 'update-instruction',
+      arguments: { task_id: task.id, revision: task.revision, instruction: after },
+    }, {
+      flow: createTaskFlowState('update', { ...task, instruction: before }),
+      collectAnswers: async params => {
+        confirmation = params.questions[0]?.question ?? ''
+        return cancelAtConfirmation(params)
+      },
+    })
+    expect(response.is_error).toBe(false)
+    const plain = stripAnsi(confirmation)
+    expect(plain).toContain('instruction (+1 −1):')
+    // One removed and one added line with a line-number gutter, as the Edit
+    // tool shows its diffs; never `old → new` with both paragraphs in full.
+    expect(plain).toMatch(/\n\s*1 -Prepare report\n\s*1 \+Prepare the weekly report/)
+    expect(plain).not.toContain('→ Prepare the weekly report')
+    expect(plain).not.toContain('model:')
   })
 
   test('a create hint preselects a catalog row, and the picker choice still wins', async () => {

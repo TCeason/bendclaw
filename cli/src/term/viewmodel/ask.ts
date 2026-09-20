@@ -5,7 +5,13 @@ import { prefixedAskLines } from '../app/ask-user.js'
 import { CURSOR_MARKER } from '../render-frame.js'
 import { getTheme } from '../../render/theme/index.js'
 import { rowMarker } from './selector-row.js'
-import { line, block, plain, dim, bold, colored, inverse, type ViewBlock, type StyledSpan, type StyledLine } from './types.js'
+import { line, block, plain, dim, bold, colored, inverse, ansi, type ViewBlock, type StyledSpan, type StyledLine } from './types.js'
+
+/** A question line that arrives already painted (a diff, say) is shown as
+ *  is; wrapping it in bold would nest reset codes. */
+function questionLine(text: string): StyledSpan {
+  return /\x1b\[/.test(text) ? ansi(text) : bold(text)
+}
 
 const CHECKBOX_ON = '☒'
 const CHECKBOX_OFF = '☐'
@@ -86,7 +92,7 @@ export function buildAskBlocks(state: AskState, _columns: number): ViewBlock[] {
   }
 
   const q = state.questions[state.currentTab]!
-  for (const text of q.question.split('\n')) result.push(line(bold(text)))
+  for (const text of q.question.split('\n')) result.push(line(questionLine(text)))
   result.push(line(plain('')))
   const ui = state.uiStates.get(state.currentTab) ?? { focusIndex: 0, inOtherMode: false, otherText: '', otherCursor: 0 }
   const answer = state.answers[state.currentTab]
