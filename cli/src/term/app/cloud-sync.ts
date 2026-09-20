@@ -63,3 +63,26 @@ export class CloudSync<T> {
     return { noticesSynced, modelsSynced }
   }
 }
+
+/** Announces each cloud model id at most once per session. A model that
+ * flaps in and out of the catalog (for example when another client keeps
+ * rewriting the shared models cache) must not re-trigger the notice. */
+export class ModelAnnouncer {
+  private readonly seen = new Set<string>()
+
+  /** Marks every id as already announced without reporting it. */
+  seed(ids: Iterable<string>): void {
+    for (const id of ids) this.seen.add(id)
+  }
+
+  /** Returns ids never seen before and records them. */
+  fresh<M extends { model: string }>(models: readonly M[]): M[] {
+    const added: M[] = []
+    for (const m of models) {
+      if (this.seen.has(m.model)) continue
+      this.seen.add(m.model)
+      added.push(m)
+    }
+    return added
+  }
+}

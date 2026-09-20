@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { CloudSync } from '../src/term/app/cloud-sync.js'
+import { CloudSync, ModelAnnouncer } from '../src/term/app/cloud-sync.js'
 
 function fixture() {
   let now = 100_000
@@ -85,5 +85,21 @@ describe('cloud sync lifecycle', () => {
     await expect(sync.run()).rejects.toThrow('auth unavailable')
     fail = false
     expect(await sync.run()).toEqual({ noticesSynced: true, modelsSynced: true })
+  })
+})
+
+describe('ModelAnnouncer', () => {
+  test('announces a model once even when it flaps in and out of the catalog', () => {
+    const announcer = new ModelAnnouncer()
+    announcer.seed(['kimi-k3'])
+    expect(announcer.fresh([{ model: 'kimi-k3' }])).toEqual([])
+
+    // Appears: announced.
+    expect(announcer.fresh([{ model: 'kimi-k3' }, { model: 'jev-latest' }]).map(m => m.model)).toEqual(['jev-latest'])
+    // Disappears, then reappears: silent.
+    expect(announcer.fresh([{ model: 'kimi-k3' }])).toEqual([])
+    expect(announcer.fresh([{ model: 'kimi-k3' }, { model: 'jev-latest' }])).toEqual([])
+    // A genuinely new id is still reported.
+    expect(announcer.fresh([{ model: 'gpt-x' }]).map(m => m.model)).toEqual(['gpt-x'])
   })
 })

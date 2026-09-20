@@ -89,6 +89,54 @@ fn current_writer_remains_readable_by_legacy_clients() -> TestResult {
     Ok(())
 }
 
+/// A cache rewritten by a client that predates a field (e.g. `role`) must
+/// hand that field back untouched, otherwise concurrent old/new clients flap
+/// the catalog every sync cycle.
+#[test]
+fn cache_round_trip_preserves_unknown_fields() -> TestResult {
+    let raw = serde_json::json!({
+        "schema_version": 1,
+        "synced_at": 7,
+        "future_top": true,
+        "response": {
+            "version": 410,
+            "future_response": [1, 2],
+            "providers": [{
+                "name": "evot-pro", "protocol": "anthropic", "base_url": "https://x",
+                "api_key": "k", "models": ["jev-latest"], "future_provider": "p"
+            }],
+            "models": [{
+                "id": "jev-latest", "role": "judge", "future_model": {"nested": 1}
+            }],
+            "notices": [{"id": "n", "future_notice": "x"}]
+        }
+    });
+    let mut cache: auth::ModelsCache = serde_json::from_value(raw.clone())?;
+    // Simulate the notices-only refresh path that rewrites the whole file.
+    cache.response.notices = cache.response.notices.clone();
+    let written: serde_json::Value = serde_json::to_value(&cache)?;
+
+    assert_eq!(written["future_top"], raw["future_top"]);
+    assert_eq!(
+        written["response"]["future_response"],
+        raw["response"]["future_response"]
+    );
+    assert_eq!(
+        written["response"]["providers"][0]["future_provider"],
+        raw["response"]["providers"][0]["future_provider"]
+    );
+    assert_eq!(written["response"]["models"][0]["role"], "judge");
+    assert_eq!(
+        written["response"]["models"][0]["future_model"],
+        raw["response"]["models"][0]["future_model"]
+    );
+    assert_eq!(
+        written["response"]["notices"][0]["future_notice"],
+        raw["response"]["notices"][0]["future_notice"]
+    );
+    Ok(())
+}
+
 fn assert_custom_provider(config: &Config) -> TestResult {
     let provider = config
         .providers

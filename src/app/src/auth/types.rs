@@ -1,5 +1,12 @@
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::Map;
+use serde_json::Value;
+
+/// Fields this build does not know about. Carried through every cache
+/// load/save so an older client rewriting `models.cache.json` (for example
+/// to refresh notices) never strips fields a newer client relies on.
+pub type ExtraFields = Map<String, Value>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudUser {
@@ -63,6 +70,8 @@ pub struct FreeModelOption {
     /// kept out of the picker and used for side decisions such as pruning.
     #[serde(default)]
     pub role: String,
+    #[serde(flatten, default)]
+    pub extra: ExtraFields,
 }
 
 impl FreeModelOption {
@@ -82,6 +91,8 @@ pub struct Notice {
     pub title: String,
     #[serde(default)]
     pub body_md: String,
+    #[serde(flatten, default)]
+    pub extra: ExtraFields,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +112,8 @@ pub struct CloudProviderConfig {
     #[serde(default)]
     pub default_model: String,
     pub models: Vec<String>,
+    #[serde(flatten, default)]
+    pub extra: ExtraFields,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,6 +129,8 @@ pub struct ModelsResponse {
     pub models: Vec<FreeModelOption>,
     #[serde(default)]
     pub notices: Vec<Notice>,
+    #[serde(flatten, default)]
+    pub extra: ExtraFields,
 }
 
 /// Current on-disk schema for `models.cache.json`.
@@ -130,6 +145,8 @@ pub struct ModelsCache {
     pub schema_version: u32,
     pub synced_at: i64,
     pub response: ModelsResponse,
+    #[serde(flatten, default)]
+    pub extra: ExtraFields,
 }
 
 impl ModelsCache {
@@ -138,6 +155,7 @@ impl ModelsCache {
             schema_version: MODELS_CACHE_SCHEMA_VERSION,
             synced_at,
             response,
+            extra: ExtraFields::new(),
         }
     }
 }

@@ -154,7 +154,7 @@ import { GitInfoProvider } from './git-info.js'
 import { isHostToolEvent } from '../native/contracts/query-event.js'
 import { ResumeSessionCache } from './app/resume-cache.js'
 import { ResumeItemCache } from './app/resume-items.js'
-import { CloudSync } from './app/cloud-sync.js'
+import { CloudSync, ModelAnnouncer } from './app/cloud-sync.js'
 import { prepareResume } from './app/prepare-resume.js'
 import { campaignContent, refreshCampaigns } from './app/campaigns.js'
 import type { OverlayState } from './app/overlay-state.js'
@@ -3299,14 +3299,19 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   authWatcher = new AuthWatcher(() => adoptExternalAuthChange())
 
+  // Any server-pushed group counts, not just the free tier, so granted
+  // models and split protocol groups are announced too.
+  const cloudModels = () => configInfo?.availableModels.filter(isCloudModel) ?? []
+  const modelAnnouncer = new ModelAnnouncer()
+  modelAnnouncer.seed(cloudModels().map(m => m.model))
+
   async function syncCloudNow(force = false): Promise<void> {
     if (destroyed) return
     if (inflightSync) return inflightSync
     inflightSync = (async () => {
-      // Any server-pushed group counts, not just the free tier, so granted
-      // models and split protocol groups are announced too.
-      const cloudModels = () => configInfo?.availableModels.filter(isCloudModel) ?? []
-      const knownModelIds = new Set(cloudModels().map(m => m.model))
+      // Anything present right before the sync counts as known, even if it
+      // arrived through a path other than this sync (e.g. an external login).
+      modelAnnouncer.seed(cloudModels().map(m => m.model))
       const knownCampaignIds = new Set([...adSlot.notices, ...adSlot.ads].map(c => c.id))
       const knownFingerprints = new Set([...adSlot.notices, ...adSlot.ads].map(campaignFingerprint))
 
@@ -3315,7 +3320,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const { noticesSynced, modelsSynced } = synced
       if (!noticesSynced && !modelsSynced) return
 
-      const addedModels = cloudModels().filter(m => !knownModelIds.has(m.model))
+      const addedModels = modelAnnouncer.fresh(cloudModels())
       const campaigns = [...adSlot.notices, ...adSlot.ads]
       const addedCampaigns = campaigns.filter(c => !knownCampaignIds.has(c.id))
       const copyChanged = campaigns.some(c => !knownFingerprints.has(campaignFingerprint(c)))
