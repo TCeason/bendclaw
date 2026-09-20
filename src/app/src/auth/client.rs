@@ -146,6 +146,30 @@ pub async fn sync_models(state: &AuthState) -> Result<ModelsResponse> {
         .map_err(|error| EvotError::Conf(format!("decode: {error}")))
 }
 
+/// Pin (or, with an empty `model`, clear) the account's landing model on the
+/// server. The server rejects models this account cannot use right now.
+pub async fn set_default_model(state: &AuthState, model: &str) -> Result<()> {
+    let url = format!(
+        "{}/v1/config/default-model",
+        state.server_base_url.trim_end_matches('/')
+    );
+    let response = reqwest::Client::new()
+        .put(&url)
+        .bearer_auth(&state.cli_token)
+        .json(&serde_json::json!({ "model": model }))
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|error| EvotError::Conf(format!("set default model: {error}")))?;
+    if !response.status().is_success() {
+        return Err(EvotError::Conf(format!(
+            "set default model: server returned {}",
+            response.status()
+        )));
+    }
+    Ok(())
+}
+
 async fn post_json<T: DeserializeOwned>(
     base_url: &str,
     path: &str,

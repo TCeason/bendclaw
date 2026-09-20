@@ -195,6 +195,8 @@ pub(super) fn apply_cloud_provider(config: &mut Config) -> Result<()> {
     config.cloud_thinking_levels = thinking_levels;
     config.cloud_model_tiers = model_tiers;
     config.cloud_model_sorts = model_sorts;
+    config.cloud_default_model =
+        Some(cache.response.default_model.trim().to_string()).filter(|model| !model.is_empty());
     config.judge = judge;
 
     // The catalog owns the landing spot, so a stale cloud selection (e.g. a

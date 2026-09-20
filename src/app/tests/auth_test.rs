@@ -946,3 +946,90 @@ mod wiremock_tests {
             .is_some_and(|requests| requests.is_empty()));
     }
 }
+
+/// The account's server-side pin (`default_model` at the response top level)
+/// beats catalog rank, so a user who picked a lower-ranked model keeps landing
+/// on it in every new session.
+#[test]
+fn account_default_model_pins_landing_spot() {
+    let _guard = env_lock().lock().unwrap();
+    let original_home = std::env::var_os("HOME");
+    let env_home = std::env::temp_dir().join(format!("evot-auth-pin-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&env_home);
+    let pinned = CACHE_JSON.replacen(
+        "\"version\": 3,",
+        "\"version\": 3, \"default_model\": \"m-one\",",
+        1,
+    );
+    write_test_home(&env_home, Some(AUTH_JSON), Some(&pinned));
+    std::env::set_var("HOME", &env_home);
+
+    let result = Config::load();
+    restore_env_var("HOME", original_home);
+    let config = result.unwrap();
+
+    assert_eq!(config.cloud_default_model.as_deref(), Some("m-one"));
+    assert_eq!(
+        config.preferred_new_session_llm(),
+        Some(("evot-free".to_string(), "m-one".to_string()))
+    );
+    assert_eq!(
+        config.active_selection(),
+        Some(("evot-free".to_string(), "m-one".to_string()))
+    );
+
+    let _ = std::fs::remove_dir_all(&env_home);
+}
+
+/// A pin the catalog no longer serves (model retired, or a stale cache written
+/// before the server blanked it) must fall back to rank, never to a dead model.
+#[test]
+fn unserved_account_default_model_falls_back_to_rank() {
+    let _guard = env_lock().lock().unwrap();
+    let original_home = std::env::var_os("HOME");
+    let env_home = std::env::temp_dir().join(format!("evot-auth-pin-gone-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&env_home);
+    let pinned = CACHE_JSON.replacen(
+        "\"version\": 3,",
+        "\"version\": 3, \"default_model\": \"m-retired\",",
+        1,
+    );
+    write_test_home(&env_home, Some(AUTH_JSON), Some(&pinned));
+    std::env::set_var("HOME", &env_home);
+
+    let result = Config::load();
+    restore_env_var("HOME", original_home);
+    let config = result.unwrap();
+
+    assert_eq!(config.cloud_default_model.as_deref(), Some("m-retired"));
+    assert_eq!(
+        config.preferred_new_session_llm(),
+        Some(("evot-free".to_string(), "m-three".to_string()))
+    );
+
+    let _ = std::fs::remove_dir_all(&env_home);
+}
+
+/// Old servers and old caches carry no top-level `default_model`; the client
+/// must read that as "no pin" rather than fail or land somewhere odd.
+#[test]
+fn cache_without_account_default_model_follows_rank() {
+    let _guard = env_lock().lock().unwrap();
+    let original_home = std::env::var_os("HOME");
+    let env_home = std::env::temp_dir().join(format!("evot-auth-nopin-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&env_home);
+    write_test_home(&env_home, Some(AUTH_JSON), Some(CACHE_JSON));
+    std::env::set_var("HOME", &env_home);
+
+    let result = Config::load();
+    restore_env_var("HOME", original_home);
+    let config = result.unwrap();
+
+    assert_eq!(config.cloud_default_model, None);
+    assert_eq!(
+        config.preferred_new_session_llm(),
+        Some(("evot-free".to_string(), "m-three".to_string()))
+    );
+
+    let _ = std::fs::remove_dir_all(&env_home);
+}

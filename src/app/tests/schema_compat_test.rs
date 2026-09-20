@@ -19,6 +19,8 @@ type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 const CACHE_V0: &str = include_str!("fixtures/schema/models-cache-v0.json");
 const CACHE_V0_MISSING_DEFAULT: &str =
     include_str!("fixtures/schema/models-cache-v0-missing-default.json");
+const CACHE_V1_ACCOUNT_DEFAULT: &str =
+    include_str!("fixtures/schema/models-cache-v1-account-default.json");
 const ENV_WITH_CUSTOM_PROVIDER: &str =
     include_str!("fixtures/schema/evot-env-with-custom-provider.env");
 
@@ -57,6 +59,42 @@ fn current_reader_accepts_historical_cache_fixtures() -> TestResult {
     let transitional: auth::ModelsCache = serde_json::from_str(CACHE_V0_MISSING_DEFAULT)?;
     assert_eq!(transitional.schema_version, 0);
     assert_eq!(transitional.response.providers[0].default_model, "");
+
+    // Caches from servers without per-account defaults carry no top-level
+    // `default_model`; that reads as "no pin", not as a parse failure.
+    assert_eq!(legacy.response.default_model, "");
+    assert_eq!(transitional.response.default_model, "");
+
+    let pinned: auth::ModelsCache = serde_json::from_str(CACHE_V1_ACCOUNT_DEFAULT)?;
+    assert_eq!(pinned.schema_version, 1);
+    assert_eq!(pinned.response.default_model, "m-two");
+    // The per-provider legacy field is untouched by the account-level one.
+    assert_eq!(pinned.response.providers[0].default_model, "m-one");
+    Ok(())
+}
+
+/// The account pin is a new top-level response field: current writers emit it,
+/// strict legacy readers (which never knew it) must still load the file, and a
+/// round trip through the current client must not drop it.
+#[test]
+fn account_default_model_survives_round_trip_and_legacy_readers() -> TestResult {
+    let pinned: auth::ModelsCache = serde_json::from_str(CACHE_V1_ACCOUNT_DEFAULT)?;
+    let current = auth::ModelsCache::new(500, pinned.response);
+    let serialized = serde_json::to_string_pretty(&current)?;
+
+    let legacy: LegacyModelsCache = serde_json::from_str(&serialized)?;
+    assert_eq!(legacy.synced_at, 500);
+    assert_eq!(legacy.response.providers[0].default_model, "m-one");
+
+    let reread: auth::ModelsCache = serde_json::from_str(&serialized)?;
+    assert_eq!(reread.response.default_model, "m-two");
+
+    // A current client writing a cache from an old server emits the field as
+    // an explicit empty string, which is what "no pin" means on the wire.
+    let unpinned: auth::ModelsCache = serde_json::from_str(CACHE_V0)?;
+    let written: serde_json::Value =
+        serde_json::to_value(auth::ModelsCache::new(501, unpinned.response))?;
+    assert_eq!(written["response"]["default_model"], serde_json::json!(""));
     Ok(())
 }
 

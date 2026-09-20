@@ -56,6 +56,7 @@ export interface NativeAgent {
   cycleThinkingLevel(): string | null
   setThinkingLevel(level: string): string | null
   restoreThinkingLevel(level: string): void
+  pinDefaultModel(): Promise<string | null>
   setLimits(turns: number | null, tokens: number | null, duration: number | null): void
   appendSystemPrompt(extra: string): void
   addSkillsDirs(dirs: string[]): void

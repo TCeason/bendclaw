@@ -1,5 +1,6 @@
 use crate::agent::Agent;
 use crate::conf::Config;
+use crate::error::Result;
 use crate::models::ModelSelection;
 
 /// Change the live selection, then best-effort persist the default for future
@@ -19,6 +20,38 @@ pub fn set_thinking_level(agent: &Agent, env_file: &str, level: &str) -> Option<
     agent.set_thinking_level(parsed);
     persist_default(agent, env_file, parsed);
     Some(ModelSelection::display_thinking_level_for(&agent.llm()))
+}
+
+/// Outcome of asking to make the live model the account default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PinOutcome {
+    /// The server accepted the pin and the local catalog cache reflects it.
+    Pinned(String),
+    /// The live model is BYOK (or nobody is logged in): a server pin does not
+    /// apply. Local `EVOT_LLM_PROVIDER` already keeps that choice.
+    NotCloud,
+}
+
+/// Make the live cloud model the account's landing model for future sessions.
+///
+/// Double write, like thinking levels: the server owns the preference (so every
+/// machine follows it), and the local `models.cache.json` is patched so the very
+/// next `evot` start honours the pin without waiting for a catalog resync.
+pub async fn pin_default_model(agent: &Agent, env_file: &str) -> Result<PinOutcome> {
+    let llm = agent.llm();
+    let config = Config::load_with_env_file(Some(env_file))?;
+    if !config.cloud_providers.contains(&llm.provider) {
+        return Ok(PinOutcome::NotCloud);
+    }
+    let Some(auth) = crate::auth::load_auth()? else {
+        return Ok(PinOutcome::NotCloud);
+    };
+    crate::auth::client::set_default_model(&auth, &llm.model).await?;
+    if let Some(mut cache) = crate::auth::load_models_cache()? {
+        cache.response.default_model = llm.model.clone();
+        crate::auth::save_models_cache(&cache)?;
+    }
+    Ok(PinOutcome::Pinned(llm.model))
 }
 
 fn persist_default(agent: &Agent, env_file: &str, level: evot_engine::ThinkingLevel) {

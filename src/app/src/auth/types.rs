@@ -121,6 +121,11 @@ pub struct ModelsResponse {
     /// Absent in caches written by early versions; 0 marks those as legacy.
     #[serde(default)]
     pub version: i64,
+    /// The wire id every new session of this account lands on. Empty (and
+    /// absent in caches from older servers) means "follow catalog rank". The
+    /// server blanks it while the pinned model is unavailable to the user.
+    #[serde(default)]
+    pub default_model: String,
     /// One entry per (tier, protocol) pair in use, so a single account can mix
     /// Anthropic and OpenAI models.
     #[serde(default)]

@@ -232,6 +232,9 @@ pub struct Config {
     pub cloud_model_tiers: HashMap<String, String>,
     /// Catalog display rank per cloud model id (higher shows earlier).
     pub cloud_model_sorts: HashMap<String, i64>,
+    /// The account's pinned landing model from the server, if it set one and
+    /// the model is currently served by a cloud provider.
+    pub cloud_default_model: Option<String>,
     pub cloud_providers: HashSet<String>,
     /// The judge model the server published, if any: answers typed questions
     /// about the conversation and drives lossless context pruning. Never a
@@ -266,6 +269,7 @@ impl Config {
             cloud_thinking_levels: HashMap::new(),
             cloud_model_tiers: HashMap::new(),
             cloud_model_sorts: HashMap::new(),
+            cloud_default_model: None,
             cloud_providers: HashSet::new(),
             judge: None,
         }
@@ -402,9 +406,23 @@ impl Config {
     }
 
     /// Landing (provider, model) for a fresh cloud session: the catalog's
-    /// top-ranked model. The server owns the outcome through tier and
-    /// `sort_order`, so there is no separate default model.
+    /// top-ranked model. The account's server-side pin wins when a cloud
+    /// provider still serves it; otherwise the server owns the outcome through
+    /// tier and `sort_order`.
     pub fn preferred_new_session_llm(&self) -> Option<(String, String)> {
+        if let Some(pinned) = self.cloud_default_model.as_deref() {
+            let served = self
+                .providers
+                .iter()
+                .find(|(name, profile)| {
+                    self.cloud_providers.contains(*name)
+                        && profile.models.iter().any(|m| m == pinned)
+                })
+                .map(|(name, _)| (name.clone(), pinned.to_string()));
+            if served.is_some() {
+                return served;
+            }
+        }
         self.providers
             .iter()
             .enumerate()

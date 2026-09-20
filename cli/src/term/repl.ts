@@ -1194,6 +1194,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
   refreshConfigInfo()
 
+  // Every explicit model switch also becomes the account default, so the next
+  // `evot` (here or on another machine) starts on it. Best effort: a refused or
+  // unreachable server must not undo the live switch the user just made.
+  const pinDefaultModel = () => {
+    agent.pinDefaultModel().catch(() => {})
+  }
+
   const premiumAccount = hasPremiumModel(configInfo)
   adSlot = createAdSlotState(
     campaignContent(authNotices()),
@@ -3081,6 +3088,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (name === '/model' && args) {
       refreshConfigInfo()
       appState = { ...appState, model: agent.model }
+      pinDefaultModel()
     }
 
     if (name === '/plan') {
@@ -3839,6 +3847,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           const model = selected?.model ?? agent.model
           const provider = selected?.provider ?? configInfo?.provider ?? ''
           appState = { ...appState, model }
+          pinDefaultModel()
           const label = formatModelLabel(model, provider, selected?.group_label)
           // Effort shares the model's status slot: they were chosen together, so
           // reporting them apart would read as two unrelated switches.
