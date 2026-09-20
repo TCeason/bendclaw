@@ -24,6 +24,7 @@ import {
   decideBackgroundPanelAction,
   focusedPanelTarget,
   isLiveStatus,
+  PANEL_EMPTY_MESSAGE,
   refreshBackgroundOutputState,
   refreshBackgroundPanelState,
   sanitizeTerminalOutput,
@@ -408,7 +409,7 @@ export class BackgroundTerminals {
           if (state.owner === SELECTOR_OWNER.backgroundOutput) {
             this.refreshOutputView(state, next, sessionChanged ? [] : previous)
           } else {
-            this.deps.updatePanel(this.withActivity(refreshBackgroundPanelState(state, this.panelProcesses())))
+            this.showListOrClose(this.withActivity(refreshBackgroundPanelState(state, this.panelProcesses())))
           }
         }
       }
@@ -449,13 +450,33 @@ export class BackgroundTerminals {
     this.refresh()
     const processes = this.panelProcesses()
     this.returnPanel = null
-    if (processes.length === 1 && isLiveStatus(processes[0]!.status)) {
+    // An empty panel has nothing to manage; say so in one line and stay at
+    // the prompt instead of making the user dismiss an overlay.
+    if (!processes.some(process => isLiveStatus(process.status))) {
+      this.deps.commit('none', `  ${PANEL_EMPTY_MESSAGE}.`)
+      return
+    }
+    if (processes.length === 1) {
       const process = processes[0]!
       this.deps.openPanel(createBackgroundOutputState(process, this.readOutput(process), true))
       this.subscribeOutput(process)
     } else {
       this.deps.openPanel(this.withActivity(createBackgroundPanelState(processes)))
     }
+  }
+
+  /**
+   * Show the task list, or hand the screen back when nothing is live: the
+   * list only shows running tasks, so an empty one is a dead end. Used by
+   * every path that would otherwise leave an empty list on screen.
+   */
+  private showListOrClose(panel: SelectorState): void {
+    if (panel.items.length === 0) {
+      this.dispose()
+      this.deps.updatePanel(null)
+      return
+    }
+    this.deps.updatePanel(panel)
   }
 
   /**
@@ -571,7 +592,7 @@ export class BackgroundTerminals {
     const panel = this.withActivity(this.returnPanel
       ? refreshBackgroundPanelState(this.returnPanel, this.panelProcesses())
       : createBackgroundPanelState(this.panelProcesses()))
-    this.deps.updatePanel(taskId ? selectorFocusOn(panel, item => item.id === taskId) : panel)
+    this.showListOrClose(taskId ? selectorFocusOn(panel, item => item.id === taskId) : panel)
   }
 
   /**
@@ -619,7 +640,7 @@ export class BackgroundTerminals {
     const process = processes.find(candidate => candidate.task_id === taskId)
     if (!process) {
       this.dispose()
-      this.deps.updatePanel(this.withActivity(createBackgroundPanelState(this.panelProcesses())))
+      this.showListOrClose(this.withActivity(createBackgroundPanelState(this.panelProcesses())))
       return
     }
     const wasLive = previous.some(candidate => candidate.task_id === taskId && isLiveStatus(candidate.status))

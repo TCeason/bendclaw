@@ -246,14 +246,12 @@ describe('BackgroundTerminals.togglePanel', () => {
     expect(h.panel()).toBeNull()
   })
 
-  test('finished history never opens directly in detail', () => {
+  test('finished history never opens a panel', () => {
     for (const status of ['completed', 'failed', 'killed'] as const) {
       const h = harness({ processes: [proc({ status })] })
       h.controller.togglePanel()
-      expect(h.panel()?.presentation).toBe('background-list')
-      expect(h.panel()?.items).toEqual([])
-      expect(h.panel()?.subtitle).toBeUndefined()
-      expect(h.panel()?.emptyMessage).toBe('No tasks currently running')
+      expect(h.panel()).toBeNull()
+      expect(h.texts()[0]).toContain('No tasks currently running')
     }
   })
 
@@ -278,13 +276,25 @@ describe('BackgroundTerminals.togglePanel', () => {
     expect(h.texts()[0]).toContain('No active session')
   })
 
-  test('an empty list still opens the panel', () => {
-    // The panel is the answer to "what is running?", including "nothing".
+  test('an empty list stays at the prompt with a one-line answer', () => {
+    // "Nothing running" is a fact, not something to manage: an overlay for it
+    // would only cost an Esc.
     const h = harness({ processes: [] })
     h.controller.togglePanel()
-    expect(h.panel()).not.toBeNull()
-    expect(h.panel()!.items).toHaveLength(0)
-    expect(h.panel()!.emptyMessage).toBe('No tasks currently running')
+    expect(h.panel()).toBeNull()
+    expect(h.texts()).toEqual(['  No tasks currently running.'])
+  })
+
+  test('the list closes itself when the last task finishes', () => {
+    const h = harness({ processes: [proc(), proc({ task_id: 'bbbbbbbb-2222' })] })
+    h.controller.togglePanel()
+    expect(h.panel()?.presentation).toBe('background-list')
+    h.setProcesses([proc({ status: 'completed' }), proc({ task_id: 'bbbbbbbb-2222' })])
+    h.controller.refresh()
+    expect(h.panel()!.items).toHaveLength(1)
+    h.setProcesses([proc({ status: 'completed' }), proc({ task_id: 'bbbbbbbb-2222', status: 'completed' })])
+    h.controller.refresh()
+    expect(h.panel()).toBeNull()
   })
 })
 
@@ -309,9 +319,8 @@ describe('BackgroundTerminals panel refresh', () => {
     expect(h.panel()?.subtitle).toBe('1 active shell')
     h.setProcesses([{ ...a, status: 'completed' }, { ...b, status: 'failed' }])
     h.controller.refresh()
-    expect(h.panel()?.items).toEqual([])
-    expect(h.panel()?.subtitle).toBeUndefined()
-    expect(h.panel()?.emptyMessage).toBe('No tasks currently running')
+    // Nothing left to manage: the list hands the screen back on its own.
+    expect(h.panel()).toBeNull()
   })
 
   test('a closed panel is not reopened by a poll', () => {
@@ -581,9 +590,8 @@ describe('BackgroundTerminals.handlePanelKey', () => {
     expect(h.processes()[0]!.status).toBe('killed')
   })
 
-  test('x on a finished task is inert and leaves keys to the REPL', () => {
+  test('x with no panel open is inert and leaves keys to the REPL', () => {
     const h = harness({ processes: [proc({ status: 'completed', exit_code: 0 })] })
-    h.controller.togglePanel()
     expect(h.controller.handlePanelKey({ type: 'char', char: 'x' })).toBe(false)
     expect(h.texts()).toHaveLength(0)
   })
