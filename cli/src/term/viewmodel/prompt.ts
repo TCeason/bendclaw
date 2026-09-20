@@ -15,7 +15,7 @@ import { getTheme } from '../../render/theme/index.js'
 import type { CompletionMenu } from '../input/editor.js'
 import { CURSOR_MARKER } from '../render-frame.js'
 import { atLeastHeight, atLeastWidth, heightTier, widthTier } from './breakpoints.js'
-import { createFrame } from './frame.js'
+import { createFrame, type RuleLabels } from './frame.js'
 import { promptMode, promptModeLabels, promptModeStyle, type PromptModeStyle } from './prompt-mode.js'
 import { buildPromptFooterBlocks, type PromptFooterVM } from './prompt-footer.js'
 import { rowMarker } from './selector-row.js'
@@ -32,6 +32,10 @@ export interface PromptVMInput extends PromptFooterVM {
   rows: number
   placeholder: boolean
   exitHint: boolean
+  /** A turn is running. The placeholder then says what typing does now: steer it. */
+  busy?: boolean
+  /** Prompts waiting to reach the running turn. The placeholder points at their management shortcut. */
+  queuedCount?: number
 }
 
 export interface PromptLayoutOptions {
@@ -78,17 +82,31 @@ function overflowLabel(arrow: '↑' | '↓', count: number): string | undefined 
 }
 
 /**
- * The top rule label. Mode and scroll overflow compete for one slot, so they
- * share it: `── plan · ↑ 3 lines ────`. Mode leads because it says what pressing
- * enter will do, while overflow only says where you are in a draft.
- *
- * The label carries the mode as text, not just as rule hue — colour alone
- * fails on monochrome terminals and for colour-blind users.
+ * The top rule carries two labels at opposite ends: scroll overflow on the
+ * left where reading starts, and the mode on the right in the mode's own hue
+ * (`── ↑ 3 lines ──────── (plan) ─`). The mode is text, not just colour —
+ * colour alone fails on monochrome terminals and for colour-blind users.
  */
-function topLabel(modes: string[], overflow: string | undefined): string | undefined {
-  const mode = modes.join(' · ')
-  if (!mode) return overflow
-  return overflow ? `${mode} · ${overflow}` : mode
+function topLabels(modes: string[], modeHex: string, overflow: string | undefined): RuleLabels {
+  const labels: RuleLabels = {}
+  if (overflow) labels.lead = overflow
+  if (modes.length > 0) labels.mode = { text: modes.join(' · '), hex: modeHex }
+  return labels
+}
+
+/**
+ * What the empty composer says. State beats mode: while a turn runs, the
+ * useful thing to know is that typing steers it, not which mode the next turn
+ * will start in.
+ */
+function placeholderHint(input: PromptVMInput, mode: PromptModeStyle, wide: boolean): string {
+  const queued = input.queuedCount ?? 0
+  if (input.busy && queued > 0) {
+    const noun = queued === 1 ? 'message' : 'messages'
+    return wide ? `${queued} ${noun} queued · Ctrl+G to manage` : `${queued} queued · Ctrl+G`
+  }
+  if (input.busy) return wide ? 'Guide the agent while it works' : 'Guide while it works'
+  return wide ? mode.hint : mode.shortHint
 }
 
 export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOptions = {}): ViewBlock[] {
@@ -96,7 +114,7 @@ export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOpt
   const rows = finiteSize(input.rows, 24)
   const mode = promptModeStyle(promptMode(input))
   const modeLabels = promptModeLabels(input)
-  const frame = createFrame(columns, { rows, hex: mode.hex })
+  const frame = createFrame(columns, { rows })
 
   const visual = buildInputLines(input, frame.contentWidth, columns, mode)
   const maxInputRows = Math.max(MAX_INPUT_ROWS_FLOOR, Math.floor(rows * MAX_INPUT_ROWS_RATIO))
@@ -137,7 +155,7 @@ export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOpt
   // transcript needs them more than the composer needs an outline. The caret
   // still marks the row as the place you type, and the footer takes the mode
   // back over.
-  if (frame.ruled) blocks.push(block([frame.top(topLabel(modeLabels, overflowLabel('↑', start)))], options.attachedAbove ? 0 : 1))
+  if (frame.ruled) blocks.push(block([frame.top(topLabels(modeLabels, mode.hex, overflowLabel('↑', start)))], options.attachedAbove ? 0 : 1))
   // The caret leads the first visible row only. Wrapped and later lines sit
   // flush underneath, the way a multi-line shell prompt continues.
   blocks.push(block([
@@ -153,7 +171,7 @@ export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOpt
     if (frame.framed) blocks.push(block([blank()]))
     blocks.push(block(completionLines.map(row => frame.row(row))))
   }
-  if (frame.ruled) blocks.push(block([frame.bottom(overflowLabel('↓', visual.lines.length - end))]))
+  if (frame.ruled) blocks.push(block([frame.bottom({ lead: overflowLabel('↓', visual.lines.length - end) })]))
 
   if (input.exitHint) blocks.push(block([line(confirmationHint(truncateToWidth('  Press Ctrl+C again to exit', columns), true))]))
   // The border label carries the mode whenever it is drawn, so the footer only
@@ -182,7 +200,7 @@ function buildInputLines(
     if (active && text === '' && input.lines.length === 1 && input.placeholder) {
       cursorIndex = lines.length
       // The native cursor sits on the first hint cell without inserting text.
-      const full = atLeastWidth(widthTier(columns), 'md') ? mode.hint : mode.shortHint
+      const full = placeholderHint(input, mode, atLeastWidth(widthTier(columns), 'md'))
       const hint = truncateToWidth(full, contentWidth)
       lines.push(line(plain(CURSOR_MARKER), ...(hint ? [dim(hint)] : [])))
       continue

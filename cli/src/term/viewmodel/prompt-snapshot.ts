@@ -20,6 +20,10 @@ export interface PromptSnapshot {
   backgroundProcessCount: number
   backgroundStopHint?: string
   backgroundStopPending?: boolean
+  /** A turn is streaming: the empty composer says typing steers it. */
+  busy?: boolean
+  /** Prompts queued behind the running turn. */
+  queuedCount?: number
 }
 
 /** Pure projection of a single host snapshot. No agent, terminal or clocks. */
@@ -55,6 +59,8 @@ export function promptFromSnapshot(input: PromptSnapshot): PromptVMInput {
     backgroundStopHint: input.backgroundStopHint,
     backgroundStopPending: input.backgroundStopPending,
     backgroundPanelDownAvailable: shouldDownOpenPanel({ editorEmpty: empty, running: input.backgroundProcessCount }),
+    busy: input.busy ?? false,
+    queuedCount: input.queuedCount ?? 0,
     thinkingLevel: config?.thinkingLevel ?? '',
     judge: config?.judge,
   }

@@ -1408,6 +1408,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       backgroundProcessCount: backgroundTerminals.runningCount(),
       backgroundStopHint,
       backgroundStopPending: interaction.interruptPending,
+      busy: isLoading,
+      queuedCount: queuedUserMessages.length + queuedCompactionSubmissions.length,
     })
   }
 

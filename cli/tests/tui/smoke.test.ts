@@ -329,7 +329,7 @@ describe.skipIf(!canRun)('evot binary smoke (PTY)', () => {
       session.write('odel')
       const continued = await session.waitFor('/model')
       expect(continued).toContain('/model')
-      expect(continued).not.toContain('> odel')
+      expect(continued).not.toContain('❭ odel')
 
       // Argument entry hides the no-argument command window immediately. When
       // the command becomes argument-free again, the same preview returns.
@@ -475,11 +475,11 @@ describe.skipIf(!canRun)('evot binary smoke (PTY)', () => {
       await Bun.sleep(200)
       session.checkpoint()
       session.write('\x7f')
-      const shortened = await session.waitFor('> /r')
+      const shortened = await session.waitFor('❭ /r')
       expect(shortened).not.toContain('\x1b[2J')
       session.checkpoint()
       session.write('\x7f')
-      const bridged = await session.waitFor('> /')
+      const bridged = await session.waitFor('❭ /')
       expect(bridged).not.toContain('\x1b[2J')
       session.checkpoint()
       session.write('mo')

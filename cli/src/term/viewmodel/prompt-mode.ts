@@ -7,8 +7,10 @@
  * with consequences should be visible where the user is already looking: at the
  * composer.
  *
- * Each mode contributes a border label, a border hue, and its own placeholder.
- * All three cost zero extra rows.
+ * Each mode contributes a label on the top rule, the hue that label is drawn
+ * in, and its own placeholder. All three cost zero extra rows. The rules
+ * themselves stay neutral: a whole frame changing colour pulls the eye away
+ * from the transcript for a fact one word already states.
  */
 
 import { getTheme } from '../../render/theme/index.js'
@@ -16,7 +18,7 @@ import { getTheme } from '../../render/theme/index.js'
 export type PromptMode = 'default' | 'plan' | 'log'
 
 export interface PromptModeStyle {
-  /** Frame hue. The default mode keeps the brand colour. */
+  /** Hue of the mode label on the top rule. Unused in the default mode, which has no label. */
   hex: string
   /** Full-width placeholder. */
   hint: string

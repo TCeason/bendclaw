@@ -105,20 +105,22 @@ describe('prompt editor', () => {
     const plain = stripAnsi(ansi).replaceAll(CURSOR_MARKER, '')
     expect(plain.split('\n').filter(row => row === '─'.repeat(80))).toHaveLength(2)
     expect(plain).not.toContain('▍')
-    expect(plain).toContain('> Enter a coding task or / for commands')
+    expect(plain).toContain('❭ Enter a coding task or / for commands')
     expect(ansi).toContain(CURSOR_MARKER)
   })
 
-  test('uses the theme-aware EVOT brand color for both rules and the caret', () => {
+  test('rules take the subtle structural tone; only the caret carries the brand colour', () => {
     const previousTheme = process.env.EVOT_THEME
     try {
-      for (const [scheme, hex] of [['dark', '#b5bcf9'], ['light', '#5769f7']] as const) {
+      for (const [scheme, brand, subtle] of [['dark', '#b5bcf9', '#4a4a4a'], ['light', '#5769f7', '#b8b8b8']] as const) {
         process.env.EVOT_THEME = scheme
         resetThemeCache()
         const lines = render(defaultInput()).split('\n')
-        expect(lines.filter(line => line === chalk.hex(hex)('─'.repeat(80)))).toHaveLength(2)
-        // The caret carries the same brand hue as the rules.
-        expect(lines.some(line => line.startsWith(chalk.hex(hex)('> ')))).toBe(true)
+        // Rules are separators: they recede so the transcript and the draft lead.
+        expect(lines.filter(line => line === chalk.hex(subtle)('─'.repeat(80)))).toHaveLength(2)
+        // The caret is where you type, so it is the one brand-coloured mark.
+        expect(lines.some(line => line.startsWith(chalk.hex(brand)('❭ ')))).toBe(true)
+        expect(lines.some(line => line.includes(chalk.hex(brand)('─'.repeat(80))))).toBe(false)
       }
     } finally {
       if (previousTheme === undefined) delete process.env.EVOT_THEME
@@ -305,7 +307,7 @@ describe('prompt frame', () => {
       cursorLine: 3,
       cursorCol: 6,
     })).map(row => stripAnsi(row).replaceAll(CURSOR_MARKER, ''))
-    expect(rows[0]).toBe('> first')
+    expect(rows[0]).toBe('❭ first')
     expect(rows.slice(1)).toEqual(['  second', '  third', '  fourth'])
   })
 
@@ -314,7 +316,7 @@ describe('prompt frame', () => {
     // a narrow terminal reads the same as one copied from a wide one.
     for (const columns of [40, 60, 100, 200]) {
       const row = interiorRows(defaultInput({ columns })).map(stripAnsi).find(line => line.includes(CURSOR_MARKER))
-      expect(row!.startsWith(`> ${CURSOR_MARKER}`)).toBe(true)
+      expect(row!.startsWith(`❭ ${CURSOR_MARKER}`)).toBe(true)
     }
   })
 
@@ -326,7 +328,7 @@ describe('prompt frame', () => {
         lines: ['x'.repeat(columns * 2)],
         cursorCol: 0,
       })).map(row => stripAnsi(row).replaceAll(CURSOR_MARKER, '')).find(line => line.includes('x'))!
-      expect(row).toBe(`> ${'x'.repeat(columns - 2)}`)
+      expect(row).toBe(`❭ ${'x'.repeat(columns - 2)}`)
     }
   })
 
@@ -423,7 +425,7 @@ describe('prompt frame', () => {
   test('drops the caret column below the minimum framed width', () => {
     const plain = renderPlain(defaultInput({ columns: 29 })).split('\n')
     expect(plain.filter(row => row === '─'.repeat(29))).toHaveLength(2)
-    expect(plain.some(row => row.startsWith('> '))).toBe(false)
+    expect(plain.some(row => row.startsWith('❭ '))).toBe(false)
   })
 
   test('spends no width on the caret once degraded', () => {
@@ -437,7 +439,7 @@ describe('prompt frame', () => {
     const row = renderLines(defaultInput({ columns: 40 })).find(line => line.includes(CURSOR_MARKER))
     expect(row).toBeDefined()
     // Everything before the marker is measurable, so the renderer can derive
-    // the hardware cursor column. Only `> ` sits ahead of it.
+    // the hardware cursor column. Only `❭ ` sits ahead of it.
     const prefix = row!.slice(0, row!.indexOf(CURSOR_MARKER))
     expect(visibleWidth(prefix)).toBe(2)
   })
@@ -465,28 +467,29 @@ describe('prompt frame', () => {
     expect(height(9)).toBeLessThan(9 / 2 + 1)
   })
 
-  test('recolours both rules and the caret for an active mode', () => {
-    const { accentHex, brandHex } = getTheme()
-    // A rule row is painted as one span, so the hue is asserted on the row.
-    const rowsFor = (input: PromptVMInput) =>
-      renderLines(input).filter(row => /^\x1b\[[\d;]+m(─|> )/.test(row))
-    const hueOf = (row: string) => row.slice(0, row.indexOf('m') + 1)
-
-    const planned = rowsFor(defaultInput({ planning: true }))
-    expect(planned.length).toBeGreaterThan(0)
-    for (const row of planned) {
-      expect(hueOf(row)).toBe(chalk.hex(accentHex)('x').slice(0, -'x\x1b[39m'.length))
-    }
-    // The default mode keeps the brand hue.
-    for (const row of rowsFor(defaultInput())) {
-      expect(hueOf(row)).toBe(chalk.hex(brandHex)('x').slice(0, -'x\x1b[39m'.length))
-    }
+  test('an active mode colours its label only; rules and caret keep their tones', () => {
+    const { accentHex, brandHex, subtleHex } = getTheme()
+    const rows = renderLines(defaultInput({ planning: true }))
+    const top = rows.find(row => stripAnsi(row).includes('(plan)'))
+    expect(top).toBeDefined()
+    // The mode word is the one accent-coloured thing on the rule.
+    expect(top).toContain(chalk.hex(accentHex)(' (plan) '))
+    expect(top).not.toContain(chalk.hex(accentHex)('──'))
+    // Dashes on either side stay subtle, so the whole frame does not turn yellow
+    // for a fact one word already states.
+    expect(top!.startsWith(chalk.hex(subtleHex)('─').slice(0, -'─\x1b[39m'.length))).toBe(true)
+    // The caret stays brand-coloured in every mode.
+    expect(rows.some(row => row.startsWith(chalk.hex(brandHex)('❭ ')))).toBe(true)
+    expect(rows.some(row => row.startsWith(chalk.hex(accentHex)('❭ ')))).toBe(false)
   })
 
-  test('names the mode in the rule label, not just by hue', () => {
+  test('names the mode at the right end of the top rule, not just by hue', () => {
     // Colour alone fails on monochrome terminals and for colour-blind users.
-    expect(renderPlain(defaultInput({ planning: true }))).toContain('── plan ')
-    expect(renderPlain(defaultInput({ logMode: true }))).toContain('── log ')
+    // Right-aligned so it does not compete with the caret for where reading starts.
+    const plan = renderPlain(defaultInput({ planning: true })).split('\n').find(row => row.includes('(plan)'))
+    expect(plan).toBe('─'.repeat(80 - ' (plan) '.length - 1) + ' (plan) ─')
+    expect(renderPlain(defaultInput({ logMode: true }))).toContain(' (log) ─')
+    expect(renderPlain(defaultInput({ logMode: true, planning: true }))).toContain(' (log · plan) ─')
   })
 
   test('pushes an unfocused draft into the background', () => {
@@ -521,7 +524,7 @@ describe('prompt frame', () => {
     expect(render(defaultInput({ ...draft, active: false }))).not.toContain(CURSOR_MARKER)
   })
 
-  test('shares the label slot between mode and scroll overflow', () => {
+  test('puts scroll overflow at the left of the rule and the mode at the right', () => {
     const plain = renderPlain(defaultInput({
       columns: 60,
       rows: 20,
@@ -531,8 +534,26 @@ describe('prompt frame', () => {
       cursorLine: 11,
       cursorCol: 7,
     }))
-    // Mode leads: it says what enter will do, overflow only says where you are.
-    expect(plain).toContain('── plan · ↑ ')
+    const top = plain.split('\n').find(row => row.includes('↑'))
+    expect(top).toMatch(/^── ↑ \d+ lines ─+ \(plan\) ─$/)
+    expect(top!.length).toBe(60)
+  })
+
+  test('the placeholder follows state before mode', () => {
+    const hint = (input: Partial<PromptVMInput>) =>
+      interiorRows(defaultInput(input)).map(row => stripAnsi(row).replaceAll(CURSOR_MARKER, '')).find(row => row.startsWith('❭ '))
+    expect(hint({})).toBe('❭ Enter a coding task or / for commands')
+    expect(hint({ planning: true })).toBe('❭ Describe what to plan — no edits until you approve')
+    // While a turn runs, typing steers it: say so, whatever mode the next turn starts in.
+    expect(hint({ busy: true })).toBe('❭ Guide the agent while it works')
+    expect(hint({ busy: true, planning: true })).toBe('❭ Guide the agent while it works')
+    expect(hint({ busy: true, queuedCount: 1 })).toBe('❭ 1 message queued · Ctrl+G to manage')
+    expect(hint({ busy: true, queuedCount: 2 })).toBe('❭ 2 messages queued · Ctrl+G to manage')
+    // A queue with nothing running is stale state, not a prompt to manage it.
+    expect(hint({ busy: false, queuedCount: 2 })).toBe('❭ Enter a coding task or / for commands')
+    // Narrow terminals get the short forms.
+    expect(hint({ columns: 40, busy: true })).toBe('❭ Guide while it works')
+    expect(hint({ columns: 40, busy: true, queuedCount: 1 })).toBe('❭ 1 queued · Ctrl+G')
   })
 })
 
@@ -810,9 +831,9 @@ describe('prompt footer', () => {
       thinkingLevel: 'xhigh',
       columns: 160,
     }))
-    // The border names the modes, so the footer drops its own prefix rather
+    // The top rule names the modes, so the footer drops its own prefix rather
     // than repeating the same words two rows apart.
-    expect(plain).toContain('── log · plan ')
+    expect(plain).toContain(' (log · plan) ─')
     expect(plain).not.toContain('[log]')
     expect(plain).not.toContain('[plan]')
     expect(plain).toContain('/Users/test/project (main)')
@@ -820,7 +841,7 @@ describe('prompt footer', () => {
   })
 
   test('footer keeps the mode prefix when no border carries it', () => {
-    // Below the border threshold nothing above the footer names the mode, so
+    // Below the rule threshold nothing above the footer names the mode, so
     // the footer stays authoritative.
     const plain = renderPlain(defaultInput({ planning: true, logMode: true, rows: 9, columns: 160 }))
     expect(plain).not.toContain('╭')
