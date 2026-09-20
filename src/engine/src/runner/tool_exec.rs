@@ -300,59 +300,7 @@ async fn execute_single_tool(
     };
 
     let (result, is_error) = match tool {
-        Some(tool) => {
-            // Step 1: Normalize parameter aliases (file_path → path, etc.)
-            let mut normalized = match tool.parameter_aliases() {
-                Some(aliases) => crate::tools::validation::normalize_aliases(args, aliases),
-                None => args.clone(),
-            };
-
-            // Step 2: Run the tool's compatibility shim before validation.
-            normalized = tool.prepare_arguments(&normalized);
-
-            // Step 3: Schema pre-validation + type coercion
-            let validated_args = crate::tools::validation::validate_and_coerce_with_received(
-                name,
-                &tool.parameters_schema(),
-                &normalized,
-                args,
-            );
-            match validated_args {
-                Err(validation_error) => (
-                    ToolResult {
-                        content: vec![Content::Text {
-                            text: crate::tools::validation::truncate_error(&validation_error),
-                        }],
-                        details: serde_json::Value::Null,
-                        retention: Retention::Normal,
-                    },
-                    true,
-                ),
-                Ok(coerced_args) => {
-                    // Exclude tool wall-time from the execution duration limit:
-                    // a legitimately long command (a build, a training run) or a
-                    // slow user response must not trip `max_duration`. The limit
-                    // bounds the agent's own work (LLM inference + loop
-                    // overhead), not how long a tool takes to run. The guard
-                    // records the elapsed span into the idle clock on drop, so
-                    // it counts on success, error, cancellation, and panic alike.
-                    let _idle = idle_clock.map(|c| c.pause());
-                    match tool.execute(coerced_args, ctx).await {
-                        Ok(r) => (r, false),
-                        Err(e) => (
-                            ToolResult {
-                                content: vec![Content::Text {
-                                    text: e.to_string(),
-                                }],
-                                details: serde_json::Value::Null,
-                                retention: Retention::Normal,
-                            },
-                            true,
-                        ),
-                    }
-                }
-            }
-        }
+        Some(tool) => run_tool_once(tool.as_ref(), name, args, ctx, idle_clock).await,
         None => (
             ToolResult {
                 content: vec![Content::Text {
@@ -414,6 +362,67 @@ async fn execute_single_tool(
     .ok();
 
     (tool_result_msg, is_error)
+}
+
+/// Validate `args` against the tool schema and execute it once.
+async fn run_tool_once(
+    tool: &dyn AgentTool,
+    name: &str,
+    args: &serde_json::Value,
+    ctx: ToolContext,
+    idle_clock: Option<&crate::context::IdleClock>,
+) -> (ToolResult, bool) {
+    // Step 1: Normalize parameter aliases (file_path → path, etc.)
+    let mut normalized = match tool.parameter_aliases() {
+        Some(aliases) => crate::tools::validation::normalize_aliases(args, aliases),
+        None => args.clone(),
+    };
+
+    // Step 2: Run the tool's compatibility shim before validation.
+    normalized = tool.prepare_arguments(&normalized);
+
+    // Step 3: Schema pre-validation + type coercion
+    let validated_args = crate::tools::validation::validate_and_coerce_with_received(
+        name,
+        &tool.parameters_schema(),
+        &normalized,
+        args,
+    );
+    match validated_args {
+        Err(validation_error) => (
+            ToolResult {
+                content: vec![Content::Text {
+                    text: crate::tools::validation::truncate_error(&validation_error),
+                }],
+                details: serde_json::Value::Null,
+                retention: Retention::Normal,
+            },
+            true,
+        ),
+        Ok(coerced_args) => {
+            // Exclude tool wall-time from the execution duration limit:
+            // a legitimately long command (a build, a training run) or a
+            // slow user response must not trip `max_duration`. The limit
+            // bounds the agent's own work (LLM inference + loop
+            // overhead), not how long a tool takes to run. The guard
+            // records the elapsed span into the idle clock on drop, so
+            // it counts on success, error, cancellation, and panic alike.
+            let _idle = idle_clock.map(|c| c.pause());
+            match tool.execute(coerced_args, ctx).await {
+                Ok(r) => (r, false),
+                Err(e) => (
+                    ToolResult {
+                        content: vec![Content::Text {
+                            text: e.to_string(),
+                        }],
+                        details: serde_json::Value::Null,
+                        retention: Retention::Normal,
+                    },
+                    true,
+                ),
+            }
+        }
+    }
 }
 
 pub(super) async fn fail_truncated_tool_calls(

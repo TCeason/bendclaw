@@ -700,3 +700,47 @@ async fn openai_sse_keeps_requested_model_when_upstream_reports_alias() {
     }
     assert_eq!(outcome.served_model(), Some("grok-4.6-build"));
 }
+
+/// Verbatim chat-completions stream captured from the evot-pro gateway on
+/// 2026-09-20 (request f32ec958). Two parallel `read` calls arrive as
+/// separate `index` slots whose arguments each land in a single chunk.
+/// Regression: the decoder concatenated both argument objects into one
+/// buffer, producing `{..}{..}` for the first call.
+#[tokio::test]
+async fn openai_sse_parallel_calls_with_whole_argument_chunks_stay_separate() {
+    let sse = concat!(
+        r#"data: {"id": "resp_1", "object": "chat.completion.chunk", "created": 1789896386, "model": "gpt-5.6-sol", "choices": [{"index": 0, "delta": {"role": "assistant", "reasoning_content": "**Planning**"}, "finish_reason": null}]}"#,
+        "\n\n",
+        r#"data: {"id": "resp_1", "object": "chat.completion.chunk", "created": 1789896386, "model": "gpt-5.6-sol", "choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [{"index": 0, "id": "call_A", "type": "function", "function": {"name": "read", "arguments": ""}}]}, "finish_reason": null}]}"#,
+        "\n\n",
+        r#"data: {"id": "resp_1", "object": "chat.completion.chunk", "created": 1789896386, "model": "gpt-5.6-sol", "choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [{"index": 0, "function": {"arguments": "{\"path\":\"/a/SKILL.md\"}"}}]}, "finish_reason": null}]}"#,
+        "\n\n",
+        r#"data: {"id": "resp_1", "object": "chat.completion.chunk", "created": 1789896386, "model": "gpt-5.6-sol", "choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [{"index": 1, "id": "call_B", "type": "function", "function": {"name": "read", "arguments": ""}}]}, "finish_reason": null}]}"#,
+        "\n\n",
+        r#"data: {"id": "resp_1", "object": "chat.completion.chunk", "created": 1789896386, "model": "gpt-5.6-sol", "choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [{"index": 1, "function": {"arguments": "{\"path\":\"/b/list.md\"}"}}]}, "finish_reason": null}]}"#,
+        "\n\n",
+        r#"data: {"id": "resp_1", "object": "chat.completion.chunk", "created": 1789896386, "model": "gpt-5.6-sol", "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}], "usage": {"prompt_tokens": 15209, "completion_tokens": 138, "total_tokens": 15347}}"#,
+        "\n\n",
+        "data: [DONE]\n\n",
+    );
+
+    let (msg, _events) = run_provider_sse(&OpenAiCompatProvider, openai_config(), sse, 200)
+        .await
+        .unwrap();
+
+    let calls: Vec<_> = match &msg {
+        Message::Assistant { content, .. } => content
+            .iter()
+            .filter_map(|c| match c {
+                Content::ToolCall { id, arguments, .. } => Some((id.clone(), arguments.clone())),
+                _ => None,
+            })
+            .collect(),
+        _ => panic!("Expected Assistant message"),
+    };
+    assert_eq!(calls.len(), 2, "got {calls:?}");
+    assert_eq!(calls[0].0, "call_A");
+    assert_eq!(calls[0].1["path"], "/a/SKILL.md");
+    assert_eq!(calls[1].0, "call_B");
+    assert_eq!(calls[1].1["path"], "/b/list.md");
+}

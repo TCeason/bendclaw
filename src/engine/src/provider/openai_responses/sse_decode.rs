@@ -215,6 +215,21 @@ async fn process_event(
                 started,
             }) = slots.get_mut(&output_index)
             {
+                // A delta that opens a new object after the buffer already
+                // closed one means several function calls' arguments are
+                // landing in the same slot (upstream reused `output_index`).
+                // The merged buffer will fail to parse; log it so the source
+                // of the corruption is attributable from logs.
+                if arguments.trim_end().ends_with('}') && delta.trim_start().starts_with('{') {
+                    tracing::warn!(
+                        output_index,
+                        call_id = %call_id,
+                        tool = %name,
+                        buffered_len = arguments.len(),
+                        "function_call_arguments delta opens a new object after a closed one; \
+                         multiple tool calls appear to share one output_index"
+                    );
+                }
                 arguments.push_str(delta);
                 if !*started && (!call_id.is_empty() || !name.is_empty()) {
                     *started = true;
@@ -445,8 +460,17 @@ async fn finish_slot(
                     })
                     .await;
             }
-            let parsed = try_repair_json(arguments)
-                .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
+            let parsed = try_repair_json(arguments).unwrap_or_else(|err| {
+                tracing::warn!(
+                    call_id = %id,
+                    tool = %name,
+                    raw_len = arguments.len(),
+                    error = %err,
+                    "tool-call arguments unparseable; substituting empty object so \
+                     schema validation reports the missing fields"
+                );
+                serde_json::Value::Object(Default::default())
+            });
             if let Some(Content::ToolCall {
                 id: current_id,
                 name: current_name,
