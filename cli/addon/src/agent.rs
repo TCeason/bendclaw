@@ -585,13 +585,18 @@ impl NapiAgent {
         evot::api::set_thinking_level(&self.agent, &self.env_file_path, &level)
     }
 
-    /// Make the live cloud model the account's default for future sessions,
-    /// on this and every other machine. Returns the pinned model id, or `null`
-    /// when the live model is BYOK / nobody is logged in (local config already
-    /// remembers those). Errors when the server refuses the pin.
+    /// Make a cloud model the account's default for future sessions, on this
+    /// and every other machine, without touching the live selection. Returns
+    /// the pinned model id, or `null` when the model is BYOK / nobody is
+    /// logged in (local config already remembers those). Errors when the
+    /// server refuses the pin.
     #[napi]
-    pub async fn pin_default_model(&self) -> Result<Option<String>> {
-        match evot::api::pin_default_model(&self.agent, &self.env_file_path).await {
+    pub async fn pin_default_model(
+        &self,
+        provider: String,
+        model: String,
+    ) -> Result<Option<String>> {
+        match evot::api::pin_default_model(&self.env_file_path, &provider, &model).await {
             Ok(evot::api::PinOutcome::Pinned(model)) => Ok(Some(model)),
             Ok(evot::api::PinOutcome::NotCloud) => Ok(None),
             Err(e) => Err(Error::from_reason(format!("pin default model: {e}"))),

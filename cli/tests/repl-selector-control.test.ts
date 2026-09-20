@@ -151,7 +151,7 @@ describe('repl selector control', () => {
     expect(handleSelectorControl(state, key('enter'))).toEqual({ kind: 'select-model', spec: 'anthropic:claude' })
   })
 
-  test('model space switches and saves the row as the account default', () => {
+  test('model space only pins the row as the account default, no switch', () => {
     const state = createAppSelectorState('model', 'Select model', [{ label: 'claude', id: 'anthropic:claude', detail: 'anthropic' }])
     expect(handleSelectorControl(state, { type: 'char', char: ' ' })).toEqual({ kind: 'pin-default-model', spec: 'anthropic:claude' })
     // Space never leaks into the filter: model ids carry no spaces.

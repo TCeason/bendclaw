@@ -11,8 +11,8 @@ import { currentModelSpec, modelOptions, modelSelectorItems } from './provider.j
 import { RESUME_SELECTOR_TITLE } from './resume.js'
 
 /** One factory for preview and explicitly opened model windows. */
-/** Enter uses a model for this session only; Space also saves it to the
- *  account so every new session (on any machine) starts there. */
+/** Enter uses a model for this session; Space only saves the highlighted row
+ *  as the account default (the picker stays open, the live model stays put). */
 export const MODEL_WINDOW_HINTS: Hint[] = [
   { keys: ['up', 'down'], action: 'move' },
   { keys: 'enter', action: 'use' },

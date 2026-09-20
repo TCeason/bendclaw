@@ -349,13 +349,13 @@ export class Agent {
   }
 
   /**
-   * Make the live cloud model the account's default for future sessions (on
-   * every machine). Resolves to the pinned model id, or null when the live
-   * model is BYOK / not logged in — local config already remembers those.
-   * Rejects when the server refuses the pin.
+   * Make a cloud model the account's default for future sessions (on every
+   * machine) without switching the live selection. Resolves to the pinned
+   * model id, or null when the model is BYOK / not logged in — local config
+   * already remembers those. Rejects when the server refuses the pin.
    */
-  pinDefaultModel(): Promise<string | null> {
-    return this.raw.pinDefaultModel()
+  pinDefaultModel(provider: string, model: string): Promise<string | null> {
+    return this.raw.pinDefaultModel(provider, model)
   }
 
   setLimits(maxTurns?: number, maxTokens?: number, maxDurationSecs?: number): void {

@@ -1194,16 +1194,20 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
   refreshConfigInfo()
 
-  /** Save the live model as the account default (Space in the picker). The
-   *  switch already happened, so a refused or unreachable server only costs
-   *  the pin, never the model the user is now on. */
-  async function pinDefaultModel(label: string): Promise<void> {
+  /** Save the highlighted picker row as the account default (Space in the
+   *  picker). Nothing else moves: the live model stays, the picker stays open,
+   *  and only the ★ marker jumps to the newly pinned row. */
+  async function pinDefaultModel(spec: string): Promise<void> {
+    const option = selectModelOption(configInfo, spec)
+    if (!option) return
+    const label = formatModelLabel(option.model, option.provider, option.group_label)
     try {
-      const pinned = await agent.pinDefaultModel()
+      const pinned = await agent.pinDefaultModel(option.provider, option.model)
       if (pinned === null) {
         commitSystem('sys-model-pin', chalk.dim(`  ${label} is a local provider — its default lives in evot.env, not on your account`))
       } else {
         refreshConfigInfo()
+        refreshOpenModelSelector()
         commitSystem('sys-model-pin', chalk.dim(`  ★ ${label} is now the default for new sessions on this account`))
       }
     } catch (err) {
@@ -3831,8 +3835,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         renderer.requestRender()
         return
       }
-      case 'select-model':
-      case 'pin-default-model': {
+      case 'pin-default-model':
+        void pinDefaultModel(action.spec)
+        return
+      case 'select-model': {
         overlay = { kind: 'none' }
         focusedCommandWindowGeneration = null
         nextCommandWindowGeneration()
@@ -3867,7 +3873,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             text: `  Model → ${label}${effort ? ` · thinking ${effort}` : ''}`,
             shareEvents: modelShareEvents(provider, model, effort),
           })
-          if (action.kind === 'pin-default-model') void pinDefaultModel(label)
         } catch (err) {
           commitSystem('sys-model-err', chalk.red(`  Failed to switch model: ${errorText(err)}`))
         }

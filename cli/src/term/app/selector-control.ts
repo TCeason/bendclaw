@@ -26,9 +26,9 @@ export type SelectorControlAction =
   /** `thinkingLevel` is present only when the row carried an effort ladder, so
    *  a model with no selectable reasoning never names a tier. */
   | { kind: 'select-model'; spec: string; thinkingLevel?: string }
-  /** Space on the live model picker: switch like Enter, and also save the
-   *  model as the account default for future sessions. */
-  | { kind: 'pin-default-model'; spec: string; thinkingLevel?: string }
+  /** Space on the live model picker: save the highlighted row as the account
+   *  default for future sessions. The live model and the open picker stay. */
+  | { kind: 'pin-default-model'; spec: string }
   | { kind: 'select-task-model'; spec: string; thinkingLevel?: string }
   | { kind: 'delete-session'; sessionId: string; label: string; state: SelectorState }
   | { kind: 'queue-edit'; entry: ManagedQueuedPrompt }
@@ -102,7 +102,7 @@ function handleControl(state: SelectorState, event: KeyEvent, columns: number, r
       // the key to "set default". Task pickers keep their own default notion.
       if (state.owner === SELECTOR_OWNER.model && event.char === ' ') {
         const action = selectAction(disarmDelete(state))
-        return action.kind === 'select-model' ? { ...action, kind: 'pin-default-model' } : action
+        return action.kind === 'select-model' ? { kind: 'pin-default-model', spec: action.spec } : action
       }
       // Lists that reserve bare letters for their own gestures never build a
       // filter query: doing so would silently drop rows with no filter line on
