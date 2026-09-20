@@ -326,3 +326,50 @@ fn arc_judge_is_accepted() {
     let judge: Arc<dyn Judge> = Arc::new(FakeJudge::default());
     let _: &dyn Judge = judge.as_ref();
 }
+
+/// A `Write` of a large file must not become a question larger than Jev's
+/// window: the question quotes an abridged argument, the state carries the
+/// call. (62 `max_tokens_exceeded` a day in prod before this.)
+#[tokio::test]
+async fn call_questions_abridge_large_arguments() {
+    let big = "x".repeat(200_000);
+    let mut messages = history();
+    messages[7] = AgentMessage::Llm(Message::Assistant {
+        content: vec![Content::ToolCall {
+            id: "c2".into(),
+            name: "write".into(),
+            arguments: serde_json::json!({ "path": "big.txt", "content": big }),
+            metadata: None,
+        }],
+        stop_reason: StopReason::ToolUse,
+        model: "test".into(),
+        provider: "test".into(),
+        usage: Usage::default(),
+        timestamp: 0,
+        error_message: None,
+        response_id: None,
+    });
+    let judge = FakeJudge::default();
+    decide(&judge, &messages).await;
+    let call_round: Vec<(String, Vec<Question>)> = judge
+        .states()
+        .into_iter()
+        .filter(|(s, _)| !s.starts_with(REQUEST_ROUND_HEAD))
+        .collect();
+    assert!(!call_round.is_empty(), "call round asked");
+    for (state, questions) in call_round {
+        assert!(
+            state.chars().count() < 100_000,
+            "state fitted to the budget, got {} chars",
+            state.chars().count()
+        );
+        for q in questions {
+            assert!(
+                q.instructions.chars().count() < 1_000,
+                "question {} is {} chars",
+                q.id,
+                q.instructions.chars().count()
+            );
+        }
+    }
+}

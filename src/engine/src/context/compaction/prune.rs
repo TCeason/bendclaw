@@ -868,11 +868,20 @@ fn abridge(text: &str, cap: usize) -> String {
 
 // --------------------------------------------------------------- questions
 
+/// Characters of the call arguments quoted in a question. The question only
+/// has to identify the call; the state carries the arguments (fitted to the
+/// budget). Unbounded, a `Write` of a large file made one question larger than
+/// Jev's window and the whole batch failed with `max_tokens_exceeded`.
+const QUESTION_ARGUMENT_CHARS: usize = 240;
+
 fn questions_for(candidate: &Candidate) -> Vec<Question> {
     let (call_id, result_id) = question_ids(candidate);
     let about = format!(
         "the {} call `{}` (arguments {}; result {})",
-        candidate.tool_name, candidate.call_id, candidate.arguments, candidate.result_note
+        candidate.tool_name,
+        candidate.call_id,
+        abridge(&candidate.arguments, QUESTION_ARGUMENT_CHARS),
+        candidate.result_note
     );
     vec![
         Question::noul(
