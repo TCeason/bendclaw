@@ -9,7 +9,7 @@ test('provider failure vocabulary is reusable without terminal-specific output',
     ['Network error: tls handshake eof https://private.invalid/key', 'Connection interrupted'],
     ['request timed out', 'Request timed out'],
     ['DNS lookup failed', 'Unable to resolve service address'],
-    ['HTTP 529 overloaded', 'Service temporarily overloaded. Please retry.'], ['HTTP 429', 'Rate limited'],
+    ['HTTP 529 overloaded', 'Model provider overloaded. Please retry.'], ['HTTP 429', 'Rate limited'],
     ['invalid API key', 'Authentication failed'], ['insufficient_quota', 'Quota unavailable'],
   ]) {
     const copy = providerFailurePresentation({ error })
@@ -17,7 +17,51 @@ test('provider failure vocabulary is reusable without terminal-specific output',
     expect(copy.label).not.toContain('https:')
     expect(copy.label).not.toContain('\x1b')
   }
-  expect(providerFailurePresentation({ kind: 'busy', error: 'tls' }).label).toBe('Service temporarily unavailable.')
+  expect(providerFailurePresentation({ kind: 'busy', error: 'tls' }).label).toBe('Model provider unavailable. Retrying usually helps.')
+})
+
+test('the gateway tells us who failed; the copy says so and nothing more', () => {
+  const GATEWAY = 'Gateway error, not the model provider. Retry; report it if it persists.'
+  const PROVIDER = 'Model provider unavailable. Retrying usually helps.'
+  const NO_BACKEND = 'No backend available for this model right now. Retry later or switch model.'
+  const cases: Array<[string, string, string]> = [
+    // explicit codes (OpenAI dialect)
+    ['HTTP 502: {"error":{"type":"server_error","code":"provider_error","message":"The model provider failed to process this request. Please retry."}}', 'busy', PROVIDER],
+    ['HTTP 503: {"error":{"code":"provider_overloaded","message":"PRIVATE_BACKEND"}}', 'overloaded', 'Model provider overloaded. Please retry.'],
+    ['HTTP 504: provider_timeout', 'timeout', 'Request timed out'],
+    ['provider_stream_interrupted: The model provider interrupted the response stream.', 'busy', PROVIDER],
+    ['HTTP 500: {"error":{"code":"gateway_error","message":"The gateway failed to process this request."}}', 'gateway', GATEWAY],
+    ['HTTP 503: gateway_no_backend', 'gateway-no-backend', NO_BACKEND],
+    ['HTTP 503: gateway_draining: The gateway is restarting.', 'gateway', GATEWAY],
+    // Anthropic dialect has no code: the wording carries it
+    ['HTTP 502: api_error: The model provider is temporarily unreachable. Please retry.', 'busy', PROVIDER],
+    ['HTTP 500: api_error: The gateway failed to process this request. Please retry; if it persists, contact the gateway operator.', 'gateway', GATEWAY],
+    ["HTTP 503: The gateway has no available model backend for 'x' right now.", 'gateway-no-backend', NO_BACKEND],
+    // status alone: 500 is the gateway's own, 502/503/504 are the provider's
+    ['API error: HTTP 500', 'gateway', GATEWAY],
+    ['HTTP 502', 'busy', PROVIDER],
+  ]
+  for (const [error, kind, label] of cases) {
+    const copy = providerFailurePresentation({ error })
+    expect([error, copy.kind]).toEqual([error, kind])
+    expect(copy.label).toBe(label)
+    expect(copy.label).not.toContain('PRIVATE')
+    expect(copy.guidance).toBeDefined()
+  }
+  expect(providerFailurePresentation({ error: 'HTTP 500: gateway_error' }).guidance).toContain('gateway administrator')
+  expect(providerFailurePresentation({ error: 'HTTP 502' }).guidance).toContain('model provider')
+  // "bad gateway" is HTTP's name for a provider failure, not our gateway.
+  expect(providerFailurePresentation({ error: 'HTTP/1.1 502 Bad Gateway' }).kind).toBe('busy')
+})
+
+test('the final failure card carries the guidance; a retry card does not', () => {
+  const failed = buildLlmCard('[LLM] ✗ · gpt-5.6-sol · turn 20 · 40.5s\n    error     HTTP 500: gateway_error: PRIVATE').map(l => l.text).join('\n')
+  expect(failed).toContain('Gateway error, not the model provider.')
+  expect(failed).toContain('tell the gateway administrator')
+  expect(failed).not.toContain('PRIVATE')
+  const retry = buildLlmCard('[LLM] ↻ · retrying in 2 seconds · attempt 1/10\n    error     HTTP 503: provider_overloaded').map(l => l.text).join('\n')
+  expect(retry).toContain('Model provider overloaded. Please retry.')
+  expect(retry).not.toContain('Retrying usually helps, or switch model')
 })
 
 test('input validation numbers are not mistaken for HTTP status codes', () => {
@@ -30,9 +74,10 @@ test('input validation numbers are not mistaken for HTTP status codes', () => {
   for (const detail of ['minimum of 512 pixels', 'image width 503', 'max 429 tokens', 'size 401 bytes']) {
     expect(providerFailurePresentation({ error: detail }).kind).toBe('unknown')
   }
-  for (const message of ['HTTP 503 unavailable', 'HTTP/1.1 502 Bad Gateway', 'status=504', 'status_code: 500']) {
+  for (const message of ['HTTP 503 unavailable', 'HTTP/1.1 502 Bad Gateway', 'status=504']) {
     expect(providerFailurePresentation({ error: message }).kind).toBe('busy')
   }
+  expect(providerFailurePresentation({ error: 'status_code: 500' }).kind).toBe('gateway')
   expect(providerFailurePresentation({ error: 'HTTP 400: connection parameter invalid' }).kind).toBe('invalid-request')
   expect(providerFailurePresentation({ error: 'HTTP 502: invalid_request_error' }).kind).toBe('busy')
 })
@@ -72,7 +117,7 @@ test('standard overload errors have fixed copy without provider details', () => 
   ]) {
     const copy = providerFailurePresentation({ error })
     expect(copy.kind).toBe('overloaded')
-    expect(copy.label).toBe('Service temporarily overloaded. Please retry.')
+    expect(copy.label).toBe('Model provider overloaded. Please retry.')
     const card = buildLlmCard(`[LLM] ✗ · model · turn 3 · 1.4s\n    error     ${error}`)
     const text = card.map(line => line.text).join('\n')
     expect(text).toContain(copy.label)
@@ -80,7 +125,7 @@ test('standard overload errors have fixed copy without provider details', () => 
     expect(text).not.toContain('Service busy')
   }
   for (const error of ['HTTP 502', 'HTTP 503: temporarily unavailable', 'HTTP 504']) {
-    expect(providerFailurePresentation({ error }).label).toBe('Service temporarily unavailable.')
+    expect(providerFailurePresentation({ error }).label).toBe('Model provider unavailable. Retrying usually helps.')
   }
   for (const [error, kind] of [
     ['HTTP 429: overloaded_error: rate limit', 'rate-limit'],
