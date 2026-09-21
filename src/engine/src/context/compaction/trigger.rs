@@ -102,7 +102,7 @@ pub fn evaluate(input: &TriggerInput, config: &CompactionConfig) -> TriggerDecis
     TriggerDecision::Skip
 }
 
-fn calculate_context_tokens(usage: &UsageSnapshot) -> usize {
+pub fn calculate_context_tokens(usage: &UsageSnapshot) -> usize {
     context_tokens(usage)
 }
 

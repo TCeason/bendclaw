@@ -593,49 +593,19 @@ async fn applying_edits_once_and_clears_the_ledger() {
     assert_eq!(ledger.pending_count(), 0);
 }
 
+/// Pending is the whole gate: nothing waits on savings shares or cache age.
 #[tokio::test]
-async fn apply_waits_for_savings_or_a_cold_cache() {
+async fn pending_verdicts_are_the_only_apply_condition() {
     let mut ledger = PruneLedger::default();
     let messages = transcript();
+    assert!(!ledger.has_pending());
     decide_with(&mut ledger, &stale_judge(), &messages, &short_tail()).await;
-    let strict = PruneOptions {
-        apply_min_share: 0.99,
-        ..short_tail()
-    };
-    let context = total_tokens(&messages);
-    ledger.note_request(1_000_000);
-    assert_eq!(
-        ledger.apply_trigger(context, 1_000_000 + 1_000, &strict),
-        None
-    );
-    assert_eq!(
-        ledger.apply_trigger(context, 1_000_000 + strict.cache_ttl_ms, &strict),
-        Some(ApplyTrigger::ColdCache)
-    );
-    let generous = PruneOptions {
-        apply_min_share: 0.01,
-        ..short_tail()
-    };
-    assert_eq!(
-        ledger.apply_trigger(context, 1_000_000 + 1_000, &generous),
-        Some(ApplyTrigger::Savings)
-    );
-}
+    assert!(ledger.has_pending());
 
-#[tokio::test]
-async fn a_ledger_that_never_saw_a_request_treats_the_cache_as_cold() {
-    let mut ledger = PruneLedger::default();
-    let messages = transcript();
-    decide_with(&mut ledger, &stale_judge(), &messages, &short_tail()).await;
-    let strict = PruneOptions {
-        apply_min_share: 0.99,
-        ..short_tail()
-    };
-    // No `note_request` ever: a resumed session has no warm prefix to protect.
-    assert_eq!(
-        ledger.apply_trigger(total_tokens(&messages), 1, &strict),
-        Some(ApplyTrigger::ColdCache)
-    );
+    let (_, report) = ledger.apply(messages, &short_tail(), ApplyTrigger::Threshold);
+    assert_eq!(report.trigger, ApplyTrigger::Threshold);
+    assert_eq!(report.removed + report.truncated, 2);
+    assert!(!ledger.has_pending(), "applied once, then clear");
 }
 
 #[tokio::test]

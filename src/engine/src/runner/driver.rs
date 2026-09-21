@@ -702,9 +702,8 @@ async fn run_loop(
         .or_else(|| config.initial_compaction_state.clone())
 }
 
-/// The judge-driven prune branch, once per completed run: the run is over, the
-/// next request is a fresh user prompt, so an edit here costs one cache miss
-/// at most and never lands between tool calls.
+/// The judge-driven prune branch at run end: the run is over and the next
+/// request is a fresh user prompt, so pending edits land here at the latest.
 async fn prune_after_run(
     controller: &mut Option<crate::context::CompactionController>,
     tracker: &ContextTracker,
@@ -718,15 +717,31 @@ async fn prune_after_run(
     let context_tokens = crate::context::tokens::total_tokens(messages)
         .saturating_add(tracker.system_tool_overhead_tokens());
     let outcome = controller
-        .prune_after_run(messages, context_tokens, crate::context::now_ms(), cancel)
+        .prune_step(
+            messages,
+            context_tokens,
+            crate::context::compaction::ApplyTrigger::RunEnd,
+            crate::context::now_ms(),
+            cancel,
+        )
         .await;
+    emit_context_pruned(controller, messages, outcome, tx).await;
+}
+
+/// The `ContextPruned` event for one prune step, when it did anything.
+pub(crate) async fn emit_context_pruned(
+    controller: &crate::context::CompactionController,
+    messages: &[AgentMessage],
+    outcome: crate::context::compaction::PruneOutcome,
+    tx: &EventSink,
+) {
     if outcome.decided.is_none() && outcome.applied.is_none() {
         return;
     }
     tx.send(AgentEvent::ContextPruned {
         decided: outcome.decided,
         applied: outcome.applied,
-        messages: messages.clone(),
+        messages: messages.to_vec(),
         state: controller.state().clone(),
         context_window: controller.config().displayed_window(),
     })

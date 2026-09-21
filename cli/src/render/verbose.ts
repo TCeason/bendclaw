@@ -428,12 +428,12 @@ interface PruneApplied {
   after_tokens: number
   before_messages: number
   after_messages: number
-  trigger: 'savings' | 'cold_cache' | 'before_compaction' | 'manual'
+  trigger: 'run_end' | 'threshold' | 'before_compaction' | 'manual' | string
 }
 
-const APPLY_TRIGGER_LABEL: Record<PruneApplied['trigger'], string> = {
-  savings: 'savings ≥ 20% of context',
-  cold_cache: 'cache cold',
+const APPLY_TRIGGER_LABEL: Record<string, string> = {
+  run_end: 'run end',
+  threshold: 'context past prune threshold',
   before_compaction: 'before compaction',
   manual: 'manual',
 }
@@ -506,7 +506,7 @@ export function formatJevApplied(applied: PruneApplied, contextWindow: number): 
     `truncated ${applied.truncated}`,
     `${humanTokens(applied.before_tokens)} → ${humanTokens(applied.after_tokens)} (−${humanTokens(Math.max(saved, 0))})`,
     `${applied.before_messages} → ${applied.after_messages} msgs`,
-    APPLY_TRIGGER_LABEL[applied.trigger],
+    APPLY_TRIGGER_LABEL[applied.trigger] ?? applied.trigger,
   ]
   if (applied.skipped > 0) parts.push(`${applied.skipped} skipped`)
   const lines = [`[JEV] ✂ · ${parts.join(' · ')}`]

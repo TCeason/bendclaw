@@ -6,12 +6,12 @@
 //! stale ones. User and assistant text is untouched. Modelled on
 //! `fast-jev-compaction`.
 //!
-//! Deciding and applying are separate because of prompt caching. Provider
-//! caches match a prefix: editing message k re-bills everything after k, and
-//! one edit costs the same as a hundred. So the judge is asked often (cheap,
-//! a separate request, leaves the main model's cache alone) and its verdicts
-//! collect in a [`PruneLedger`]; the edits are applied in one batch when they
-//! pay for the cache miss or when the cache is cold anyway.
+//! Deciding and applying are separate steps of a [`PruneLedger`]. The judge
+//! is asked whenever the context has grown enough since the last round (a
+//! separate request; the main model's cache is untouched) and its verdicts
+//! collect as pending edits. Pending edits are applied at every run end and,
+//! once the context is past the prune threshold, after each response — a
+//! context kept trimmed is worth the cache miss an edit costs.
 //!
 //! Deciding:
 //! 1. `candidates` — pair every tool call with its result. The first message

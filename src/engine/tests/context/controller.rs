@@ -1279,3 +1279,101 @@ async fn threshold_with_judge_prunes_instead_of_summarising() {
         "the big result was pruned"
     );
 }
+
+/// Between the prune threshold (60% of the window) and the summary threshold
+/// a response triggers the prune branch alone: pending edits land, the
+/// response reports them, and no compaction is planned.
+#[tokio::test]
+async fn mid_run_prune_fires_between_the_prune_and_summary_thresholds() {
+    let config = config_small();
+    let prune_at = config.prune_trigger_threshold();
+    let summary_at = config.trigger_threshold();
+    assert!(prune_at < summary_at, "{prune_at} < {summary_at}");
+    let mut ctrl = CompactionController::new(config).with_judge(Arc::new(DropAllJudge));
+
+    // Enough calls to clear the judge's minimum batch (`decide_min_candidates`).
+    let mut messages = vec![user_msg("read the logs")];
+    for n in 0..10 {
+        let id = format!("c{n}");
+        messages.push(tool_call_msg(&id));
+        messages.push(tool_result_msg(&id, &big_text(3_000)));
+    }
+    for _ in 0..6 {
+        messages.push(assistant_msg("done"));
+    }
+    let before = messages.len();
+
+    let usage = UsageSnapshot {
+        input: (prune_at + summary_at) / 2,
+        cache_read: 0,
+        cache_write: 0,
+        output: 100,
+        total_tokens: 0,
+        model: model_id(),
+        timestamp: 1000,
+        stop_reason: StopReason::Stop,
+        error_message: None,
+    };
+    let response = ctrl
+        .after_response(
+            &mut messages,
+            &usage,
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+
+    assert!(response.stats.is_none(), "no summary below its threshold");
+    let applied = match response.pruned.and_then(|p| p.applied) {
+        Some(applied) => applied,
+        None => panic!("the prune branch must have applied"),
+    };
+    assert_eq!(
+        applied.trigger,
+        evotengine::context::compaction::ApplyTrigger::Threshold
+    );
+    assert_eq!(
+        applied.removed + applied.truncated,
+        10,
+        "every unpinned call was cut"
+    );
+    assert!(messages.len() < before);
+}
+
+/// Below the prune threshold a response leaves history alone.
+#[tokio::test]
+async fn below_the_prune_threshold_nothing_is_pruned() {
+    let config = config_small();
+    let usage_tokens = config.prune_trigger_threshold() / 2;
+    let mut ctrl = CompactionController::new(config).with_judge(Arc::new(DropAllJudge));
+    let mut messages = vec![
+        user_msg("read the log"),
+        tool_call_msg("c1"),
+        tool_result_msg("c1", &big_text(30_000)),
+    ];
+    for _ in 0..6 {
+        messages.push(assistant_msg("done"));
+    }
+    let usage = UsageSnapshot {
+        input: usage_tokens,
+        cache_read: 0,
+        cache_write: 0,
+        output: 100,
+        total_tokens: 0,
+        model: model_id(),
+        timestamp: 1000,
+        stop_reason: StopReason::Stop,
+        error_message: None,
+    };
+    let response = ctrl
+        .after_response(
+            &mut messages,
+            &usage,
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(response.stats.is_none() && response.pruned.is_none());
+}

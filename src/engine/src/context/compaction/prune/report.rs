@@ -93,12 +93,18 @@ pub struct ApplyReport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApplyTrigger {
-    /// Pending savings reached `apply_min_share` of the context.
-    Savings,
-    /// No request for longer than the cache TTL: the prefix is cold anyway.
-    ColdCache,
+    /// The run ended; the next request starts a fresh prompt anyway.
+    RunEnd,
+    /// The context passed the prune threshold mid-run.
+    Threshold,
     /// A summary compaction is about to rebuild the prefix regardless.
     BeforeCompaction,
     /// The user asked.
     Manual,
+    /// No longer emitted (pending savings reached a share of the context);
+    /// kept so events persisted by earlier versions still read back.
+    Savings,
+    /// No longer emitted (the provider cache had gone cold); kept so events
+    /// persisted by earlier versions still read back.
+    ColdCache,
 }

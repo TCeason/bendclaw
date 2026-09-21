@@ -40,8 +40,6 @@ pub struct PruneLedger {
     kept_at: HashMap<String, usize>,
     /// Context size when the judge was last asked.
     decided_at_tokens: usize,
-    /// Wall-clock time of the last main-model request the ledger saw.
-    last_request_ms: u64,
 }
 
 /// A batch's answers, or why it produced none.
@@ -65,15 +63,8 @@ impl PruneLedger {
         self.pending.len()
     }
 
-    /// Record that the main model was just asked; feeds the cold-cache rule.
-    pub fn note_request(&mut self, now_ms: u64) {
-        self.last_request_ms = now_ms;
-    }
-
-    fn cache_is_cold(&self, now_ms: u64, ttl_ms: u64) -> bool {
-        // No request seen in this process (a resumed session) means no warm
-        // prefix to protect either.
-        self.last_request_ms == 0 || now_ms.saturating_sub(self.last_request_ms) >= ttl_ms
+    pub fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
     }
 
     /// Whether it is time to ask the judge again.
@@ -100,26 +91,6 @@ impl PruneLedger {
     /// session starts here even when its history is long.
     pub fn is_fresh(&self) -> bool {
         self.decided_at_tokens == 0
-    }
-
-    /// Why the pending edits should be applied now, if at all.
-    pub fn apply_trigger(
-        &self,
-        context_tokens: usize,
-        now_ms: u64,
-        options: &PruneOptions,
-    ) -> Option<ApplyTrigger> {
-        if self.pending.is_empty() {
-            return None;
-        }
-        let share = self.pending_tokens() as f64 / context_tokens.max(1) as f64;
-        if share >= options.apply_min_share {
-            return Some(ApplyTrigger::Savings);
-        }
-        if self.cache_is_cold(now_ms, options.cache_ttl_ms) {
-            return Some(ApplyTrigger::ColdCache);
-        }
-        None
     }
 
     /// Candidates the ledger has no live verdict for. A `Keep` is revisited

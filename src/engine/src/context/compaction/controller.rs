@@ -99,13 +99,19 @@ impl CompactionController {
         self.judge.is_some() && self.ledger.lock().await.is_fresh()
     }
 
-    /// Run-end prune step: ask the judge when the context grew enough, apply
-    /// pending verdicts when they pay for the cache miss or the cache is cold.
-    /// Never edits mid-run; the runner calls this once per completed run.
-    pub async fn prune_after_run(
+    /// One prune step: ask the judge when the context grew enough since the
+    /// last round, then apply whatever is pending.
+    ///
+    /// Called at every run end (`RunEnd`) and, once the context is past
+    /// `prune_trigger_threshold`, after each response (`Threshold`). Asking
+    /// is a separate request to the judge and leaves the main model's cache
+    /// alone; applying edits history and costs one cache miss, accepted
+    /// because a trimmed context is what the run needs to keep going.
+    pub async fn prune_step(
         &mut self,
         messages: &mut Vec<AgentMessage>,
         context_tokens: usize,
+        trigger: ApplyTrigger,
         now_ms: u64,
         cancel: CancellationToken,
     ) -> PruneOutcome {
@@ -134,10 +140,9 @@ impl CompactionController {
                 Err(error) => tracing::warn!(error = %error, "judge prune: decide failed"),
             }
         }
-        if let Some(trigger) = ledger.apply_trigger(context_tokens, now_ms, &self.prune_options) {
+        if ledger.has_pending() {
             outcome.applied = Some(self.apply_with(&mut ledger, messages, trigger, now_ms));
         }
-        ledger.note_request(now_ms);
         outcome
     }
 
@@ -246,7 +251,16 @@ impl CompactionController {
         self.clear_suppression_if_recovered(usage, current_model);
 
         match trigger::evaluate(&trigger_input, &self.config) {
-            TriggerDecision::Skip => CompactionResponse::skip(),
+            TriggerDecision::Skip => {
+                // Below the summary threshold. The prune branch has its own,
+                // lower line; usage from another model says nothing about
+                // this context and is not a size.
+                if usage.model == *current_model {
+                    let context_tokens = trigger::calculate_context_tokens(usage);
+                    return self.prune_mid_run(messages, context_tokens, cancel).await;
+                }
+                CompactionResponse::skip()
+            }
 
             TriggerDecision::Overflow {
                 context_tokens,
@@ -336,6 +350,7 @@ impl CompactionController {
                     overflow_recovery_failed: will_retry
                         && !retry_after_compaction
                         && !cancel.is_cancelled(),
+                    pruned: None,
                 }
             }
 
@@ -350,6 +365,7 @@ impl CompactionController {
                     context_tokens: Some(context_tokens),
                     overflow_exhausted: true,
                     overflow_recovery_failed: false,
+                    pruned: None,
                 }
             }
 
@@ -396,10 +412,41 @@ impl CompactionController {
         }
         if estimated_tokens < self.config.trigger_threshold() {
             self.clear_suppression_for(current_model);
-            return CompactionResponse::skip();
+            return self.prune_mid_run(messages, estimated_tokens, cancel).await;
         }
         self.threshold_compact(messages, estimated_tokens, current_model, contexts, cancel)
             .await
+    }
+
+    /// The prune branch between responses: nothing below its threshold or
+    /// without a judge; otherwise one `prune_step`, reported on the response
+    /// so the runner can emit it.
+    async fn prune_mid_run(
+        &mut self,
+        messages: &mut Vec<AgentMessage>,
+        context_tokens: usize,
+        cancel: CancellationToken,
+    ) -> CompactionResponse {
+        if self.judge.is_none()
+            || self.config.context_window == 0
+            || context_tokens < self.config.prune_trigger_threshold()
+        {
+            return CompactionResponse::skip();
+        }
+        let outcome = self
+            .prune_step(
+                messages,
+                context_tokens,
+                ApplyTrigger::Threshold,
+                crate::context::now_ms(),
+                cancel,
+            )
+            .await;
+        let mut response = CompactionResponse::skip();
+        if outcome.decided.is_some() || outcome.applied.is_some() {
+            response.pruned = Some(outcome);
+        }
+        response
     }
 
     /// Force a compaction (e.g., manual trigger from user command).
@@ -466,6 +513,7 @@ impl CompactionController {
             context_tokens: Some(context_tokens),
             overflow_exhausted: false,
             overflow_recovery_failed: false,
+            pruned: None,
         }
     }
 
@@ -655,6 +703,8 @@ pub struct CompactionResponse {
     /// not run (nothing to evict). The loop should surface this to the user
     /// instead of failing silently.
     pub overflow_recovery_failed: bool,
+    /// What the mid-run prune branch did on this response, if anything.
+    pub pruned: Option<PruneOutcome>,
 }
 
 impl CompactionResponse {
@@ -666,6 +716,7 @@ impl CompactionResponse {
             context_tokens: None,
             overflow_exhausted: false,
             overflow_recovery_failed: false,
+            pruned: None,
         }
     }
 }

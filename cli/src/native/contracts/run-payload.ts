@@ -86,7 +86,9 @@ export const runPayloadSchemas = {
     applied: optional(nullable(object({
       removed: uint, truncated: uint, skipped: uint,
       before_tokens: uint, after_tokens: uint, before_messages: uint, after_messages: uint,
-      trigger: oneOf('savings', 'cold_cache', 'before_compaction', 'manual'),
+      // `savings` / `cold_cache` were emitted before the prune threshold
+      // existed; events persisted then must still decode.
+      trigger: oneOf('run_end', 'threshold', 'before_compaction', 'manual', 'savings', 'cold_cache'),
     }))),
     context_window: optional(uint),
   }),
