@@ -324,6 +324,39 @@ describe('host tools', () => {
     expect(answersSeen).toHaveLength(2)
   })
 
+  test('a schedule edit takes the same revise loop as an instruction edit', async () => {
+    const flow = createTaskFlowState('update', task)
+    const persisted: Record<string, unknown>[] = []
+    const persist: TaskPersistence = {
+      create: async () => { throw new Error('not creating') },
+      update: async (_id, body) => { persisted.push(body as Record<string, unknown>); return { task: { ...task, ...body } as typeof task, next_runs: [] } },
+    }
+    const questions: string[] = []
+    const respond = async (patch: Record<string, unknown>, answer: string) => dispatch({
+      tool_name: 'automation_task_update',
+      tool_call_id: `sched-${questions.length}`,
+      arguments: { task_id: task.id, revision: task.revision, ...patch },
+    }, {
+      flow,
+      persist,
+      collectAnswers: async params => {
+        questions.push(params.questions[0]?.question ?? '')
+        return [{ header: 'Task', question: '', answer }]
+      },
+    })
+
+    const first = await respond({ cron: '0 8 * * *' }, '要 8 点半，不是 8 点')
+    expect(questions[0]).toContain('schedule: ')
+    expect(questions[0]).toContain('Not quite right? Type what to change')
+    expect(first.content[0]?.text).toContain('要 8 点半，不是 8 点')
+    expect(first.content[0]?.text).toContain('call automation_task_update again')
+    expect(persisted).toHaveLength(0)
+
+    const second = await respond({ cron: '30 8 * * *' }, 'Confirm')
+    expect(second.content[0]?.text).toContain('Updated')
+    expect(persisted).toEqual([expect.objectContaining({ cron: '30 8 * * *' })])
+  })
+
   test('Cancel at the confirmation still ends the flow', async () => {
     const flow = createTaskFlowState('update', task)
     const response = await dispatch({

@@ -209,6 +209,9 @@ function createConfirmationFields(
     .map(([key, value]) => `${key}: ${String(value)}`)
 }
 
+/** Shown under every task confirmation: typing is not cancelling. */
+export const REVISE_HINT = 'Not quite right? Type what to change and it will be revised before anything is saved.'
+
 /** One field this request changes. */
 interface FieldChange {
   label: string
@@ -365,9 +368,16 @@ export async function commitTaskChange(
   const answers = await context.collectAnswers({
     questions: [{
       header: 'Task',
-      question: creating
-        ? `Create this scheduled task?\n${fields.join('\n')}`
-        : `Apply these changes to “${flow.currentTask?.name ?? 'Task'}”?\n${fields.join('\n') || 'No effective changes'}`,
+      // The last line invites the reply that reopens the change (see
+      // `revise`): the same words wherever a task change is confirmed.
+      question: [
+        creating
+          ? 'Create this scheduled task?'
+          : `Apply these changes to “${flow.currentTask?.name ?? 'Task'}”?`,
+        ...(fields.length > 0 ? fields : creating ? [] : ['No effective changes']),
+        '',
+        REVISE_HINT,
+      ].join('\n'),
       options: [
         {
           label: 'Confirm',

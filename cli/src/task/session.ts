@@ -192,8 +192,9 @@ export class TaskSession {
           this.#host.notify('Import cancelled. Nothing was created.')
           return
         case 'revise':
-          // An import has no author to revise it; the note is only shown.
-          this.#host.notify(`Import not confirmed (“${outcome.feedback}”). Nothing was created.`)
+          // Typed feedback takes the same road as "Adjust with agent", with
+          // the feedback as the first thing to do.
+          this.create(`/task ${link}`, `${importAsRequest(snapshot, link)}\n\nBefore saving, change this: ${outcome.feedback}`)
           return
         case 'failed':
           this.#host.notifyError(`${outcome.message}. The save outcome is unknown; check /task before retrying.`)
@@ -228,6 +229,10 @@ export class TaskSession {
     }])
     if (this.#disposed || this.#host.destroyed()) return
     if (answers?.[0]?.answer !== 'Publish') {
+      const typed = answers?.[0]?.answer?.trim()
+      if (typed && typed !== 'Cancel') {
+        this.#host.notify(`Not published. To change “${task.name}” first, use /task edit ${task.name}.`)
+      }
       this.#paint(id, generation === this.#generation)
       return
     }
@@ -392,7 +397,13 @@ export class TaskSession {
         { label: 'Cancel', description: 'Return without starting a run.' },
       ],
     }])
-    return answers?.[0]?.answer === 'Run now'
+    const answer = answers?.[0]?.answer
+    if (answer === 'Run now') return true
+    const typed = answer?.trim()
+    if (typed && typed !== 'Cancel') {
+      this.#host.notify(`Not run. To change “${task.name}” first, use /task edit ${task.name}.`)
+    }
+    return false
   }
 
   /** One list request at a time. Mutations fence older snapshots so a late

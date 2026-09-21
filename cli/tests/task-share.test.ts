@@ -258,6 +258,18 @@ describe('/task <link> in the session', () => {
     h.session.dispose()
   })
 
+  test('typed feedback at the import confirmation goes to the agent with the feedback first', async () => {
+    // Same road as "Adjust with agent": nothing is created, the recipe and
+    // the objection become the create request.
+    const h = harness('改成每天 8 点，别发飞书')
+    await h.session.import(LINK)
+    expect(h.created).toEqual([])
+    expect(h.turns).toHaveLength(1)
+    expect(h.turns[0]).toContain('cron: 0 9 * * 1-5')
+    expect(h.turns[0]).toContain('Before saving, change this: 改成每天 8 点，别发飞书')
+    h.session.dispose()
+  })
+
   test('cancelling and a revoked link both leave nothing behind', async () => {
     const cancelled = harness('Cancel')
     await cancelled.session.import(LINK)
