@@ -22,12 +22,14 @@ export {
 export type { ProxyCandidate, ProxyEnv, ProxySelection } from './proxy.js'
 export { UpdateManager, type UpdateStatus } from './manager.js'
 export { parseReleaseNotes } from './notes.js'
+export { formatInstallerProgress } from './progress.js'
 export { checkInstallHealth, installedVersionForThisProcess, isManagedInstall, readInstallState } from './state.js'
 export type { InstallHealth } from './state.js'
 export { readStaged, clearStaged } from './stage.js'
 export type { StagedUpdate } from './stage.js'
 
 import type { RunResult } from './types.js'
+import { reapExitedChildren } from '../native/index.js'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { checkForUpdate, lastCheckError } from './check.js'
@@ -144,6 +146,13 @@ export async function applyStagedOnStartup(currentVersion: string): Promise<stri
 }
 
 /**
+ * Upper bound on waiting for children to exit before `execve`. Long enough for
+ * a hook adapter to react to stdin EOF, short enough that a restart still
+ * feels instant when one ignores it.
+ */
+const CHILD_REAP_TIMEOUT_MS = 500
+
+/**
  * Replace this process with the currently installed binary, keeping argv,
  * pid, and the terminal. `execve` never returns on success.
  *
@@ -163,6 +172,12 @@ function execIntoInstalledBinary(
   if (!runningInstallDir()) return
   const binary = join(installBinDir(), 'evot')
   if (!existsSync(binary)) return
+  // execve keeps the pid, so any child still around — the session-hook adapter
+  // finishing its shutdown, background tool processes just signalled by
+  // cleanup — would be inherited by an image that never waits on it and sit as
+  // a zombie until evot exits. Drain them first; a wedged adapter only costs
+  // the bounded wait, not the restart.
+  reapExitedChildren(CHILD_REAP_TIMEOUT_MS)
   try {
     execve(binary, [binary, ...argv], env)
   } catch {

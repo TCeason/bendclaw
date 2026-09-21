@@ -1,5 +1,6 @@
 import stripAnsi from 'strip-ansi'
 import { spawn } from 'node:child_process'
+import { formatInstallerProgress } from './progress.js'
 
 export interface InstallerExecution {
   signal?: AbortSignal
@@ -33,7 +34,8 @@ export async function runInstallerScript(script: string, env: Record<string, str
     let pending = ''
     const report = (text: string) => {
       const line = stripAnsi(text).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '').trim().slice(-1000)
-      if (line) { try { options.onProgress?.(line) } catch { /* UI cannot stop an installer. */ } }
+      const formatted = formatInstallerProgress(line)
+      if (formatted) { try { options.onProgress?.(formatted) } catch { /* UI cannot stop an installer. */ } }
     }
     try {
       for await (const value of stream) {

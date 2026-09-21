@@ -57,6 +57,7 @@ export const startServer = binding.startServer
 export const startServerBackground = binding.startServerBackground
 export const stopServerBackground = binding.stopServerBackground
 export const fastExit = binding.fastExit
+export const reapExitedChildren = binding.reapExitedChildren
 export const authBegin = binding.authBegin
 export const authPoll = binding.authPoll
 export const authLogout = binding.authLogout

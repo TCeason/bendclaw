@@ -6,7 +6,7 @@
 
 import { shareCreated, shareList, type ShareNotice } from './contracts/share.js'
 // @ts-ignore — binding.js is generated
-import { NapiAgent as RawAgent, version as rawVersion, startServer as rawStartServer, startServerBackground as rawStartServerBackground, fastExit as rawFastExit, authBegin as rawAuthBegin, authPoll as rawAuthPoll, authLogout as rawAuthLogout, authSyncModels as rawAuthSyncModels, authSyncNotices as rawAuthSyncNotices, authWhoami as rawAuthWhoami, authRefreshSession as rawAuthRefreshSession, authNotices as rawAuthNotices, taskList as rawTaskList, taskDeliveryDefaults as rawTaskDeliveryDefaults, taskGet as rawTaskGet, taskCreate as rawTaskCreate, taskUpdate as rawTaskUpdate, taskDelete as rawTaskDelete, taskRun as rawTaskRun, taskShare as rawTaskShare, taskShareFetch as rawTaskShareFetch, taskShareId as rawTaskShareId } from './binding.js'
+import { NapiAgent as RawAgent, version as rawVersion, startServer as rawStartServer, startServerBackground as rawStartServerBackground, fastExit as rawFastExit, reapExitedChildren as rawReapExitedChildren, authBegin as rawAuthBegin, authPoll as rawAuthPoll, authLogout as rawAuthLogout, authSyncModels as rawAuthSyncModels, authSyncNotices as rawAuthSyncNotices, authWhoami as rawAuthWhoami, authRefreshSession as rawAuthRefreshSession, authNotices as rawAuthNotices, taskList as rawTaskList, taskDeliveryDefaults as rawTaskDeliveryDefaults, taskGet as rawTaskGet, taskCreate as rawTaskCreate, taskUpdate as rawTaskUpdate, taskDelete as rawTaskDelete, taskRun as rawTaskRun, taskShare as rawTaskShare, taskShareFetch as rawTaskShareFetch, taskShareId as rawTaskShareId } from './binding.js'
 
 import { QueryStream } from './query-stream.js'
 export { QueryStream } from './query-stream.js'
@@ -446,6 +446,21 @@ export function fastExit(code = 0): never {
   rawFastExit(code)
   // rawFastExit does not return; this satisfies the `never` type
   throw new Error('unreachable')
+}
+
+/**
+ * Reap every exited child of this process, waiting at most `timeoutMs` for
+ * stragglers. Call right before `execve`: the new image keeps the pid but never
+ * waits on children it did not spawn, so each one left behind becomes a zombie
+ * until evot exits. Returns the number of children reaped.
+ */
+export function reapExitedChildren(timeoutMs: number): number {
+  try {
+    return rawReapExitedChildren(Math.max(0, Math.floor(timeoutMs)))
+  } catch {
+    // Reaping is best effort; an execve must never be blocked by it.
+    return 0
+  }
 }
 
 // ---------------------------------------------------------------------------

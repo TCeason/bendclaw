@@ -624,9 +624,9 @@ printf 'evot v2026.7.19\\n'
 
   /**
    * `-s` hides curl's transfer meter, so a ~40 MB download printed one line and
-   * then looked frozen with no bytes, rate or ETA. The meter is opt-in on a
-   * terminal only: piping the installer into a log would otherwise accumulate
-   * thousands of carriage-returned progress lines.
+   * then looked frozen with no percentage. The compact progress bar is opt-in
+   * on a terminal only: piping the installer into a log would otherwise
+   * accumulate thousands of carriage-returned progress lines.
    */
   test('shows download progress on a terminal and stays quiet when piped', () => {
     const script = readFileSync(installShPath, 'utf8')
@@ -639,12 +639,14 @@ printf 'evot v2026.7.19\\n'
     // check and passed in.
     expect(downloadFn).not.toContain('-fsSL')
     expect(downloadFn.match(/\$CURL_QUIET/g)).toHaveLength(2)
+    expect(downloadFn.match(/\$CURL_PROGRESS/g)).toHaveLength(2)
     expect(downloadFn.match(/\$WGET_PROGRESS/g)).toHaveLength(2)
 
     // stderr, not stdout: the meter is written to stderr, and stdout is piped
     // for the `curl | sh` invocation that is the documented entry point.
     expect(script).toContain('if [ -t 2 ] || [ "${EVOT_INSTALL_PROGRESS:-}" = 1 ]; then')
     expect(script).toContain('CURL_QUIET="-s"')
+    expect(script).toContain('CURL_PROGRESS="-#"')
 
     // -S must survive in both branches so a hard failure is still reported when
     // the meter is off, rather than the install dying silently.

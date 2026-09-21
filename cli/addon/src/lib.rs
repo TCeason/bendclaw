@@ -24,6 +24,7 @@ pub use auth::cloud_model_meta;
 pub use auth::cloud_provider_groups;
 pub use compaction::NapiCompaction;
 pub use exit::fast_exit;
+pub use exit::reap_exited_children;
 pub use fork::NapiForkedAgent;
 pub use run::NapiRun;
 pub use run::NapiSubmitOutcome;

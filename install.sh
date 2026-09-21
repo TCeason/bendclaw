@@ -80,12 +80,17 @@ DOWNLOAD_RETRY_BASE_DELAY="${EVOT_DOWNLOAD_RETRY_BASE_DELAY:-1}"
 # progress lines, so those keep the quiet behaviour. `-S` is retained in both
 # cases so a hard error is still reported when the meter is off.
 #
-# curl's default meter is preferred over its `-#` bar because it reports rate and
-# time remaining, not just percentage. wget only shows a meter under `-q` when
+# curl's `-#` progress bar is used so the percentage is always visible. The
+# same output is forwarded by `evot update`, which keeps direct installs and
+# in-app updates visually consistent. wget only shows a meter under `-q` when
 # --show-progress is passed, and that flag landed in wget 1.16, so it is probed
 # rather than assumed.
 if [ -t 2 ] || [ "${EVOT_INSTALL_PROGRESS:-}" = 1 ]; then
+  # Use curl's progress-bar mode rather than its verbose transfer meter. It
+  # gives both the standalone installer and the in-app updater a compact,
+  # percentage-based progress signal that can be redrawn in place.
   CURL_QUIET=""
+  CURL_PROGRESS="-#"
   WGET_PROGRESS="--show-progress"
   if [ "$DOWNLOADER" = "wget" ] \
     && ! wget --help 2>&1 | grep -q -- '--show-progress'; then
@@ -93,6 +98,7 @@ if [ -t 2 ] || [ "${EVOT_INSTALL_PROGRESS:-}" = 1 ]; then
   fi
 else
   CURL_QUIET="-s"
+  CURL_PROGRESS=""
   WGET_PROGRESS=""
 fi
 
@@ -128,17 +134,18 @@ download() {
   _url="$1"; _output="$2"; _resume="${3:-yes}"
   if [ "$DOWNLOADER" = "curl" ]; then
     if [ "$_resume" = "yes" ]; then
-      curl -fL $CURL_QUIET -S --connect-timeout 20 \
+      curl -fL $CURL_QUIET -S $CURL_PROGRESS --connect-timeout 20 \
         --speed-limit "$STALL_MIN_BYTES_PER_SEC" --speed-time "$STALL_WINDOW_SECONDS" \
         --continue-at - -o "$_output" "$_url"
     else
-      curl -fL $CURL_QUIET -S --connect-timeout 20 \
+      curl -fL $CURL_QUIET -S $CURL_PROGRESS --connect-timeout 20 \
         --speed-limit "$STALL_MIN_BYTES_PER_SEC" --speed-time "$STALL_WINDOW_SECONDS" \
         -o "$_output" "$_url"
     fi
   else
     # wget's --timeout already covers reads as well as DNS and connect, so a
-    # stalled transfer is bounded without an extra flag.
+    # stalled transfer is bounded without an extra flag. Its progress output
+    # follows the same percentage-based convention as curl's `-#` bar.
     if [ "$_resume" = "yes" ]; then
       wget -q $WGET_PROGRESS --tries=1 --timeout="$STALL_WINDOW_SECONDS" \
         --continue -O "$_output" "$_url"

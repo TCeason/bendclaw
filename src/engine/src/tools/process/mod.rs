@@ -1,10 +1,12 @@
 mod manager;
+mod reap;
 mod spawn;
 mod task_output;
 mod task_stop;
 mod types;
 
 pub use manager::ProcessManager;
+pub use reap::reap_exited_children;
 pub use task_output::StallPolicy;
 pub use task_output::TaskOutputTool;
 pub use task_stop::TaskStopTool;
