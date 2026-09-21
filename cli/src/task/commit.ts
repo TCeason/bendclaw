@@ -64,6 +64,10 @@ export type TaskCommitOutcome =
   | { kind: 'cancelled'; message: string }
   /** The user picked one of `extraOptions` at confirmation. Nothing was sent. */
   | { kind: 'declined'; choice: string }
+  /** The user answered the confirmation in their own words instead of
+   *  Confirm / Cancel: feedback on the proposed change. Nothing was sent
+   *  and the flow stays open so a revised change can be proposed. */
+  | { kind: 'revise'; feedback: string }
   /** The request reached the server and the outcome is unknown. */
   | { kind: 'failed'; message: string }
 
@@ -376,12 +380,19 @@ export async function commitTaskChange(
   })
   const answer = answers?.[0]?.answer
   if (answer !== 'Confirm') {
-    flow.mutationAttempted = true
     const declined = request.extraOptions?.find(option => option.label === answer)
     if (declined) {
+      flow.mutationAttempted = true
       flow.mutationError = `declined: ${declined.label}`
       return { kind: 'declined', choice: declined.label }
     }
+    // Typed text is a note on the proposal ("why so many lines?"), not a
+    // refusal: hand it back so the change can be reworked and proposed again.
+    const feedback = answer?.trim() ?? ''
+    if (feedback && answer !== 'Cancel') {
+      return { kind: 'revise', feedback }
+    }
+    flow.mutationAttempted = true
     flow.mutationError = 'cancelled by user'
     return { kind: 'cancelled', message: 'Task change cancelled by the user. Do not retry unless asked.' }
   }

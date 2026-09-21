@@ -191,6 +191,10 @@ export class TaskSession {
         case 'cancelled':
           this.#host.notify('Import cancelled. Nothing was created.')
           return
+        case 'revise':
+          // An import has no author to revise it; the note is only shown.
+          this.#host.notify(`Import not confirmed (“${outcome.feedback}”). Nothing was created.`)
+          return
         case 'failed':
           this.#host.notifyError(`${outcome.message}. The save outcome is unknown; check /task before retrying.`)
           return

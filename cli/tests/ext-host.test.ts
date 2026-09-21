@@ -8,6 +8,7 @@ import {
   type HostToolCall,
   type HostToolExtension,
 } from '../src/term/host-tools.js'
+import type { TaskPersistence } from '../src/task/commit.js'
 import { createTaskFlowState, type TaskFlowState } from '../src/task/prompt.js'
 import {
   createTaskExtension,
@@ -79,6 +80,7 @@ interface DispatchOptions {
   flow?: TaskFlowState
   pickModel?: TaskModelPicker
   collectAnswers?: (params: AskUserParams) => Promise<AskUserAnswer[] | null>
+  persist?: TaskPersistence
 }
 
 /** Dispatch a task tool exactly as the REPL does: through the generic
@@ -90,6 +92,7 @@ function dispatch(call: HostToolCall, options: DispatchOptions = {}) {
     defaults: async () => options.defaults ?? taskModel,
     pickModel: options.pickModel ?? (async () => null),
     collectAnswers,
+    ...(options.persist ? { persist: options.persist } : {}),
   })
   return dispatchHostToolCall(call, collectAnswers, extension)
 }
@@ -280,6 +283,56 @@ describe('host tools', () => {
     expect(confirmation).not.toContain('schedule:')
     expect(confirmation).not.toContain('instruction:')
     expect(confirmation).not.toContain('evot-pro-anthropic')
+  })
+
+  test('feedback typed at the confirmation reopens the change instead of cancelling it', async () => {
+    // The user reads the diff and objects ("why so many new lines?"). That is
+    // a note on the proposal, not a Cancel: the model must hear it verbatim
+    // and may call the tool again in the same flow.
+    const flow = createTaskFlowState('update', { ...task, instruction: 'Prepare report' })
+    const answersSeen: string[] = []
+    const persisted: unknown[] = []
+    const persist: TaskPersistence = {
+      create: async () => { throw new Error('not creating') },
+      update: async (_id, body) => { persisted.push(body); return { task: { ...task, instruction: String(body.instruction) }, next_runs: [] } },
+    }
+    const respond = async (patch: Record<string, unknown>, answer: string) => dispatch({
+      tool_name: 'automation_task_update',
+      tool_call_id: `update-${answersSeen.length}`,
+      arguments: { task_id: task.id, revision: task.revision, ...patch },
+    }, {
+      flow,
+      persist,
+      collectAnswers: async params => {
+        answersSeen.push(params.questions[0]?.question ?? '')
+        return [{ header: 'Task', question: '', answer }]
+      },
+    })
+
+    const first = await respond({ instruction: 'Prepare a long, long, long report' }, '不是加到6就可以了，为啥要新增这么多呢')
+    expect(first.is_error).toBe(false)
+    expect(first.content[0]?.text).toContain('不是加到6就可以了，为啥要新增这么多呢')
+    expect(first.content[0]?.text).toContain('call automation_task_update again')
+    expect(first.content[0]?.text).not.toContain('cancelled')
+    expect(flow.mutationAttempted).toBe(false)
+    expect(persisted).toHaveLength(0)
+
+    const second = await respond({ instruction: 'Prepare report (6)' }, 'Confirm')
+    expect(second.is_error).toBe(false)
+    expect(second.content[0]?.text).toContain('Updated')
+    expect(persisted).toHaveLength(1)
+    expect(answersSeen).toHaveLength(2)
+  })
+
+  test('Cancel at the confirmation still ends the flow', async () => {
+    const flow = createTaskFlowState('update', task)
+    const response = await dispatch({
+      tool_name: 'automation_task_update',
+      tool_call_id: 'update-cancel',
+      arguments: { task_id: task.id, revision: task.revision, instruction: 'x' },
+    }, { flow, collectAnswers: cancelAtConfirmation })
+    expect(response.content[0]?.text).toContain('cancelled by the user')
+    expect(flow.mutationAttempted).toBe(true)
   })
 
   test('an instruction edit is confirmed as a git-style diff, not the text twice', async () => {

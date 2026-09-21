@@ -126,6 +126,14 @@ async function dispatchTaskToolCall(
         return textResponse(call, outcome.message)
       case 'declined':
         return textResponse(call, 'Task change declined by the user. Do not retry unless asked.')
+      case 'revise':
+        return textResponse(
+          call,
+          `The user did not confirm the change and replied: "${outcome.feedback}"\n`
+          + 'Nothing was saved. Revise the proposal to address this feedback, then call '
+          + `${call.tool_name} again with the full updated arguments (same task_id and revision). `
+          + 'If the feedback is unclear, ask the user before proposing again.',
+        )
       case 'failed':
         return errorResponse(
           call,
