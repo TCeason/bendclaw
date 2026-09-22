@@ -12,6 +12,7 @@ pub mod conversation;
 pub mod delivery;
 pub mod error;
 pub mod gateway;
+pub(crate) mod http;
 pub mod judge;
 pub mod models;
 pub mod observability;

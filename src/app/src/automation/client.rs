@@ -139,7 +139,7 @@ pub async fn claim(
 ) -> Result<Option<ClaimedRun>> {
     let path = "/v1/task-runs/claim";
     let url = format!("{}{}", auth.server_base_url.trim_end_matches('/'), path);
-    let response = reqwest::Client::new()
+    let response = crate::http::client()?
         .post(url)
         .bearer_auth(&auth.cli_token)
         .json(&serde_json::json!({"executor_id": executor_id, "request_id": request_id}))
@@ -203,7 +203,7 @@ async fn request<T: DeserializeOwned>(
     header: Option<(&str, &str)>,
 ) -> Result<T> {
     let url = format!("{}{}", auth.server_base_url.trim_end_matches('/'), path);
-    let mut builder = reqwest::Client::new()
+    let mut builder = crate::http::client()?
         .request(method, url)
         .bearer_auth(&auth.cli_token)
         .timeout(REQUEST_TIMEOUT);

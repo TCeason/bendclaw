@@ -41,7 +41,11 @@ pub async fn fetch_catalog(state: &AuthState) -> CatalogOutcome {
         "{}/v1/config/models",
         state.server_base_url.trim_end_matches('/')
     );
-    let sent = reqwest::Client::new()
+    let client = match crate::http::client() {
+        Ok(client) => client,
+        Err(error) => return CatalogOutcome::Unavailable(format!("sync models: {error}")),
+    };
+    let sent = client
         .get(&url)
         .bearer_auth(&state.cli_token)
         .timeout(Duration::from_secs(30))
@@ -77,7 +81,7 @@ pub async fn poll_status(base_url: &str, code: &str, expires_at: i64) -> Result<
         urlencode(code),
         expires_at
     );
-    let response = http_json(reqwest::Client::new().get(&url)).await?;
+    let response = http_json(crate::http::client()?.get(&url)).await?;
     let status = response
         .get("status")
         .and_then(|value| value.as_str())
@@ -103,7 +107,7 @@ pub async fn poll_status(base_url: &str, code: &str, expires_at: i64) -> Result<
 
 pub async fn sync_notices(base_url: &str) -> Result<Vec<Notice>> {
     let url = [base_url.trim_end_matches('/'), "/v1/notices"].concat();
-    let response = reqwest::Client::new()
+    let response = crate::http::client()?
         .get(&url)
         .timeout(Duration::from_secs(30))
         .send()
@@ -126,8 +130,7 @@ pub async fn sync_models(state: &AuthState) -> Result<ModelsResponse> {
         "{}/v1/config/models",
         state.server_base_url.trim_end_matches('/')
     );
-    let client = reqwest::Client::new();
-    let response = client
+    let response = crate::http::client()?
         .get(&url)
         .bearer_auth(&state.cli_token)
         .timeout(Duration::from_secs(30))
@@ -153,7 +156,7 @@ pub async fn set_default_model(state: &AuthState, model: &str) -> Result<()> {
         "{}/v1/config/default-model",
         state.server_base_url.trim_end_matches('/')
     );
-    let response = reqwest::Client::new()
+    let response = crate::http::client()?
         .put(&url)
         .bearer_auth(&state.cli_token)
         .json(&serde_json::json!({ "model": model }))
@@ -176,7 +179,7 @@ async fn post_json<T: DeserializeOwned>(
     body: &serde_json::Value,
 ) -> Result<T> {
     let url = format!("{}{}", base_url.trim_end_matches('/'), path);
-    let client = reqwest::Client::new();
+    let client = crate::http::client()?;
     let response = client
         .post(&url)
         .json(body)
