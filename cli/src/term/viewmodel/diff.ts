@@ -26,13 +26,23 @@ function hunkSeparator(columns?: number): StyledLine {
   return line({ text: `  ${'┄'.repeat(columns - 2)}`, hex: theme.diffGutterFg })
 }
 
+/** Every hunk is pure additions (new file) or pure removals (deleted file). */
+export function isOneSided(hunks: ReturnType<typeof parseDiffHunks>): boolean {
+  return hunks.length > 0
+    && (hunks.every(hunk => hunk.oldLines === 0) || hunks.every(hunk => hunk.newLines === 0))
+}
+
 /**
  * `minGutter` floors the line-number column so a patch that grows between
  * frames never re-indents rows it has already painted. See
  * [`colorizeUnifiedDiffRows`].
  */
 export function buildDiffLines(patch: string, columns?: number, minGutter = 0): StyledLine[] {
-  if (!columns || columns < SPLIT_DIFF_MIN_COLUMNS) {
+  const hunks = parseDiffHunks(patch)
+  // A side-by-side view needs two sides. A new file (or a deleted one) has
+  // only one: splitting it leaves half the width blank and squeezes the code
+  // into the other half, so those read as a single column at any width.
+  if (!columns || columns < SPLIT_DIFF_MIN_COLUMNS || isOneSided(hunks)) {
     const theme = getTheme()
     return colorizeUnifiedDiffRows(patch, false, minGutter).flatMap(row => {
       if (row.kind === 'ellipsis') return [hunkSeparator(columns)]
@@ -42,7 +52,6 @@ export function buildDiffLines(patch: string, columns?: number, minGutter = 0): 
       }))
     })
   }
-  const hunks = parseDiffHunks(patch)
   if (!hunks.length) return wrapTextWithAnsi(patch, columns).map(text => line(plain(text)))
   const leftWidth = Math.floor((columns - 3) / 2)
   const rightWidth = columns - 3 - leftWidth

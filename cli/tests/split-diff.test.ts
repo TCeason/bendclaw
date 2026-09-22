@@ -101,3 +101,20 @@ test('diff chrome shares one recessed hue across gutter, rule, and divider', () 
   expect(hues.length).toBeGreaterThan(0)
   expect(new Set(hues)).toEqual(new Set([theme.diffGutterFg]))
 })
+
+test('a new file is one column at any width: no blank left pane', () => {
+  const body = Array.from({ length: 6 }, (_, i) => `export const v${i} = ${i};`).join('\n') + '\n'
+  const lines = render('', body, 160)
+  expect(lines.join('\n')).not.toContain('│')
+  for (let i = 0; i < 6; i++) expect(lines.some(text => text.includes(`export const v${i} = ${i};`))).toBe(true)
+  // Code still gets the full width rather than half of it.
+  const longBody = 'x'.repeat(120) + '\n'
+  const wide = render('', longBody, 160)
+  expect(wide.some(text => text.includes('x'.repeat(120)))).toBe(true)
+})
+
+test('a deleted file is one column too', () => {
+  const lines = render('gone\nall\n', '', 160)
+  expect(lines.join('\n')).not.toContain('│')
+  expect(lines.some(text => text.includes('gone'))).toBe(true)
+})
