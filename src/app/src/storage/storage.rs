@@ -88,10 +88,4 @@ pub trait Storage: Send + Sync {
     /// Remove one variable, merging with whatever is on disk. Returns whether
     /// the key existed and the resulting set.
     async fn remove_variable(&self, key: String) -> Result<(bool, Vec<VariableRecord>)>;
-
-    /// Session ids the user pinned as favorites in the dashboard. Stored
-    /// independently of session metadata so toggling never rewrites a session.
-    async fn load_favorites(&self) -> Result<Vec<String>>;
-    /// Apply one read-modify-write operation atomically against the latest set.
-    async fn edit_favorites(&self, edit: super::FavoritesEdit) -> Result<super::FavoritesUpdate>;
 }

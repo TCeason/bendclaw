@@ -831,32 +831,6 @@ impl Agent {
         self.assembler.processes.kill_all_now()
     }
 
-    pub async fn list_favorites(&self) -> Result<Vec<String>> {
-        self.storage.load_favorites().await
-    }
-
-    /// Remove deleted ids from the favorites document. Returns how many favorite
-    /// entries were pruned.
-    pub async fn remove_favorites(&self, session_ids: &[String]) -> Result<usize> {
-        Ok(self
-            .storage
-            .edit_favorites(crate::storage::FavoritesEdit::Remove(session_ids.to_vec()))
-            .await?
-            .removed)
-    }
-
-    /// Toggle a session's favorite state, returning the new state (`true` =
-    /// now favorited). Persisted via the storage backend's favorites document.
-    pub async fn toggle_favorite(&self, session_id: &str) -> Result<bool> {
-        let update = self
-            .storage
-            .edit_favorites(crate::storage::FavoritesEdit::Toggle(
-                session_id.to_string(),
-            ))
-            .await?;
-        Ok(update.ids.iter().any(|id| id == session_id))
-    }
-
     pub async fn create_session(&self, source: &str) -> Result<SessionMeta> {
         self.create_session_in(source, None).await
     }

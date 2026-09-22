@@ -1,8 +1,8 @@
 /**
- * `/fork`, `/back` and `/root`: moving along a session's fork ancestry.
+ * `/fork` and `/back [levels | root]`: moving along a session's fork ancestry.
  *
  * Forks form a tree; the only path the UI reasons about is the chain from the
- * root to the current session. `/back` and `/root` are `--resume` shortcuts
+ * root to the current session. `/back` and `/back root` are `--resume` shortcuts
  * along that chain, so they carry no state of their own. Notices are screen
  * output only and never enter the model's context.
  */
@@ -51,7 +51,7 @@ export function forkNotice(fork: SessionMeta, parent: SessionMeta, dim: (text: s
   ]
 }
 
-/** Lines shown after `/back` or `/root` lands in an ancestor. */
+/** Lines shown after `/back` lands in an ancestor. */
 export function backNotice(
   left: SessionMeta,
   target: SessionMeta,

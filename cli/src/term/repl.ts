@@ -3183,8 +3183,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         // distillation prompt; bare /clip remains a zero-token local action.
         commitLines(buildUserMessage(text.trim()))
         runQuery('/clip all')
+      } else if (sub === 'copy') {
+        await handleCopyCommand(replCommands)
       } else if (sub) {
-        commitSystem('sys-clip-err', '  Usage: /clip [all]')
+        commitSystem('sys-clip-err', '  Usage: /clip [all | copy]')
       } else {
         await handleClipCommand(replCommands)
       }
@@ -3196,8 +3198,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       } finally {
         refreshBannerData()
       }
-    } else if (name === '/copy') {
-      await handleCopyCommand(replCommands)
     } else if (name === '/update') {
       await handleUpdateCommand(replCommands)
     } else if (name === '/version') {
@@ -3259,7 +3259,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           }
         }
       }
-    } else if (name === '/act' || name === '/done') {
+    } else if (name === '/done') {
       if (logMode) {
         logMode = null
         commitSystem('sys-log-exit', '  [log mode] exited')
@@ -3290,8 +3290,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       await handleLogCommand(args)
     } else if (name === '/fork') {
       await handleForkCommand(args)
-    } else if (name === '/back' || name === '/root') {
-      await handleBackCommand(name === '/root' ? 'root' : args)
+    } else if (name === '/back') {
+      await handleBackCommand(args)
     } else if (name === '/resume') {
       const query = normalizeResumeQuery(args)
       try {
@@ -3334,7 +3334,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
-  /** `/back [levels]` and `/root`: resume an ancestor along the fork chain. */
+  /** `/back [levels | root]`: resume an ancestor along the fork chain. */
   async function handleBackCommand(levels: string) {
     if (!sessionId) {
       commitSystem('sys-back-none', chalk.dim('  Not in a session.'))

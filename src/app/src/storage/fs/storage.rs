@@ -9,7 +9,6 @@ use crate::error::EvotError;
 use crate::error::Result;
 use crate::search::SessionWithText;
 use crate::storage::Storage;
-use crate::types::FavoritesDocument;
 use crate::types::ListSessions;
 use crate::types::ListTranscriptEntries;
 use crate::types::SessionMeta;
@@ -54,10 +53,6 @@ impl FsStorage {
 
     fn variables_path(&self) -> PathBuf {
         self.root_dir.join("variables.json")
-    }
-
-    fn favorites_path(&self) -> PathBuf {
-        self.root_dir.join("favorites.json")
     }
 
     async fn read_json<T: serde::de::DeserializeOwned>(&self, path: &Path) -> Result<Option<T>> {
@@ -694,26 +689,6 @@ impl Storage for FsStorage {
         })
         .await
         .map_err(|error| EvotError::Store(format!("variables writer task failed: {error}")))?
-    }
-
-    async fn load_favorites(&self) -> Result<Vec<String>> {
-        match self
-            .read_json::<FavoritesDocument>(&self.favorites_path())
-            .await?
-        {
-            Some(doc) => Ok(doc.ids),
-            None => Ok(Vec::new()),
-        }
-    }
-
-    async fn edit_favorites(
-        &self,
-        edit: crate::storage::FavoritesEdit,
-    ) -> Result<crate::storage::FavoritesUpdate> {
-        let path = self.favorites_path();
-        tokio::task::spawn_blocking(move || super::favorites::edit(&path, edit))
-            .await
-            .map_err(|error| EvotError::Store(format!("favorites writer task failed: {error}")))?
     }
 
     async fn list_sessions_with_text(&self, limit: usize) -> Result<Vec<SessionWithText>> {

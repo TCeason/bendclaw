@@ -42,8 +42,6 @@ mod conversation_projection_test;
 mod dashboard_search_test;
 #[path = "delivery_test.rs"]
 mod delivery_test;
-#[path = "favorites_atomic_test.rs"]
-mod favorites_atomic_test;
 #[path = "feishu_message_test.rs"]
 mod feishu_message_test;
 #[path = "feishu_sink_test.rs"]

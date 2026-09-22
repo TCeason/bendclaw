@@ -24,7 +24,6 @@ use crate::types::VariableRecord;
 pub struct MemoryStorage {
     sessions: Mutex<HashMap<String, SessionMeta>>,
     entries: Mutex<Vec<TranscriptEntry>>,
-    favorites: Mutex<Vec<String>>,
 }
 
 impl Default for MemoryStorage {
@@ -38,7 +37,6 @@ impl MemoryStorage {
         Self {
             sessions: Mutex::new(HashMap::new()),
             entries: Mutex::new(Vec::new()),
-            favorites: Mutex::new(Vec::new()),
         }
     }
 }
@@ -202,28 +200,6 @@ impl Storage for MemoryStorage {
 
     async fn remove_variable(&self, _key: String) -> Result<(bool, Vec<VariableRecord>)> {
         Ok((false, vec![]))
-    }
-
-    async fn load_favorites(&self) -> Result<Vec<String>> {
-        Ok(self
-            .favorites
-            .lock()
-            .ok()
-            .map(|f| f.clone())
-            .unwrap_or_default())
-    }
-
-    async fn edit_favorites(&self, edit: super::FavoritesEdit) -> Result<super::FavoritesUpdate> {
-        let mut ids = self
-            .favorites
-            .lock()
-            .map_err(|_| crate::error::EvotError::Store("favorites lock poisoned".into()))?;
-        let before = ids.len();
-        edit.apply(&mut ids);
-        Ok(super::FavoritesUpdate {
-            removed: before.saturating_sub(ids.len()),
-            ids: ids.clone(),
-        })
     }
 
     async fn list_sessions_with_text(&self, limit: usize) -> Result<Vec<SessionWithText>> {

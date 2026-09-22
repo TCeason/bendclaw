@@ -127,15 +127,11 @@ describe('resolveCommand', () => {
     })
   })
 
-  test('resolves /copy command', () => {
-    const result = resolveCommand('/copy')
-    expect(result).toEqual({ kind: 'resolved', name: '/copy', args: '' })
-    expect(isSlashCommand('/copy')).toBe(true)
-  })
-
-  test('resolves /clip with its only supported subcommand', () => {
+  test('resolves /clip with its subcommands', () => {
     expect(resolveCommand('/clip')).toEqual({ kind: 'resolved', name: '/clip', args: '' })
     expect(resolveCommand('/clip all')).toEqual({ kind: 'resolved', name: '/clip', args: 'all' })
+    expect(resolveCommand('/clip copy')).toEqual({ kind: 'resolved', name: '/clip', args: 'copy' })
+    expect(resolveCommand('/copy')).toEqual({ kind: 'unknown' })
     expect(isSlashCommand('/clip')).toBe(true)
   })
 
@@ -160,11 +156,11 @@ describe('resolveCommand', () => {
     expect(isSlashCommand('/logout')).toBe(true)
   })
 
-  test('/c is ambiguous between /clip, /copy, /compact, and /clear', () => {
+  test('/c is ambiguous between /clip, /compact, and /clear', () => {
     const result = resolveCommand('/c')
     expect(result.kind).toBe('ambiguous')
     if (result.kind === 'ambiguous') {
-      expect(result.candidates).toContain('/copy')
+      expect(result.candidates).toContain('/clip')
       expect(result.candidates).toContain('/clear')
     }
   })

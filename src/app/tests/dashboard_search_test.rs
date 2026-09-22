@@ -226,34 +226,6 @@ async fn list_sessions_with_text_respects_limit_after_draft_filtering() -> TestR
 }
 
 #[tokio::test]
-async fn favorites_persist_across_storage() -> TestResult {
-    let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
-
-    // Empty by default.
-    assert!(storage.load_favorites().await?.is_empty());
-
-    // Saving a set round-trips.
-    storage
-        .edit_favorites(evot::storage::FavoritesEdit::Replace(vec![
-            "fav-a".into(),
-            "fav-b".into(),
-        ]))
-        .await?;
-    let ids = storage.load_favorites().await?;
-    assert_eq!(ids.len(), 2);
-    assert!(ids.contains(&"fav-a".to_string()));
-    assert!(ids.contains(&"fav-b".to_string()));
-
-    // Overwrite replaces rather than appends.
-    storage
-        .edit_favorites(evot::storage::FavoritesEdit::Replace(vec!["fav-c".into()]))
-        .await?;
-    let ids = storage.load_favorites().await?;
-    assert_eq!(ids, vec!["fav-c".to_string()]);
-    Ok(())
-}
-
-#[tokio::test]
 async fn delete_session_removes_only_target() -> TestResult {
     let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
 
