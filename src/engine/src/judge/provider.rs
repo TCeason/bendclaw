@@ -35,6 +35,7 @@ pub struct ProviderJudge {
     model: String,
     api_key: String,
     model_config: Option<ModelConfig>,
+    session_id: Option<String>,
     limits: JudgeLimits,
 }
 
@@ -50,8 +51,15 @@ impl ProviderJudge {
             model: model.into(),
             api_key: api_key.into(),
             model_config,
+            session_id: None,
             limits: JudgeLimits::default(),
         }
+    }
+
+    /// Attach the active application session to every judge request.
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
+        self
     }
 
     /// Size requests for a judge model other than the default one.
@@ -80,7 +88,7 @@ impl ProviderJudge {
             max_tokens: Some(1),
             model_config: self.model_config.clone(),
             cache_config: CacheConfig::default(),
-            prompt_cache_key: None,
+            prompt_cache_key: self.session_id.clone(),
         }
     }
 }

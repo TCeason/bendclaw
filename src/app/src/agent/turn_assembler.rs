@@ -247,7 +247,7 @@ impl TurnAssembler {
                 compaction_state,
                 // Re-resolved every run: the catalog decides whether pruning
                 // is on, and it can change while a session is open.
-                judge: crate::judge::current_for_session(session_dir.as_deref()),
+                judge: crate::judge::current_for_session(session_dir.as_deref(), Some(session_id)),
                 prune_ledger: self
                     .prune_ledgers
                     .write()

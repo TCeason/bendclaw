@@ -33,8 +33,14 @@ pub fn current() -> Option<Arc<dyn Judge>> {
 
 /// The current judge, recording every request to the session's
 /// `judge-trace.jsonl` when the session has a directory on disk.
-pub fn current_for_session(session_dir: Option<&Path>) -> Option<Arc<dyn Judge>> {
-    let judge = current()?;
+pub fn current_for_session(
+    session_dir: Option<&Path>,
+    session_id: Option<&str>,
+) -> Option<Arc<dyn Judge>> {
+    let judge = from_endpoint_with_session(
+        crate::conf::load::current_judge_endpoint().as_ref(),
+        session_id,
+    )?;
     Some(match session_dir {
         Some(dir) => Arc::new(TracingJudge::new(judge, dir.to_path_buf())),
         None => judge,
@@ -46,6 +52,13 @@ pub fn current_for_session(session_dir: Option<&Path>) -> Option<Arc<dyn Judge>>
 /// server's context window sizes requests when it publishes one; otherwise
 /// the engine's default for the judge model applies.
 pub fn from_endpoint(endpoint: Option<&JudgeEndpoint>) -> Option<Arc<dyn Judge>> {
+    from_endpoint_with_session(endpoint, None)
+}
+
+fn from_endpoint_with_session(
+    endpoint: Option<&JudgeEndpoint>,
+    session_id: Option<&str>,
+) -> Option<Arc<dyn Judge>> {
     let endpoint = endpoint?;
     let provider: Arc<dyn StreamProvider> = match endpoint.protocol {
         Protocol::Anthropic => Arc::new(AnthropicProvider),
@@ -69,6 +82,9 @@ pub fn from_endpoint(endpoint: Option<&JudgeEndpoint>) -> Option<Arc<dyn Judge>>
         endpoint.api_key.clone(),
         Some(model_config),
     );
+    if let Some(session_id) = session_id.filter(|id| !id.is_empty()) {
+        judge = judge.with_session_id(session_id);
+    }
     if let Some(window) = endpoint.context_window {
         judge = judge.with_limits(JudgeLimits::for_window(window as usize));
     }
