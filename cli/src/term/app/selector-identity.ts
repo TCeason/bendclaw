@@ -27,8 +27,12 @@ export function isBackgroundSelector(state: SelectorState): boolean {
   return state.owner === SELECTOR_OWNER.background || state.owner === SELECTOR_OWNER.backgroundOutput
 }
 
+/** A selector that a slash command can mount under the composer and an arrow
+ *  key promote in place: it renders attached to the prompt, and closing it
+ *  consumes the command text. */
 export function isCommandSelector(state: SelectorState): boolean {
   return state.owner === SELECTOR_OWNER.model
     || state.owner === SELECTOR_OWNER.resume
     || state.owner === SELECTOR_OWNER.skill
+    || state.owner === SELECTOR_OWNER.task
 }

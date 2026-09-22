@@ -94,6 +94,8 @@ export class TaskSession {
    *  refresh can tell that its result is no longer wanted. */
   #generation = 0
   #setup = new AbortController()
+  /** Repaint callback of a mounted `/task` composer preview, if any. */
+  #previewListener: (() => void) | null = null
 
   cancelSetup(): void { this.#setup.abort() }
 
@@ -126,9 +128,33 @@ export class TaskSession {
     this.cancelSetup()
   }
 
+  /** The list as the `/task` composer preview: a snapshot for this frame,
+   *  with `onChange` called whenever a later load would repaint it. The
+   *  caller unmounts by calling the returned function; an arrow key promotes
+   *  the preview through {@link open} instead. */
+  preview(onChange: () => void): { state: SelectorState; unmount: () => void } {
+    this.#previewListener = onChange
+    if (!this.#response || this.#response.cache.stale || Date.now() - this.#loadedAt >= REFRESH_INTERVAL_MS) {
+      void this.#refresh()
+    }
+    return {
+      state: this.previewState(),
+      unmount: () => {
+        if (this.#previewListener === onChange) this.#previewListener = null
+      },
+    }
+  }
+
+  /** Current list state shaped for the composer preview: same rows and pane,
+   *  but the composer keeps the keyboard until an arrow promotes the window. */
+  previewState(): SelectorState {
+    return { ...this.#windowState(), listFocused: false }
+  }
+
   /** `/task` with no argument, and every return to the list after an action. */
   open(focusId?: string): void {
     if (this.#disposed || this.#host.destroyed()) return
+    this.#previewListener = null
     this.invalidate()
     this.#loadError = false
     // Open before starting I/O. The first load has a placeholder; subsequent
@@ -437,15 +463,35 @@ export class TaskSession {
   }
 
   #paint(focusId?: string, open = false): void {
-    if (this.#disposed || this.#host.destroyed() || (!open && !this.#host.isTaskOverlay())) return
+    if (this.#disposed || this.#host.destroyed()) return
+    if (!open && !this.#host.isTaskOverlay()) {
+      // Not our overlay, but a composer preview may be showing the list.
+      this.#previewListener?.()
+      return
+    }
+    const state = this.#windowState(focusId)
+    const focusedId = state.items[state.focusIndex]?.id
+    this.#host.showSelector(focusedId ? selectorFocusOn(state, row => row.id === focusedId) : state)
+    this.#host.requestRender()
+  }
+
+  /** The list window from cached rows plus in-flight status, carrying over
+   *  scroll, pane and an armed delete from the overlay it replaces. */
+  #windowState(focusId?: string): SelectorState {
     const current = this.#host.taskOverlayState()
     const focus = focusId ?? (current ? current.items[current.focusIndex]?.id : undefined)
     const response = this.#response ?? { tasks: [], cache: { ready: false, synced_at: 0, stale: false } }
     const state = createTaskWindow(response, focus, this.#detail, this.#modelLabels())
-    if (this.#pending.size) state.subtitle = [...this.#pending.values()].join(' · ')
-    else if (this.#listRequest) state.subtitle = this.#response ? 'Refreshing…' : 'Loading tasks…'
+    // Before the first response the empty body carries the whole message;
+    // the subtitle only speaks once there is a list to annotate.
+    if (!this.#response) {
+      // Empty, not absent: the header keeps its Task styling instead of
+      // falling back to the generic `0` tally.
+      state.subtitle = ''
+      state.emptyMessage = this.#loadError ? 'Could not load tasks · reopen /task to retry' : 'Loading tasks…'
+    } else if (this.#pending.size) state.subtitle = [...this.#pending.values()].join(' · ')
+    else if (this.#listRequest) state.subtitle = 'Refreshing…'
     else if (this.#loadError) state.subtitle = 'Could not refresh · reopen /task to retry'
-    if (!this.#response) state.emptyMessage = this.#loadError ? 'Could not load tasks' : 'Loading tasks…'
     // Refreshing should not disarm a deliberate first `d` or reset scrolling.
     if (current) {
       state.scrollOffset = current.scrollOffset
@@ -464,9 +510,7 @@ export class TaskSession {
         row.pendingAction = true
       }
     }
-    const focusedId = state.items[state.focusIndex]?.id
-    this.#host.showSelector(focusedId ? selectorFocusOn(state, row => row.id === focusedId) : state)
-    this.#host.requestRender()
+    return state
   }
 
   #close(): void {

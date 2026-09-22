@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test'
+import { beforeAll, describe, expect, test } from 'bun:test'
+import chalk from 'chalk'
 import { handleTaskKey } from '../src/task/control.js'
 import { createTaskWindow } from '../src/task/window.js'
 import type { ScheduledTask, TaskListResponse, TaskRunSummary } from '../src/task/types.js'
@@ -47,6 +48,7 @@ const response: TaskListResponse = {
 }
 
 describe('task window', () => {
+  beforeAll(() => { chalk.level = 3 })
   const modelLabels = { 'evot-pro:claude-opus': 'Claude Opus' }
 
   test('list row shows task name and simple counts, not model or rates', () => {
@@ -72,6 +74,33 @@ describe('task window', () => {
     expect(preview).toContain('# Recent runs')
     expect(preview.some(line => line.includes('Running'))).toBe(true)
     expect(preview.some(line => line.includes('Delivery failed'))).toBe(true)
+  })
+
+  test('recent runs lead the pane and failed runs carry the alert marker', () => {
+    const preview = createTaskWindow(response, undefined, undefined, modelLabels).items[0]?.preview ?? []
+    const section = (label: string) => preview.indexOf(`# ${label}`)
+    expect(section('Recent runs')).toBeGreaterThan(-1)
+    expect(section('Recent runs')).toBeLessThan(section('Activity'))
+    expect(section('Activity')).toBeLessThan(section('Instructions'))
+
+    const runs = preview.filter(line => /^(! )?[✓✗◷–] /.test(line))
+    expect(runs).toEqual([
+      expect.stringMatching(/^◷ just now {2}Running$/),
+      expect.stringMatching(/^✓ .* {2}Succeeded · sent$/),
+      expect.stringMatching(/^! ✗ .* {2}Delivery failed · manual · delivery failed · delivery failed$/),
+    ])
+  })
+
+  test('the alert marker renders the run in red and is not shown as text', () => {
+    const state = createTaskWindow(response, undefined, undefined, modelLabels)
+    const lines = buildSelectorRegionLines(state, 120, 24)
+    const failed = lines.find(line => stripAnsi(line).includes('Delivery failed · manual'))
+    expect(failed).toBeDefined()
+    expect(stripAnsi(failed!)).not.toContain('! ✗')
+    // Red foreground opens right before the glyph.
+    expect(failed).toMatch(/\x1b\[31m✗ /)
+    const running = lines.find(line => stripAnsi(line).includes('◷ just now'))
+    expect(running).not.toMatch(/\x1b\[31m/)
   })
 
   test('rendered two-pane layout keeps model, metrics, and recent activity visible', () => {
@@ -101,7 +130,7 @@ describe('task window', () => {
     const detail = { ...task, runs: fullHistory }
     const preview = createTaskWindow(response, task.id, detail).items[0]?.preview ?? []
     expect(preview.filter(line => line === '# Recent runs')).toHaveLength(1)
-    expect(preview.filter(line => /^[✓✗◷–] /.test(line))).toHaveLength(8)
+    expect(preview.filter(line => /^(! )?[✓✗◷–] /.test(line))).toHaveLength(8)
     expect(preview.some(line => line.includes('Delivery failed'))).toBe(true)
   })
 

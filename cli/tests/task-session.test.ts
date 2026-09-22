@@ -191,7 +191,9 @@ test('background refresh preserves navigation and armed deletion; errors keep ca
   const broken = harness({ list: async () => { throw new Error('offline') } })
   broken.session.open()
   await flush()
-  expect(broken.view()?.emptyMessage).toBe('Could not load tasks')
+  expect(broken.view()?.emptyMessage).toBe('Could not load tasks · reopen /task to retry')
+  // One message, not a subtitle echoing the body; empty keeps the Task header.
+  expect(broken.view()?.subtitle).toBe('')
   expect(broken.errors[0]).toContain('offline')
   broken.session.dispose()
 })
@@ -264,5 +266,60 @@ test('late task details cannot replace another overlay', async () => {
   detail.resolve({ ...task('a'), runs: [] })
   await action
   expect(h.view()).toBeNull()
+  h.session.dispose()
+})
+
+test('composer preview: snapshot now, repaint on load, silent after unmount, promoted by open', async () => {
+  const pending = deferred<TaskListResponse>()
+  let requests = 0
+  const h = harness({ list: () => { requests++; return pending.promise } })
+  let repaints = 0
+
+  // Cold cache: the first frame is a loading placeholder and the list request
+  // starts, but no overlay is shown — the composer still owns the screen.
+  const mounted = h.session.preview(() => { repaints++ })
+  expect(mounted.state.listFocused).toBe(false)
+  expect(mounted.state.emptyMessage).toBe('Loading tasks…')
+  expect(mounted.state.subtitle).toBe('')
+  expect(h.view()).toBeNull()
+  await flush()
+  expect(requests).toBe(1)
+
+  pending.resolve(list())
+  await flush()
+  expect(repaints).toBeGreaterThan(0)
+  const loaded = h.session.previewState()
+  expect(loaded.items.map(row => row.id)).toEqual(['a', 'b'])
+  expect(loaded.listFocused).toBe(false)
+  expect(h.view()).toBeNull()
+
+  // Unmounted previews hear nothing more.
+  mounted.unmount()
+  const before = repaints
+  h.session.open()
+  await flush()
+  expect(repaints).toBe(before)
+
+  // Promotion reuses the cache: one request served both the preview and the list.
+  expect(h.view()?.items.map(row => row.id)).toEqual(['a', 'b'])
+  expect(h.view()?.listFocused).toBe(true)
+  expect(requests).toBe(1)
+  h.session.dispose()
+})
+
+test('composer preview from a warm cache neither requests nor repaints', async () => {
+  let requests = 0
+  const h = harness({ list: async () => { requests++; return list() } })
+  h.session.open()
+  await flush()
+  await h.session.handleKey({ type: 'escape' })
+  expect(requests).toBe(1)
+
+  let repaints = 0
+  const mounted = h.session.preview(() => { repaints++ })
+  expect(mounted.state.items.map(row => row.id)).toEqual(['a', 'b'])
+  await flush()
+  expect(requests).toBe(1)
+  expect(repaints).toBe(0)
   h.session.dispose()
 })

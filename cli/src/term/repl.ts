@@ -196,7 +196,7 @@ const SPINNER_INTERVAL_MS = 100
 import { type QueuedUserMessage } from './app/prompt-queue.js'
 type QueuedCompactionSubmission = { displayText: string; expandedText: string; contentJson?: string }
 type CommandWindowPreview =
-  | { kind: 'selector'; trigger: 'model' | 'resume' | 'skill'; sourceText: string; generation: number; state: SelectorState }
+  | { kind: 'selector'; trigger: 'model' | 'resume' | 'skill' | 'task'; sourceText: string; generation: number; state: SelectorState }
   | { kind: 'help'; trigger: 'help'; sourceText: string; generation: number }
 
 
@@ -774,6 +774,33 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     resumeCommandLoadTimer = undefined
   }
 
+  /** Unmount callback of the `/task` preview, while one is showing. */
+  let unmountTaskPreview: (() => void) | null = null
+
+  /** Stop every command preview's background work: a window is going away
+   *  or changing identity, so nothing started for it may repaint. */
+  function cancelCommandWindowLoads(): void {
+    cancelResumeCommandLoad()
+    unmountTaskPreview?.()
+    unmountTaskPreview = null
+  }
+
+  /** Mount the Task list under the composer. The session repaints through
+   *  the listener for as long as it stays mounted: typing on within `/task`
+   *  rekeys the window's generation but keeps this mount, and every teardown
+   *  goes through `cancelCommandWindowLoads`, so no generation check is
+   *  needed here. */
+  function taskPreviewState(): SelectorState {
+    const mounted = taskSession.preview(() => {
+      if (commandWindowPreview?.kind === 'selector' && commandWindowPreview.trigger === 'task') {
+        commandWindowPreview = { ...commandWindowPreview, state: taskSession.previewState() }
+        renderer.requestRender()
+      }
+    })
+    unmountTaskPreview = mounted.unmount
+    return mounted.state
+  }
+
   function isActiveResumePreview(generation: number): boolean {
     return generation === commandWindowPreviewGeneration
       && commandWindowPreview?.kind === 'selector'
@@ -961,7 +988,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       // invalidate any stale preview request.
       if (commandWindowPreview) {
         commandWindowPreview = null
-        cancelResumeCommandLoad()
+        cancelCommandWindowLoads()
         nextCommandWindowGeneration()
         releaseCommandWindowLayout()
       } else if (focusedCommandWindowGeneration === null) {
@@ -985,13 +1012,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         const preview = commandWindowPreview
         const generation = nextCommandWindowGeneration()
         commandWindowPreview = { ...preview, sourceText, generation }
-        cancelResumeCommandLoad()
+        cancelCommandWindowLoads()
         renderer.requestRender()
         return
       }
       if (commandWindowPreview) {
         commandWindowPreview = null
-        cancelResumeCommandLoad()
+        cancelCommandWindowLoads()
         nextCommandWindowGeneration()
         releaseCommandWindowLayout()
         renderer.requestRender()
@@ -1008,7 +1035,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       return
     }
 
-    cancelResumeCommandLoad()
+    cancelCommandWindowLoads()
     const generation = nextCommandWindowGeneration()
     if (trigger === 'help') {
       commandWindowPreview = { kind: 'help', trigger, sourceText, generation }
@@ -1033,6 +1060,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         sourceText,
         generation,
         state: skillSelectorState(),
+      }
+      renderer.requestRender()
+      return
+    }
+    if (trigger === 'task') {
+      commandWindowPreview = {
+        kind: 'selector',
+        trigger,
+        sourceText,
+        generation,
+        state: taskPreviewState(),
       }
       renderer.requestRender()
       return
@@ -1074,6 +1112,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (preview.trigger === 'resume') {
       scheduleFocusedResumeEnrichment(preview.generation)
       if (overlay.kind === 'selector') loadFocusedResumePreview(overlay.state)
+    }
+    if (preview.trigger === 'task') {
+      // The list is now the overlay: from here the session owns refresh,
+      // detail loading and keys exactly as after `/task` + Enter.
+      unmountTaskPreview?.()
+      unmountTaskPreview = null
+      if (overlay.kind === 'selector') taskSession.open(overlay.state.items[overlay.state.focusIndex]?.id)
     }
     return true
   }
@@ -2017,7 +2062,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   /** Clear editor and paste state. */
   function clearAll() {
-    cancelResumeCommandLoad()
+    cancelCommandWindowLoads()
     cancelResumeSearchEnrichment()
     editor = clearEditor(editor)
     editorUndo.clear()
@@ -4070,7 +4115,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     gitInfo.dispose()
     updateMgr.cleanup()
     if (exitHintTimer) clearTimeout(exitHintTimer)
-    cancelResumeCommandLoad()
+    cancelCommandWindowLoads()
     cancelResumeSearchEnrichment()
     invalidateExplicitResumeSelector()
     cancelSearchTextWarm()

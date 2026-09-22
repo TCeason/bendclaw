@@ -8,7 +8,7 @@ import { wrapTextWithAnsi } from '../../render/wrap.js'
 import { CURSOR_MARKER } from '../render-frame.js'
 import { line, block, plain, dim, bold, colored, blocksToLines, styledLineToAnsi, type ViewBlock, type StyledSpan, type StyledLine } from './types.js'
 import { finiteSize, spansWidth, truncateSpansToWidth, truncateToWidth } from './width.js'
-import { PREVIEW_SECTION_PREFIX, SELECTOR_VIEWPORT, selectorEffortLevel, type SelectorItem, type SelectorState } from '../selector.js'
+import { PREVIEW_ALERT_PREFIX, PREVIEW_SECTION_PREFIX, SELECTOR_VIEWPORT, selectorEffortLevel, type SelectorItem, type SelectorState } from '../selector.js'
 import { HINT_SEPARATOR, formatChord, type Hint } from '../design/key-hints.js'
 import { getTheme } from '../../render/theme/index.js'
 import { buildSkillSelectorLines } from './skill-selector.js'
@@ -560,10 +560,16 @@ function buildPreviewLines(preview: string[], query: string, width: number, maxR
   return [...headerRows, line(plain('')), ...layoutPreviewSections(sections, query, budget)]
 }
 
+interface PaneEntry {
+  /** Wrapped rows. */
+  rows: string[]
+  /** Drawn in the alert colour regardless of section emphasis. */
+  alert: boolean
+}
+
 interface PaneSection {
   label?: string
-  /** Wrapped rows per entry. */
-  entries: string[][]
+  entries: PaneEntry[]
 }
 
 /** Split a body into labelled sections; a body without labels is one section. */
@@ -577,13 +583,15 @@ function parsePreviewSections(body: string[], width: number): PaneSection[] {
     // Blank entries only separate sections; the layout re-inserts spacing.
     if (!entry) continue
     if (sections.length === 0) sections.push({ entries: [] })
-    sections[sections.length - 1]!.entries.push(wrapPreviewEntry(entry, width))
+    const alert = entry.startsWith(PREVIEW_ALERT_PREFIX)
+    const text = alert ? entry.slice(PREVIEW_ALERT_PREFIX.length) : entry
+    sections[sections.length - 1]!.entries.push({ rows: wrapPreviewEntry(text, width), alert })
   }
   return sections.filter(section => section.entries.length > 0)
 }
 
 function sectionRows(section: PaneSection): number {
-  return (section.label ? 1 : 0) + section.entries.reduce((sum, rows) => sum + rows.length, 0)
+  return (section.label ? 1 : 0) + section.entries.reduce((sum, entry) => sum + entry.rows.length, 0)
 }
 
 function layoutPreviewSections(all: PaneSection[], query: string, budget: number): StyledLine[] {
@@ -598,7 +606,7 @@ function layoutPreviewSections(all: PaneSection[], query: string, budget: number
     const others = total() - sectionRows(list)
     const room = Math.max(1, budget - others - (list.label ? 1 : 0) - 1)
     const kept = selectPreviewEntries(list.entries, query, room)
-    list.cut = kept.length < list.entries.length || kept.some((rows, i) => rows !== list.entries[i])
+    list.cut = kept.length < list.entries.length || kept.some((entry, i) => entry !== list.entries[i])
     list.entries = kept
   }
   // 2. Drop optional trailing sections whole.
@@ -608,7 +616,7 @@ function layoutPreviewSections(all: PaneSection[], query: string, budget: number
     const pinned = sections[0]!
     const others = total() - sectionRows(pinned)
     const room = Math.max(1, budget - others - (pinned.label ? 1 : 0))
-    pinned.entries = [pinned.entries.flat().slice(0, room)]
+    pinned.entries = truncateEntries(pinned.entries, room)
   }
 
   const lines: StyledLine[] = []
@@ -617,11 +625,11 @@ function layoutPreviewSections(all: PaneSection[], query: string, budget: number
     if (section.label) lines.push(line(dim(section.label)))
     if (section.cut) lines.push(line(dim('  ⋮')))
     const isList = index === listIndex && sections.length > 1
-    section.entries.forEach((rows, entryIndex) => {
+    section.entries.forEach((entry, entryIndex) => {
       // The pinned opening ask and the newest turn carry full contrast; the
       // rest of the list and any path summary stay subdued.
       const emphasized = index === 0 ? sections.length > 1 : isList && entryIndex === section.entries.length - 1
-      for (const row of rows) lines.push(previewBodyLine(row, query, emphasized))
+      for (const row of entry.rows) lines.push(previewBodyLine(row, query, emphasized, entry.alert))
     })
   })
   return lines
@@ -632,28 +640,44 @@ function layoutPreviewSections(all: PaneSection[], query: string, budget: number
  * the latest turns. Walking forward from the chosen anchor keeps entries in
  * conversation order and stops before one would be cut in half.
  */
-function selectPreviewEntries(entries: string[][], query: string, budget: number): string[][] {
+function selectPreviewEntries(entries: PaneEntry[], query: string, budget: number): PaneEntry[] {
   const anchor = previewAnchorEntry(entries, query, budget)
-  const kept: string[][] = []
+  const kept: PaneEntry[] = []
   let used = 0
   for (let i = anchor; i < entries.length; i++) {
     const entry = entries[i]!
-    if (used + entry.length > budget) break
+    if (used + entry.rows.length > budget) break
     kept.push(entry)
-    used += entry.length
+    used += entry.rows.length
   }
   // A single entry taller than the whole budget still has to say something, so
   // it is truncated rather than dropped.
-  if (kept.length === 0) return [(entries[anchor] ?? []).slice(0, budget)]
+  if (kept.length === 0) {
+    const first = entries[anchor]
+    return first ? [{ ...first, rows: first.rows.slice(0, budget) }] : []
+  }
+  return kept
+}
+
+/** Keep whole entries from the top while they fit, then cut the next one. */
+function truncateEntries(entries: PaneEntry[], budget: number): PaneEntry[] {
+  const kept: PaneEntry[] = []
+  let used = 0
+  for (const entry of entries) {
+    if (used >= budget) break
+    const rows = entry.rows.slice(0, budget - used)
+    kept.push({ ...entry, rows })
+    used += rows.length
+  }
   return kept
 }
 
 /** Index of the first entry to show: the earliest filter hit, else the tail. */
-function previewAnchorEntry(entries: string[][], query: string, budget: number): number {
+function previewAnchorEntry(entries: PaneEntry[], query: string, budget: number): number {
   const tokens = query.toLowerCase().trim().split(/\s+/).filter(Boolean)
   if (tokens.length > 0) {
     const hit = entries.findIndex(entry => {
-      const text = entry.join(' ').toLowerCase()
+      const text = entry.rows.join(' ').toLowerCase()
       return tokens.some(token => text.includes(token))
     })
     if (hit !== -1) return hit
@@ -662,7 +686,7 @@ function previewAnchorEntry(entries: string[][], query: string, budget: number):
   let used = 0
   let anchor = entries.length
   while (anchor > 0) {
-    const rows = entries[anchor - 1]?.length ?? 0
+    const rows = entries[anchor - 1]?.rows.length ?? 0
     if (used + rows > budget) break
     used += rows
     anchor--
@@ -670,7 +694,8 @@ function previewAnchorEntry(entries: string[][], query: string, budget: number):
   return Math.min(anchor, entries.length - 1)
 }
 
-function previewBodyLine(row: string, query: string, emphasized = false): StyledLine {
+function previewBodyLine(row: string, query: string, emphasized = false, alert = false): StyledLine {
+  if (alert) return line(colored(row, 'red'))
   if (query) return line(...highlightSpans(row, query, emphasized ? {} : { dim: true }))
   return line(emphasized ? plain(row) : dim(row))
 }

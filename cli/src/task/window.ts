@@ -1,5 +1,5 @@
 import { createAppSelectorState } from '../term/app/selector-identity.js'
-import type { SelectorItem, SelectorState } from '../term/selector.js'
+import { PREVIEW_ALERT_PREFIX, PREVIEW_SECTION_PREFIX, type SelectorItem, type SelectorState } from '../term/selector.js'
 import type { ScheduledTask, TaskListResponse, TaskRunSummary, TaskStats } from './types.js'
 
 const hints = [
@@ -80,6 +80,11 @@ function statusIcon(run: TaskRunSummary): string {
   return '✗'
 }
 
+/** A run whose outcome needs the user: failed, stuck, or undelivered. */
+function runWentWrong(run: TaskRunSummary): boolean {
+  return statusIcon(run) === '✗'
+}
+
 /** Minutes a run has occupied its current state, when that is worth saying. */
 function stateAge(run: TaskRunSummary): string {
   const since = run.updated_at || run.scheduled_for
@@ -125,7 +130,8 @@ function recentRun(run: TaskRunSummary): string {
         : '',
     run.error ? run.error.replace(/\s+/g, ' ').slice(0, 48) : '',
   ].filter(Boolean)
-  return `${statusIcon(run)} ${relativeTime(at)}  ${status(run)}${details.length ? ` · ${details.join(' · ')}` : ''}`
+  const alert = runWentWrong(run) ? PREVIEW_ALERT_PREFIX : ''
+  return `${alert}${statusIcon(run)} ${relativeTime(at)}  ${status(run)}${details.length ? ` · ${details.join(' · ')}` : ''}`
 }
 
 function preview(
@@ -138,6 +144,9 @@ function preview(
   const history = runs.length > 0 ? runs.map(recentRun) : ['No runs yet']
   const delivery = !task.delivery_channel ? 'Not configured'
     : `${task.delivery_channel} · ${task.delivery_target === 'p2p:*' ? 'All bot direct conversations' : task.delivery_target}`
+  // Runs lead: they are what the user opens the pane to check, and the pane
+  // pins its first section when space is short. Newest first, so a cut keeps
+  // the latest outcome. Instructions are the long tail and go last.
   return [
     task.name,
     `Model  ${model(task, modelLabels)}`,
@@ -145,16 +154,16 @@ function preview(
     `Next  ${task.enabled ? dateTime(task.next_run_at) : 'Paused'}`,
     `Delivery  ${delivery}`,
     '',
-    '# Instructions',
-    ...task.instruction.split('\n'),
+    `${PREVIEW_SECTION_PREFIX}Recent runs`,
+    ...history,
     '',
-    '# Activity',
+    `${PREVIEW_SECTION_PREFIX}Activity`,
     `${stats.runs} runs · ${stats.succeeded} succeeded · last ${stats.window_days || 30} days`,
     `Workspace  ${task.workspace_ref || 'Default workspace'}`,
     `Timeout  ${task.timeout_seconds}s · Max lateness ${task.max_lateness_seconds}s`,
     '',
-    '# Recent runs',
-    ...history,
+    `${PREVIEW_SECTION_PREFIX}Instructions`,
+    ...task.instruction.split('\n'),
   ]
 }
 

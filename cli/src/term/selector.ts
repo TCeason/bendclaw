@@ -2,6 +2,9 @@ import type { Hint } from './design/key-hints.js'
 
 /** Prefix marking a preview body entry as a section label rather than content. */
 export const PREVIEW_SECTION_PREFIX = '# '
+/** Prefix marking a preview body entry as something that went wrong; the pane
+ *  draws it in the alert colour instead of the section's normal contrast. */
+export const PREVIEW_ALERT_PREFIX = '! '
 
 export interface SelectorItem {
   /** In-flight domain action; disables action hints without parsing display copy. */

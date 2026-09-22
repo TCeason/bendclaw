@@ -45,6 +45,9 @@ export function resetPaneForSelection(previous: SelectorState, next: SelectorSta
   return { ...next, previewPane: { ...next.previewPane, offset: 0, focused: false } }
 }
 
+/** Owners whose list can sit under the composer without the keyboard. */
+const COMPOSER_PREVIEW_OWNERS = new Set<symbol>([SELECTOR_OWNER.resume, SELECTOR_OWNER.shares, SELECTOR_OWNER.task])
+
 /** Contextual hints: the shell owns navigation, features supply domain actions. */
 export function splitPaneHints(state: SelectorState): Hint[] {
   const selected = state.items[state.focusIndex]
@@ -57,13 +60,13 @@ export function splitPaneHints(state: SelectorState): Hint[] {
     { keys: state.previewPane.confirmDeleteKey, action: 'confirm delete', confirmationPending: true },
     { keys: 'escape', action: 'cancel' },
   ]
-  // A resume or shares list whose filter owns the input — the `/resume` command
-  // preview, or after pressing `/` — takes letters as search text, so only the
-  // gestures that work there are offered. `↑/↓` selects in both cases: on the
-  // preview it also promotes the window.
-  if ((state.owner === SELECTOR_OWNER.resume || state.owner === SELECTOR_OWNER.shares)
-    && state.listFocused !== true) return [
-    { keys: 'type', action: 'search' },
+  // A list that does not own the keyboard — a command preview under the
+  // composer, or a resume/shares list after pressing `/` — offers only the
+  // gestures that work there. Letters go to the filter when the list has
+  // one, else to the composer. `↑/↓` selects; on a preview it also promotes
+  // the window.
+  if (state.owner !== undefined && COMPOSER_PREVIEW_OWNERS.has(state.owner) && state.listFocused !== true) return [
+    ...(state.noFilter ? [] : [{ keys: 'type', action: 'search' }]),
     { keys: ['up', 'down'], action: 'select' },
     { keys: 'escape', action: state.query ? 'clear search' : 'close' },
   ]
