@@ -120,6 +120,9 @@ export interface DiffRow {
   /** Foreground-styled row text (gutter + sigil + code). */
   text: string
   kind: DiffRowKind
+  /** Separate chrome from code so wrapped continuations never enter the gutter. */
+  gutter?: string
+  code?: string
 }
 
 /**
@@ -148,7 +151,11 @@ export function colorizeUnifiedDiffRows(diff: string, showSigns = true, minGutte
   for (let hi = 0; hi < perHunk.length; hi++) {
     if (hi > 0) output.push({ text: style.ellipsis('  …'), kind: 'ellipsis' })
     for (const line of perHunk[hi]!) {
-      output.push({ text: renderLine(line, numW, showSigns), kind: line.type })
+      output.push({
+        text: renderLine(line, numW, showSigns), kind: line.type,
+        gutter: style.gutter(`${String(line.lineNum).padStart(numW)} `),
+        code: renderLine(line, numW, showSigns, false),
+      })
     }
   }
   return output
@@ -235,10 +242,10 @@ function assignLineNumbers(
  * Column count is identical in both `showSigns` modes to the character — the
  * gutter width is load-bearing for append-only scrollback (see WRITE_DIFF_GUTTER).
  */
-function renderLine(line: DiffLine, numWidth: number, showSigns = true): string {
+function renderLine(line: DiffLine, numWidth: number, showSigns = true, withGutter = true): string {
   const num = String(line.lineNum).padStart(numWidth)
   const sigil = line.type === 'add' ? '+' : line.type === 'remove' ? '-' : ' '
-  const gutterStr = style.gutter(`${num} `)
+  const gutterStr = withGutter ? style.gutter(`${num} `) : ''
   // Sigil and code share one paint call so the row's text stays contiguous
   // under strip-ansi. Splitting them would wedge escapes between `+` and the
   // code, which breaks substring assertions on the rendered body for no gain.

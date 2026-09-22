@@ -113,6 +113,21 @@ test('a new file is one column at any width: no blank left pane', () => {
   expect(wide.some(text => text.includes('x'.repeat(120)))).toBe(true)
 })
 
+test('single-column wrapped code stays outside the line-number gutter', () => {
+  const code = '已完成 Pinecone 与 Databend Cloud 查询测试 $12,000/月。'.repeat(20)
+  for (const width of [40, 80, 160]) {
+    for (const removed of [false, true]) {
+      const lines = render(removed ? `${code}\n` : '', removed ? '' : `${code}\n`, width)
+      expect(lines.length).toBeGreaterThan(1)
+      expect(lines[0]).toStartWith('1 ')
+      for (const text of lines.slice(1)) expect(text).toStartWith('  ')
+      for (const text of lines) expect(stringWidth(text)).toBeLessThanOrEqual(width)
+      const rejoined = lines.map(text => text.slice(2)).join('').replace(/\s/g, '')
+      expect(rejoined).toBe(code.replace(/\s/g, ''))
+    }
+  }
+})
+
 test('a deleted file is one column too', () => {
   const lines = render('gone\nall\n', '', 160)
   expect(lines.join('\n')).not.toContain('│')

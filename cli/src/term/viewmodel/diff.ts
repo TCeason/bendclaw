@@ -46,8 +46,12 @@ export function buildDiffLines(patch: string, columns?: number, minGutter = 0): 
     const theme = getTheme()
     return colorizeUnifiedDiffRows(patch, false, minGutter).flatMap(row => {
       if (row.kind === 'ellipsis') return [hunkSeparator(columns)]
-      return wrapTextWithAnsi(row.text, Math.max(1, columns ?? 10000)).map(text => ({
-        ...line(plain(text)),
+      const width = Math.max(1, columns ?? 10000)
+      const gutterWidth = stringWidth(row.gutter ?? '')
+      const separate = row.code !== undefined && gutterWidth < width
+      const fragments = wrapTextWithAnsi(separate ? row.code! : row.text, separate ? width - gutterWidth : width)
+      return fragments.map((text, index) => ({
+        ...line(plain((separate ? index === 0 ? row.gutter! : ' '.repeat(gutterWidth) : '') + text)),
         bg: row.kind === 'add' ? theme.diffAddedBg : row.kind === 'remove' ? theme.diffRemovedBg : undefined,
       }))
     })
