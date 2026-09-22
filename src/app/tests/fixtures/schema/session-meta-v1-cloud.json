@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "session_id": "0190a1b2-0000-7000-8000-000000000002",
+  "cwd": "/Users/me/work/app",
+  "model": "claude-sonnet-4-20250514",
+  "provider": "anthropic",
+  "thinking_level": null,
+  "title": "evot sync design",
+  "source": "cli",
+  "turns": 6,
+  "message_count": 12,
+  "context_tokens": 3000,
+  "context_budget": 200000,
+  "total_input_tokens": 9000,
+  "total_output_tokens": 2000,
+  "span_count": 6,
+  "cloud": {
+    "visibility": "public",
+    "synced_seq": 12,
+    "synced_at": "2025-01-02T00:00:00Z",
+    "origin_host": "macbook",
+    "public_url": "https://auto.evot.ai/s/abc"
+  },
+  "created_at": "2025-01-01T00:00:00Z",
+  "updated_at": "2025-01-01T00:10:00Z"
+}

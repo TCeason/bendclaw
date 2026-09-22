@@ -32,6 +32,21 @@ const items = [
   { label: 'gemini-pro', detail: 'Google' },
 ]
 
+test('cloud session scope survives navigation, searching and asynchronous expansion', () => {
+  const cloudRows = [{ id: 'a', label: 'alpha' }, { id: 'b', label: 'beta' }]
+  let state: SelectorState = {
+    ...createAppSelectorState('resume', 'Cloud sessions', cloudRows),
+    sessionScope: 'cloud',
+  }
+  for (const step of [selectorFocusList, selectorDown, selectorUp,
+    (s: SelectorState) => selectorType(s, 'a'), selectorBackspace,
+    (s: SelectorState) => selectorExpandItems(s, cloudRows)]) {
+    state = step(state)
+    expect(state.sessionScope).toBe('cloud')
+    expect(state.allItems.map(row => row.id)).toEqual(['a', 'b'])
+  }
+})
+
 describe('createSelectorState', () => {
   test('creates state with focus at 0', () => {
     const state = createSelectorState('Pick model', items)

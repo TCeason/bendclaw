@@ -509,6 +509,19 @@ impl Storage for FsStorage {
         .map_err(|e| EvotError::Store(e.to_string()))?
     }
 
+    async fn set_session_cloud(
+        &self,
+        session_id: &str,
+        cloud: Option<crate::types::CloudSync>,
+    ) -> Result<SessionMeta> {
+        let path = self.session_meta_path(session_id)?;
+        tokio::task::spawn_blocking(move || {
+            super::session_meta::update(&path, super::session_meta::Edit::Cloud(cloud))
+        })
+        .await
+        .map_err(|e| EvotError::Store(e.to_string()))?
+    }
+
     async fn get_session(&self, session_id: &str) -> Result<Option<SessionMeta>> {
         self.read_json(&self.session_meta_path(session_id)?).await
     }

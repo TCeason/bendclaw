@@ -60,6 +60,10 @@ pub struct SessionMeta {
     /// Last transcript seq of the parent at fork time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork_seq: Option<u64>,
+    /// Cloud sync state. `None` for sessions that only live on this machine.
+    /// Owned by the sync path; ordinary saves preserve the persisted value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud: Option<super::CloudSync>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -86,6 +90,7 @@ impl SessionMeta {
             span_count: None,
             parent_session_id: None,
             fork_seq: None,
+            cloud: None,
             created_at: now.clone(),
             updated_at: now,
         }

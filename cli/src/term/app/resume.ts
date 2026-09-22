@@ -244,6 +244,8 @@ function formatSessionItem(
   text: SessionWithText | undefined,
   open: boolean,
   edge = '',
+  cloud = '',
+  anyCloud = false,
 ): SelectorItem {
   // The source column only earns its space when it tells rows apart.
   const badge = sessionSourceBadge(s.source)
@@ -252,7 +254,11 @@ function formatSessionItem(
   const turns = padRight(s.turns ? `${s.turns} turns` : '', 10)
   // The session this REPL is in says so where the others show their age.
   const time = open ? '● open' : relativeTime(s.updated_at)
+  const host = s.cloud?.origin_host && cloud.includes('⇣') ? ` (${s.cloud.origin_host})` : ''
   const cwd = otherCwd ? `  ${shortenSessionCwd(s.cwd)}` : ''
+  // The cloud column exists only when some row is on the cloud, and then for
+  // every row, so titles stay aligned.
+  const cloudColumn = anyCloud ? `${padRight(cloud, 3)} ` : ''
   return {
     // The graph edge hangs off the id column, like `git log --graph`.
     label: `${edge}${label}`,
@@ -266,7 +272,8 @@ function formatSessionItem(
       { keys: 'd', action: 'delete' },
       { keys: 'escape', action: 'close' },
     ],
-    detail: `${source}${title} ${turns} ${time}${cwd}`,
+    detail: `${cloudColumn}${source}${title} ${turns} ${time}${host}${cwd}`,
+    ...(cloud ? { cloud: true } : {}),
     // Transcript text is searchable once loaded; until then a row still matches
     // on the metadata the list already displays.
     searchText: `${s.custom_title ?? ''} ${s.title ?? ''} ${badge} ${text?.search_text
@@ -291,9 +298,12 @@ export function formatSessionItems(
   currentCwd: string,
   sessionText: (sessionId: string) => SessionWithText | undefined = () => undefined,
   openSessionId?: string | null,
+  cloudBadge: (session: SessionMeta) => string = () => '',
 ): SelectorItem[] {
   const labels = sessionIdLabels(sessions)
   const showSource = mixedSources(sessions)
+  const badges = new Map(sessions.map(session => [session.session_id, cloudBadge(session)]))
+  const anyCloud = [...badges.values()].some(Boolean)
   return groupedSessionItems(sessions, currentCwd, (session, otherCwd, edge) =>
     formatSessionItem(
       session,
@@ -303,6 +313,8 @@ export function formatSessionItems(
       sessionText(session.session_id),
       session.session_id === openSessionId,
       edge,
+      badges.get(session.session_id) ?? '',
+      anyCloud,
     ),
   )
 }

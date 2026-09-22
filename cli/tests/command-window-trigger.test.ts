@@ -16,6 +16,18 @@ describe('command window trigger', () => {
     expect(resolveCommandWindowTrigger('/ta')).toBe('task')
   })
 
+  test('share prefixes preview the list, but visibility arguments never do', () => {
+    for (const text of ['/sh', '/sha', '/shar', '/share']) {
+      expect(resolveCommandWindowTrigger(text)).toBe('share')
+      expect(isCommandWindowBridge(text)).toBe(true)
+    }
+    for (const text of ['/sha ', '/share ', '/share public', '/share private', '/share off']) {
+      expect(resolveCommandWindowTrigger(text)).toBeNull()
+      expect(isCommandWindowBridge(text)).toBe(false)
+    }
+    expect(resolveCommandWindowTrigger('/s')).toBeNull()
+  })
+
   test('resolves complete commands and alias prefixes', () => {
     expect(resolveCommandWindowTrigger('/resume')).toBe('resume')
     expect(resolveCommandWindowTrigger('/model')).toBe('model')

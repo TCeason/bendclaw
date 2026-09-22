@@ -28,6 +28,8 @@ export interface SelectorItem {
   id?: string
   /** Extra text searched but not displayed (e.g. full session id, cwd). */
   searchText?: string
+  /** The row is a cloud session: deleting it removes the server copy too. */
+  cloud?: boolean
   /** Hidden from the unfiltered list but included when its searchable text
    * matches a query. Resume uses this for sessions from another cwd. */
   searchOnly?: boolean
@@ -117,6 +119,8 @@ export interface SelectorState {
   rename?: SelectorRenameState
   /** Opaque host-owned identity. Generic navigation preserves but never interprets it. */
   owner?: symbol
+  /** Session source scope, retained across navigation and async refreshes. */
+  sessionScope?: 'all' | 'cloud'
   items: SelectorItem[]
   allItems: SelectorItem[]
   focusIndex: number

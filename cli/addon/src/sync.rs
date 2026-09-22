@@ -1,0 +1,135 @@
+//! Cloud session sync bridge. Every method returns JSON the CLI decodes with
+//! `parseCloudResult`; outcomes that are decisions for the user (diverged,
+//! local ahead) come back as data, not as thrown errors.
+
+use napi::Error;
+use napi::Result;
+use napi_derive::napi;
+use serde_json::json;
+
+use crate::agent::NapiAgent;
+
+fn failure(error: impl std::fmt::Display) -> Error {
+    Error::from_reason(error.to_string())
+}
+
+fn auth() -> Result<evot::api::auth::AuthState> {
+    evot::api::auth::load_auth()
+        .map_err(failure)?
+        .ok_or_else(|| Error::from_reason("sharing requires sign-in; run /login"))
+}
+
+/// `"keep"` leaves an already-shared session's visibility as it is.
+fn parse_visibility(value: &str) -> Result<Option<evot::api::CloudVisibility>> {
+    match value {
+        "keep" => Ok(None),
+        "private" => Ok(Some(evot::api::CloudVisibility::Private)),
+        "public" => Ok(Some(evot::api::CloudVisibility::Public)),
+        other => Err(Error::from_reason(format!("unknown visibility: {other}"))),
+    }
+}
+
+fn push_json(outcome: evot::api::sync::PushOutcome) -> Result<String> {
+    let value = match outcome {
+        evot::api::sync::PushOutcome::Synced { cloud, pushed } => {
+            json!({ "kind": "synced", "cloud": cloud, "pushed": pushed })
+        }
+        evot::api::sync::PushOutcome::Diverged {
+            local_seq,
+            remote_seq,
+        } => json!({ "kind": "diverged", "local_seq": local_seq, "remote_seq": remote_seq }),
+        evot::api::sync::PushOutcome::NotShared => json!({ "kind": "not_shared" }),
+    };
+    serde_json::to_string(&value).map_err(failure)
+}
+
+#[napi]
+impl NapiAgent {
+    /// Turn cloud sync on for a session (or change its visibility) and push.
+    #[napi]
+    pub async fn cloud_share_session(
+        &self,
+        session_id: String,
+        visibility: String,
+    ) -> Result<String> {
+        let outcome = evot::api::sync::share_session(
+            &auth()?,
+            &self.agent.storage(),
+            &session_id,
+            parse_visibility(&visibility)?,
+            env!("CARGO_PKG_VERSION"),
+        )
+        .await
+        .map_err(failure)?;
+        push_json(outcome)
+    }
+
+    /// Incremental push; `force` replaces the server copy with local.
+    #[napi]
+    pub async fn cloud_push_session(&self, session_id: String, force: bool) -> Result<String> {
+        let outcome = evot::api::sync::push_session(
+            &auth()?,
+            &self.agent.storage(),
+            &session_id,
+            env!("CARGO_PKG_VERSION"),
+            force,
+        )
+        .await
+        .map_err(failure)?;
+        push_json(outcome)
+    }
+
+    /// Stop syncing: delete the server copy, keep the local transcript.
+    #[napi]
+    pub async fn cloud_unshare_session(&self, session_id: String) -> Result<()> {
+        evot::api::sync::unshare_session(&auth()?, &self.agent.storage(), &session_id)
+            .await
+            .map_err(failure)
+    }
+
+    /// Owner's remote index: metadata only, cheap enough to refresh often.
+    /// Returns an empty list when signed out so callers need no auth check.
+    #[napi]
+    pub async fn cloud_list_sessions(&self) -> Result<String> {
+        let Some(state) = evot::api::auth::load_auth().map_err(failure)? else {
+            return Ok("[]".into());
+        };
+        let index = evot::api::sync::remote_index(&state)
+            .await
+            .map_err(failure)?;
+        serde_json::to_string(&index.sessions).map_err(failure)
+    }
+
+    /// Bring the local copy up to the server's.
+    #[napi]
+    pub async fn cloud_pull_session(&self, session_id: String) -> Result<String> {
+        let outcome = evot::api::sync::pull_session(&auth()?, &self.agent.storage(), &session_id)
+            .await
+            .map_err(failure)?;
+        let value = match outcome {
+            evot::api::sync::PullOutcome::Pulled { meta, appended } => {
+                json!({ "kind": "pulled", "meta": meta, "appended": appended })
+            }
+            evot::api::sync::PullOutcome::UpToDate => json!({ "kind": "up_to_date" }),
+            evot::api::sync::PullOutcome::LocalAhead {
+                local_seq,
+                remote_seq,
+            } => json!({ "kind": "local_ahead", "local_seq": local_seq, "remote_seq": remote_seq }),
+            evot::api::sync::PullOutcome::Diverged {
+                local_seq,
+                remote_seq,
+            } => json!({ "kind": "diverged", "local_seq": local_seq, "remote_seq": remote_seq }),
+        };
+        serde_json::to_string(&value).map_err(failure)
+    }
+
+    /// Materialise the server copy as a new local-only session; returns its meta.
+    #[napi]
+    pub async fn cloud_fork_remote_session(&self, session_id: String) -> Result<String> {
+        let meta =
+            evot::api::sync::fork_remote_session(&auth()?, &self.agent.storage(), &session_id)
+                .await
+                .map_err(failure)?;
+        serde_json::to_string(&meta).map_err(failure)
+    }
+}

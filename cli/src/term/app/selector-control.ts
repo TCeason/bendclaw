@@ -37,6 +37,8 @@ export type SelectorControlAction =
   | { kind: 'none' }
 
 const RESUME_DELETE_CONFIRM = 'd confirm delete · esc cancel'
+/** A cloud session is one logical thing: deleting it here removes both copies. */
+const RESUME_DELETE_CLOUD_CONFIRM = 'd confirm delete here and from cloud · esc cancel'
 
 /** Drop an armed delete so a stray confirming keypress cannot delete a session. */
 function disarmDelete(state: SelectorState): SelectorState {
@@ -199,7 +201,7 @@ function deleteAction(state: SelectorState): SelectorControlAction {
       ...state,
       listFocused: true,
       pendingDeleteId: target.id,
-      subtitle: RESUME_DELETE_CONFIRM,
+      subtitle: target.cloud ? RESUME_DELETE_CLOUD_CONFIRM : RESUME_DELETE_CONFIRM,
     },
   }
 }

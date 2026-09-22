@@ -26,6 +26,8 @@ export interface PromptFooterVM {
   cwd: string
   /** Fork ancestry titles, root → current; empty or absent for non-forks. */
   forkTrail?: string[]
+  /** `☁` / `🌐` while the session is on the cloud; leads the location. */
+  cloudBadge?: string
   gitBranch: string | null
   contextTokens: number
   contextWindow: number
@@ -146,9 +148,11 @@ function buildBackgroundChip(
 }
 
 function buildFooter(input: PromptFooterVM, columns: number, modeShownAbove: boolean): ViewBlock {
-  const mode = modeShownAbove
+  const cloud = input.cloudBadge ? `${input.cloudBadge} ` : ''
+  const modeWords = modeShownAbove
     ? ''
     : `${input.logMode ? '[log] ' : ''}${input.planning ? '[plan] ' : ''}`
+  const mode = `${cloud}${modeWords}`
   const cwd = compactCwd(input.cwd)
   const contextPercent = input.contextWindow > 0
     ? input.contextTokens / input.contextWindow * 100

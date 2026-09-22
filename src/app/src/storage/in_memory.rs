@@ -50,6 +50,7 @@ impl Storage for MemoryStorage {
             .map_err(|e| crate::error::EvotError::Store(e.to_string()))?;
         if let Some(current) = map.get(&session.session_id) {
             session.custom_title = current.custom_title.clone();
+            session.cloud = current.cloud.clone();
         }
         session.schema_version = 1;
         map.insert(session.session_id.clone(), session);
@@ -67,6 +68,22 @@ impl Storage for MemoryStorage {
             .ok_or_else(|| crate::error::EvotError::Session("session no longer exists".into()))?;
         session.custom_title = Some(title);
         session.schema_version = 1;
+        Ok(session.clone())
+    }
+
+    async fn set_session_cloud(
+        &self,
+        session_id: &str,
+        cloud: Option<crate::types::CloudSync>,
+    ) -> Result<SessionMeta> {
+        let mut map = self
+            .sessions
+            .lock()
+            .map_err(|e| crate::error::EvotError::Store(e.to_string()))?;
+        let session = map
+            .get_mut(session_id)
+            .ok_or_else(|| crate::error::EvotError::Session("session no longer exists".into()))?;
+        session.cloud = cloud;
         Ok(session.clone())
     }
 

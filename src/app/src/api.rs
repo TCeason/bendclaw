@@ -48,3 +48,6 @@ pub use crate::models::PinOutcome;
 pub use crate::models::SelectionReload;
 pub use crate::sessions::Session;
 pub use crate::share;
+pub use crate::sync;
+pub use crate::types::CloudSync;
+pub use crate::types::CloudVisibility;

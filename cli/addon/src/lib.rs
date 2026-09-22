@@ -8,6 +8,7 @@ mod host;
 mod run;
 mod server;
 mod share;
+mod sync;
 mod task;
 mod tracing;
 

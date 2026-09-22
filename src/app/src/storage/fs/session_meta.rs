@@ -4,15 +4,18 @@ use fs2::FileExt;
 
 use crate::error::EvotError;
 use crate::error::Result;
+use crate::types::CloudSync;
 use crate::types::SessionMeta;
 
 pub(super) enum Edit {
     Save(Box<SessionMeta>),
     Rename(String),
+    Cloud(Option<CloudSync>),
 }
 
 /// A shared process-safe transaction prevents stale active-session snapshots
-/// from undoing a rename. Only Rename owns custom_title; Save owns activity.
+/// from undoing a rename or a sync acknowledgement. Only Rename owns
+/// custom_title and only Cloud owns cloud; Save owns activity.
 pub(super) fn update(path: &Path, edit: Edit) -> Result<SessionMeta> {
     let parent = path
         .parent()
@@ -37,8 +40,15 @@ pub(super) fn update(path: &Path, edit: Edit) -> Result<SessionMeta> {
             Edit::Save(mut session) => {
                 if let Some(current) = existing {
                     session.custom_title = current.custom_title;
+                    session.cloud = current.cloud;
                 }
                 *session
+            }
+            Edit::Cloud(cloud) => {
+                let mut session = existing
+                    .ok_or_else(|| EvotError::Session("session no longer exists".into()))?;
+                session.cloud = cloud;
+                session
             }
             Edit::Rename(title) => {
                 let mut session = existing

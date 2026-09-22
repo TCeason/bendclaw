@@ -16,8 +16,18 @@ export interface SessionMeta {
   /** Session this one was forked from; absent for roots and older addons. */
   parent_session_id?: string | null
   fork_seq?: number | null
+  /** Cloud sync state; absent for local-only sessions and older addons. */
+  cloud?: CloudSync | null
   created_at: string
   updated_at: string
+}
+export type CloudVisibility = 'private' | 'public'
+export interface CloudSync {
+  visibility: CloudVisibility
+  synced_seq: number
+  synced_at: string
+  origin_host?: string
+  public_url?: string | null
 }
 export interface SessionWithText extends SessionMeta {
   search_text: string
@@ -67,10 +77,15 @@ const integer: Schema<number> = { read(value, path) {
   if (typeof value !== 'number' || !Number.isInteger(value)) throw new Error(`Invalid native result at ${path}`)
   return value
 } }
+export const cloudSync: Schema<CloudSync> = object({
+  visibility: oneOf('private', 'public'), synced_seq: uint, synced_at: text,
+  origin_host: optional(text), public_url: optional(nullable(text)),
+})
 const sessionFields = {
   session_id: text, title: optional(nullable(text)), custom_title: optional(nullable(text)), schema_version: optional(uint), model: text, provider: optional(text),
   thinking_level: optional(nullable(text)), cwd: text, source: optional(text), turns: uint,
   parent_session_id: optional(nullable(text)), fork_seq: optional(nullable(uint)),
+  cloud: optional(nullable(cloudSync)),
   created_at: text, updated_at: text,
 }
 export const sessionMeta: Schema<SessionMeta> = object(sessionFields)

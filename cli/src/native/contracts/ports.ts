@@ -37,6 +37,12 @@ export interface NativeAgent {
   sessionWithText(id: string): Promise<string | null>
   shareSession(id: string): Promise<string>
   listShares(): Promise<string>
+  cloudShareSession(id: string, visibility: string): Promise<string>
+  cloudPushSession(id: string, force: boolean): Promise<string>
+  cloudUnshareSession(id: string): Promise<void>
+  cloudListSessions(): Promise<string>
+  cloudPullSession(id: string): Promise<string>
+  cloudForkRemoteSession(id: string): Promise<string>
   deleteShare(id: string): Promise<void>
   recordShareNotices(id: string, json: string): Promise<void>
   loadTranscript(id: string): Promise<string>

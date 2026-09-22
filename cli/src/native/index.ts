@@ -5,6 +5,9 @@
  */
 
 import { shareCreated, shareList, type ShareNotice } from './contracts/share.js'
+import { cloudPushResult, cloudPullResult, remoteSessions, type CloudPushResult, type CloudPullResult, type RemoteSession } from './contracts/cloud.js'
+export type { CloudPushResult, CloudPullResult, RemoteSession } from './contracts/cloud.js'
+export type { CloudSync, CloudVisibility } from './contracts/results.js'
 // @ts-ignore — binding.js is generated
 import { NapiAgent as RawAgent, version as rawVersion, startServer as rawStartServer, startServerBackground as rawStartServerBackground, fastExit as rawFastExit, reapExitedChildren as rawReapExitedChildren, authBegin as rawAuthBegin, authPoll as rawAuthPoll, authLogout as rawAuthLogout, authSyncModels as rawAuthSyncModels, authSyncNotices as rawAuthSyncNotices, authWhoami as rawAuthWhoami, authRefreshSession as rawAuthRefreshSession, authNotices as rawAuthNotices, taskList as rawTaskList, taskDeliveryDefaults as rawTaskDeliveryDefaults, taskGet as rawTaskGet, taskCreate as rawTaskCreate, taskUpdate as rawTaskUpdate, taskDelete as rawTaskDelete, taskRun as rawTaskRun, taskShare as rawTaskShare, taskShareFetch as rawTaskShareFetch, taskShareId as rawTaskShareId } from './binding.js'
 
@@ -241,6 +244,33 @@ export class Agent {
 
   async deleteShare(id: string): Promise<void> {
     await this.raw.deleteShare(id)
+  }
+
+  // Cloud session sync: the session itself, kept whole, on the owner's server.
+  /** `keep` leaves an already-shared session's visibility unchanged (new ones start private). */
+  async cloudShareSession(sessionId: string, visibility: 'private' | 'public' | 'keep'): Promise<CloudPushResult> {
+    return decodeResult(await this.raw.cloudShareSession(sessionId, visibility), cloudPushResult)
+  }
+
+  async cloudPushSession(sessionId: string, force = false): Promise<CloudPushResult> {
+    return decodeResult(await this.raw.cloudPushSession(sessionId, force), cloudPushResult)
+  }
+
+  async cloudUnshareSession(sessionId: string): Promise<void> {
+    await this.raw.cloudUnshareSession(sessionId)
+  }
+
+  /** Empty when signed out; never throws for a missing login. */
+  async cloudListSessions(): Promise<RemoteSession[]> {
+    return decodeResult(await this.raw.cloudListSessions(), remoteSessions)
+  }
+
+  async cloudPullSession(sessionId: string): Promise<CloudPullResult> {
+    return decodeResult(await this.raw.cloudPullSession(sessionId), cloudPullResult)
+  }
+
+  async cloudForkRemoteSession(sessionId: string): Promise<SessionMeta> {
+    return decodeResult(await this.raw.cloudForkRemoteSession(sessionId), results.sessionMeta)
   }
 
   async recordShareNotices(sessionId: string, notices: ShareNotice[]): Promise<void> {

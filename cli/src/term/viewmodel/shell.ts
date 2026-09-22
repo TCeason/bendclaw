@@ -24,19 +24,24 @@ export interface ShellSnapshot {
 }
 
 /** Pure layout composition. The host owns snapshots, scheduling and lifecycle;
- * the renderer owns physical scrollback. Transient surfaces never establish a
- * durable bottom anchor and command preview/focus swaps keep their geometry. */
+ * the renderer owns physical scrollback. The composer follows content in
+ * normal flow, including after a formerly tall frame shrinks. Command
+ * preview/focus swaps keep their geometry, but closing releases their rows. */
 export function buildShellFrame(input: ShellSnapshot): RenderFrame {
   const { contentLines, prompt, overlay, preview } = input
   const preEditorLines = blocksToLines(input.preEditorBlocks)
   const base = {
-    bottomAnchor: true,
-    bottomAnchorStart: contentLines.length,
+    // Do not retain a historical bottom position: opening a command inserts
+    // rows above the editor, and clearing it removes those same rows.
+    bottomAnchor: false,
     ...(input.committedRows === undefined ? {} : { committedRows: input.committedRows }),
   }
   if (overlay.kind === 'selector' && input.commandFocused && isCommandSelector(overlay.state)) {
     const selectorLines = buildCommandSelectorRegion(overlay.state, prompt.columns, prompt.rows, true)
-    const promptLines = blocksToLines(buildPromptBlocks(prompt, {
+    // The command window is already the completion surface. Rendering the
+    // editor's candidate menu as well changes its blank-row floor and moves
+    // the input line when a prefix becomes an exact command (or vice versa).
+    const promptLines = blocksToLines(buildPromptBlocks({ ...prompt, completion: null }, {
       attachedAbove: true,
       reservedAboveRows: preEditorLines.length + selectorLines.length,
     }))
@@ -65,7 +70,8 @@ export function buildShellFrame(input: ShellSnapshot): RenderFrame {
       ? buildCommandSelectorRegion(preview.state, prompt.columns, prompt.rows, false)
       : blocksToLines(buildOverlayBlocks({ kind: 'help' }, prompt.columns))
     : []
-  const promptLines = blocksToLines(buildPromptBlocks(prompt, {
+  const composer = preview ? { ...prompt, completion: null } : prompt
+  const promptLines = blocksToLines(buildPromptBlocks(composer, {
     attachedAbove: preEditorLines.length > 0 || previewLines.length > 0,
     reservedAboveRows: preEditorLines.length + previewLines.length,
   }))

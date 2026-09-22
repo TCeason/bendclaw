@@ -130,6 +130,7 @@ import { saveSessionRename } from './app/session-rename.js'
 import { handleSelectorControl } from './app/selector-control.js'
 import { decideReplControl, type ReplControlAction } from './app/repl-control.js'
 import { ShareNotices } from '../session/share-notices.js'
+import { CloudSessionSync, cloudBadge, mergeRemoteSessions } from '../session/cloud-sessions.js'
 import { modelShareEvents } from '../session/share-events.js'
 import { ShareSelector } from './app/share-selector.js'
 import { openWebLink } from './open-link.js'
@@ -196,7 +197,7 @@ const SPINNER_INTERVAL_MS = 100
 import { type QueuedUserMessage } from './app/prompt-queue.js'
 type QueuedCompactionSubmission = { displayText: string; expandedText: string; contentJson?: string }
 type CommandWindowPreview =
-  | { kind: 'selector'; trigger: 'model' | 'resume' | 'skill' | 'task'; sourceText: string; generation: number; state: SelectorState }
+  | { kind: 'selector'; trigger: 'model' | 'resume' | 'skill' | 'task' | 'share'; sourceText: string; generation: number; state: SelectorState }
   | { kind: 'help'; trigger: 'help'; sourceText: string; generation: number }
 
 
@@ -368,11 +369,41 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   })
   const taskIdentity = new AuthIdentityTracker(() => taskSession.resetIdentity())
   const shareNotices = new ShareNotices((sid, notices) => agent.recordShareNotices(sid, notices))
+  // Sessions on the cloud follow the user across machines: pushed after each
+  // run, listed beside local rows, pulled before resume. Never blocks input.
+  let refreshOpenSessionList: (() => void) | undefined
+  const cloudSessions = new CloudSessionSync({
+    indexUpdated: () => refreshOpenSessionList?.(),
+    push: (sid, force) => agent.cloudPushSession(sid, force),
+    list: () => agent.cloudListSessions(),
+    notify: (text, level) => {
+      if (destroyed) return
+      commitSystem('sys-cloud-sync', level === 'error' ? chalk.dim(`  ${text}`) : `  ${text}`)
+      renderer.requestRender()
+    },
+  })
+  resources.add(() => cloudSessions.dispose())
+  const sessionCloudBadge = (session: SessionMeta) =>
+    cloudBadge(cloudSessions.stateFor(session), session.cloud?.visibility)
   const replCommands: ReplCommandContext = {
     agent,
     flushShareNotices: () => shareNotices.flush(),
     isBusy: () => isLoading,
-    openShareList,
+    // `/share` is the sessions list narrowed to cloud rows: one list, one
+    // set of keys, rather than a second selector to learn.
+    openShareList: async () => { invalidateResumeSessionCache(); openResumeSelector(undefined, { cloudOnly: true }) },
+    openShareLinks,
+    cloudAcknowledged: (sid, result) => {
+      cloudSessions.acknowledge(sid, result)
+      invalidateResumeSessionCache()
+      if (sid === sessionId) void refreshForkTrail(sid).then(() => renderer.requestRender())
+    },
+    cloudForgotten: sid => {
+      cloudSessions.forget(sid)
+      invalidateResumeSessionCache()
+      if (sid === sessionId) void refreshForkTrail(sid).then(() => renderer.requestRender())
+    },
+    resumeSession: session => resumeSession(session),
     getSessionId: () => sessionId,
     getCompactLines: () => compactLines,
     getConfigInfo: () => configInfo ?? null,
@@ -684,6 +715,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       focusedCommandWindowGeneration === generation
       && overlay.kind === 'selector'
       && overlay.state.owner === SELECTOR_OWNER.resume
+      && overlay.state.sessionScope !== 'cloud'
     ) {
       return overlay.state
     }
@@ -705,6 +737,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       focusedCommandWindowGeneration === generation
       && overlay.kind === 'selector'
       && overlay.state.owner === SELECTOR_OWNER.resume
+      && overlay.state.sessionScope !== 'cloud'
     ) {
       overlay = { kind: 'selector', state }
       renderer.requestRender()
@@ -891,6 +924,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   function scheduleFocusedResumeEnrichment(generation: number, includeText = false): void {
+    // Share uses the same navigation owner, but must never load the full
+    // local catalog when arrow keys or search request resume enrichment.
+    if (!currentResumeCommandWindowState(generation)) return
     cancelResumeCommandLoad()
     cancelResumeSearchEnrichment()
     if (
@@ -1032,6 +1068,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       commandWindowPreview = { ...preview, sourceText, generation }
       renderer.requestRender()
       if (trigger === 'resume') scheduleResumeCommandLoad(generation)
+      if (trigger === 'share') loadShareCommandWindow(generation)
       return
     }
 
@@ -1064,6 +1101,18 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       renderer.requestRender()
       return
     }
+    if (trigger === 'share') {
+      commandWindowPreview = {
+        kind: 'selector', trigger, sourceText, generation,
+        state: {
+          ...resumeSelectorState([]), title: 'Cloud sessions', sessionScope: 'cloud', listFocused: false,
+          emptyMessage: 'Loading sessions…',
+        },
+      }
+      renderer.requestRender()
+      loadShareCommandWindow(generation)
+      return
+    }
     if (trigger === 'task') {
       commandWindowPreview = {
         kind: 'selector',
@@ -1086,6 +1135,54 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
     renderer.requestRender()
     scheduleResumeCommandLoad(generation)
+  }
+
+  /** The cloud list previews while typing, without invoking /share actions. */
+  function loadShareCommandWindow(generation: number): void {
+    const current = (): SelectorState | null => {
+      if (generation !== commandWindowPreviewGeneration) return null
+      if (commandWindowPreview?.kind === 'selector'
+        && commandWindowPreview.trigger === 'share'
+        && commandWindowPreview.generation === generation
+        && resolveCommandWindowTrigger(commandWindowPreview.sourceText) === 'share') {
+        return commandWindowPreview.state
+      }
+      if (focusedCommandWindowGeneration === generation
+        && overlay.kind === 'selector' && overlay.state.owner === SELECTOR_OWNER.resume
+        && overlay.state.sessionScope === 'cloud') {
+        return overlay.state
+      }
+      return null
+    }
+    const repaint = () => {
+      const state = current()
+      if (!state) return
+      const sessions = mergeRemoteSessions(resumeCache.metadata ?? [], cloudSessions.remoteSessions)
+        .filter(session => sessionCloudBadge(session) !== '')
+      const items = formatSessionItems(sessions, agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudBadge)
+      const next = {
+        ...selectorExpandItems(state, items),
+        emptyMessage: 'No shared sessions yet · /share private to sync, /share public to publish',
+      }
+      if (commandWindowPreview?.kind === 'selector' && commandWindowPreview.trigger === 'share') {
+        commandWindowPreview = { ...commandWindowPreview, state: next }
+      } else {
+        overlay = { kind: 'selector', state: next }
+      }
+      renderer.requestRender()
+    }
+    refreshOpenSessionList = repaint
+    void Promise.all([resumeCache.all(), cloudSessions.refreshIndex()]).then(repaint).catch((error: unknown) => {
+      const state = current()
+      if (!state) return
+      const next = { ...state, emptyMessage: `Failed to list sessions: ${errorText(error)}` }
+      if (commandWindowPreview?.kind === 'selector' && commandWindowPreview.trigger === 'share') {
+        commandWindowPreview = { ...commandWindowPreview, state: next }
+      } else {
+        overlay = { kind: 'selector', state: next }
+      }
+      renderer.requestRender()
+    })
   }
 
   function activateCommandWindow(event: KeyEvent): boolean {
@@ -1112,6 +1209,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (preview.trigger === 'resume') {
       scheduleFocusedResumeEnrichment(preview.generation)
       if (overlay.kind === 'selector') loadFocusedResumePreview(overlay.state)
+    }
+    if (preview.trigger === 'share' && overlay.kind === 'selector') {
+      loadFocusedResumePreview(overlay.state)
     }
     if (preview.trigger === 'task') {
       // The list is now the overlay: from here the session owns refresh,
@@ -1381,6 +1481,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function invalidateExplicitResumeSelector(): void {
     explicitResumeSelectorGeneration++
+    refreshOpenSessionList = undefined
   }
 
   // Git info is watched so the footer follows external `git switch` / checkout
@@ -1900,14 +2001,43 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     let lineage: SessionMeta[] = []
     try { lineage = await agent.sessionLineage(id) } catch {}
     lastLineage = lineage
-    appState = { ...appState, forkTrail: forkTrailTitles(lineage) }
+    const cloud = lineage.find(meta => meta.session_id === id)?.cloud
+    appState = {
+      ...appState,
+      forkTrail: forkTrailTitles(lineage),
+      cloudBadge: cloud ? cloudBadge('synced', cloud.visibility) : '',
+    }
     return lineage
   }
 
   /** Switch to `session`. `notice` replaces the default `resumed session`
    *  line when the switch is a fork or a `/back`. */
+  /**
+   * A cloud session may have moved on another machine: catch the local copy
+   * up before the transcript is read. Divergence is not resolved here; the
+   * local copy is resumed and the choice is spelled out.
+   */
+  async function pullBeforeResume(sessionId: string): Promise<OutputLine[]> {
+    const remote = cloudSessions.remoteFor(sessionId)
+    if (!remote) return []
+    const local = (resumeCache.metadata ?? []).find(row => row.session_id === sessionId)
+    const state = cloudSessions.stateFor(local, sessionId)
+    if (state !== 'remote_only' && state !== 'pull_pending' && state !== 'diverged') return []
+    const result = await agent.cloudPullSession(sessionId)
+    invalidateResumeSessionCache()
+    switch (result.kind) {
+      case 'pulled':
+        return [{ id: 'sys-cloud-pulled', kind: 'system', text: chalk.dim(`  ☁ pulled ${result.appended} entries from cloud${remote.origin_host ? ` (${remote.origin_host})` : ''}`) }]
+      case 'diverged':
+        return [{ id: 'sys-cloud-diverged', kind: 'system', text: chalk.yellow(`  ☁! changed on both machines · resumed local. /share cloud takes the cloud copy · /share local overwrites it with this one`) }]
+      default:
+        return []
+    }
+  }
+
   async function resumeSession(session: SessionMeta, notice?: OutputLine[]) {
     try {
+      const cloudNotice = await pullBeforeResume(session.session_id)
       const { transcript, model, provider, thinkingLevel, cwd: sessionCwd } = await prepareResume(agent, session)
 
       // Restore model selection from current config, then the session's
@@ -1944,6 +2074,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       restoreLines([
         { id: 'sys-resumed-gap', kind: 'system', text: '' },
         ...(notice ?? [{ id: 'sys-resumed', kind: 'system' as const, text: chalk.dim(`  resumed session ${session.session_id.slice(0, 8)}`) }]),
+        ...cloudNotice,
       ])
       await refreshForkTrail(session.session_id)
       if (sessionCwd && sessionCwd !== agent.cwd) {
@@ -2321,6 +2452,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         // Fresh ads/models belong in the background: awaiting the catalog here
         // stalled the prompt for the whole HTTP round-trip after every turn.
         void syncCloudNow(true)
+        if (sessionId) cloudSessions.schedulePush(sessionId)
         triggerAdSlot(adSlot, Date.now())
         renderer.requestRender()
       }
@@ -3296,7 +3428,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const query = normalizeResumeQuery(args)
       try {
         if (query && isSessionIdPrefix(query)) {
-          const allSessions = await resumeCache.all()
+          const allSessions = mergeRemoteSessions(await resumeCache.all(), cloudSessions.remoteSessions)
           const resolved = resolveSessionByPrefix(allSessions, query)
           if (resolved.kind === 'matched') {
             await resumeSession(resolved.session)
@@ -3466,6 +3598,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (destroyed) return
     if (inflightSync) return inflightSync
     inflightSync = (async () => {
+      // The remote session index rides the same tick; empty when signed out.
+      void cloudSessions.refreshIndex()
       // Anything present right before the sync counts as known, even if it
       // arrived through a path other than this sync (e.g. an external login).
       modelAnnouncer.seed(cloudModels().map(m => m.model))
@@ -3577,7 +3711,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         .map(id => allSessions.find(s => s.session_id === id))
         .filter((s): s is SessionMeta => Boolean(s))
       if (ranked.length === 0) return
-      const items = formatSessionItems(ranked, agent.cwd, id => resumeCache.sessionText(id), sessionId)
+      const items = formatSessionItems(ranked, agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudBadge)
       invalidateExplicitResumeSelector()
       overlay = {
         kind: 'selector',
@@ -3590,16 +3724,25 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
-  function openResumeSelector(initialQuery?: string) {
+  /**
+   * `cloudOnly` (from `/share`) narrows the rows structurally, by each
+   * session's cloud state, never by matching the word in transcripts.
+   */
+  function openResumeSelector(initialQuery?: string, options: { cloudOnly?: boolean } = {}) {
     const generation = ++explicitResumeSelectorGeneration
     const cached = resumeCache.withText ?? resumeCache.metadata
+    const rows = (sessions: SessionMeta[]) => {
+      const merged = mergeRemoteSessions(sessions, cloudSessions.remoteSessions)
+      return options.cloudOnly ? merged.filter(session => sessionCloudBadge(session) !== '') : merged
+    }
     const items = cached === null
       ? []
-      : formatSessionItems(cached, agent.cwd, id => resumeCache.sessionText(id), sessionId)
+      : formatSessionItems(rows(cached), agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudBadge)
     overlay = {
       kind: 'selector',
       state: {
         ...resumeSelectorState(items, initialQuery),
+        ...(options.cloudOnly ? { title: 'Cloud sessions', sessionScope: 'cloud' as const } : {}),
         ...(cached === null ? { emptyMessage: 'Loading sessions…' } : {}),
       },
     }
@@ -3612,26 +3755,51 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       return overlay.state
     }
 
-    resumeCache.all().then(allSessions => {
+    let loadedSessions: SessionMeta[] | undefined
+    const repaint = () => {
+      if (!loadedSessions) return
       const current = activeState()
       if (!current || current.rename) return
-      if (allSessions.length === 0) {
+      const visible = rows(loadedSessions)
+      // An empty list closes with one line, whichever way it was opened.
+      if (visible.length === 0) {
         invalidateExplicitResumeSelector()
         overlay = { kind: 'none' }
-        commitSystem('sys-r', '  No sessions found')
+        commitSystem('sys-r', options.cloudOnly
+          ? '  No shared sessions yet · /share private to sync this session, /share public to publish it'
+          : '  No sessions found')
         renderer.requestRender()
         return
       }
-      const metaItems = formatSessionItems(allSessions, agent.cwd, id => resumeCache.sessionText(id), sessionId)
+      const metaItems = formatSessionItems(visible, agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudBadge)
       overlay = {
         kind: 'selector',
-        state: selectorExpandItems(current, metaItems),
+        // Loaded: the placeholder must not survive as the no-match message.
+        state: { ...selectorExpandItems(current, metaItems), emptyMessage: undefined },
       }
       renderer.requestRender()
       loadFocusedResumePreview(overlay.state)
+    }
+    refreshOpenSessionList = () => {
+      if (!loadedSessions || !activeState()) return
+      // A rename or deletion may have invalidated the local cache since this
+      // selector opened. Do not resurrect its original rows on the next tick.
+      void resumeCache.all().then(sessions => {
+        loadedSessions = sessions
+        repaint()
+      }).catch(() => {})
+    }
+    // Fetch before deciding the list is empty: this machine may have no
+    // local sessions while the account already has remote ones.
+    Promise.all([resumeCache.all(), cloudSessions.refreshIndex()]).then(([sessions]) => {
+      loadedSessions = sessions
+      repaint()
     }).catch((err: unknown) => {
       if (!activeState()) return
+      invalidateExplicitResumeSelector()
+      overlay = { kind: 'none' }
       commitSystem('sys-r-err', chalk.red(`  Failed to list sessions: ${errorText(err)}`))
+      renderer.requestRender()
     })
   }
 
@@ -3807,7 +3975,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
-  async function openShareList(): Promise<void> {
+  async function openShareLinks(): Promise<void> {
     invalidateExplicitResumeSelector()
     focusedCommandWindowGeneration = null
     nextCommandWindowGeneration()
@@ -3944,7 +4112,16 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       case 'delete-session':
         overlay = { kind: 'selector', state: action.state }
-        agent.deleteSession(action.sessionId).then(ok => {
+        // A cloud row goes from both places; a remote-only row has no local copy
+        // to delete, so removing the cloud copy is the whole deletion.
+        void (async () => {
+          const remote = cloudSessions.remoteFor(action.sessionId)
+          if (remote) {
+            await agent.cloudUnshareSession(action.sessionId)
+            cloudSessions.forget(action.sessionId)
+          }
+          return (await agent.deleteSession(action.sessionId)) || Boolean(remote)
+        })().then(ok => {
           if (ok) {
             preloadedSessions = preloadedSessions.filter(session => session.session_id !== action.sessionId)
             resumeCache.remove(action.sessionId, preloadedSessions)

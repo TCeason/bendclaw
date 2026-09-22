@@ -2,6 +2,7 @@ use async_trait::async_trait;
 
 use crate::error::Result;
 use crate::search::SessionWithText;
+use crate::types::CloudSync;
 use crate::types::ListSessions;
 use crate::types::ListTranscriptEntries;
 use crate::types::SessionMeta;
@@ -16,6 +17,17 @@ pub trait Storage: Send + Sync {
         let _ = (session_id, title);
         Err(crate::error::EvotError::Store(
             "session rename is not supported by this backend".into(),
+        ))
+    }
+    /// Replace only the cloud sync block, preserving activity and titles.
+    async fn set_session_cloud(
+        &self,
+        session_id: &str,
+        cloud: Option<CloudSync>,
+    ) -> Result<SessionMeta> {
+        let _ = (session_id, cloud);
+        Err(crate::error::EvotError::Store(
+            "cloud sync is not supported by this backend".into(),
         ))
     }
     async fn get_session(&self, session_id: &str) -> Result<Option<SessionMeta>>;

@@ -36,6 +36,8 @@ export interface AppState {
   judge?: string
   /** Fork ancestry titles, root → current. Empty for sessions that are not forks. */
   forkTrail: string[]
+  /** `☁` while this session syncs to the cloud, `🌐` when it also has a public page. */
+  cloudBadge: string
 }
 
 export interface SessionTokenStats {
@@ -86,5 +88,6 @@ export function createInitialState(model: string, cwd: string): AppState {
     askUserRequest: null,
     sessionTokens: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, contextTokens: 0, contextWindow: 0 },
     forkTrail: [],
+    cloudBadge: '',
   }
 }

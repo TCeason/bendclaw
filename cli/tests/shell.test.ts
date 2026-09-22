@@ -6,7 +6,8 @@ import { buildShellFrame, type ShellSnapshot } from '../src/term/viewmodel/shell
 import { promptFromSnapshot } from '../src/term/viewmodel/prompt-snapshot.js'
 import { createEditorState } from '../src/term/input/editor.js'
 import { createInitialState } from '../src/term/app/state.js'
-import { createModelWindow } from '../src/term/app/selector-windows.js'
+import { createModelWindow, createResumeWindow } from '../src/term/app/selector-windows.js'
+import { CURSOR_MARKER } from '../src/term/render-frame.js'
 import { createQueueSelectorState } from '../src/term/app/queue-manage.js'
 import { createAskState } from '../src/term/ask.js'
 import { buildAskRegionLines } from '../src/term/viewmodel/ask.js'
@@ -35,8 +36,42 @@ describe('shell composition', () => {
       const focused = buildShellFrame({ ...input, overlay: { kind: 'selector', state: selector }, commandFocused: true, prompt: { ...input.prompt, active: false } })
       expect(preview.lines.length).toBe(focused.lines.length)
       expect(preview.transientRows).toBe(focused.transientRows)
-      expect(focused.bottomAnchorStart).toBe(1)
+      expect(focused.bottomAnchor).toBe(false)
+      expect(focused.bottomAnchorStart).toBeUndefined()
     }
+  })
+
+  test('share preview keeps the composer fixed across completion, loading, refresh and focus', () => {
+    for (const [columns, rows] of [[80, 24], [160, 40], [100, 50]]) {
+      const input = snapshot(columns, rows)
+      input.prompt = { ...input.prompt, lines: ['/sha'], cursorCol: 4 }
+      const empty = { ...createResumeWindow([]), title: 'Cloud sessions', emptyMessage: 'Loading sessions…' }
+      const loaded = { ...createResumeWindow([{ id: 'one', label: 'one', detail: '☁ session', preview: ['Session'] }]), title: 'Cloud sessions' }
+      const completion = { items: [{ label: '/share', value: '/share' }], selectedIndex: 0, replaceStart: 0, replaceEnd: 4 }
+      const frames = [
+        buildShellFrame({ ...input, preview: { kind: 'selector', state: empty } }),
+        buildShellFrame({ ...input, prompt: { ...input.prompt, completion }, preview: { kind: 'selector', state: empty } }),
+        buildShellFrame({ ...input, prompt: { ...input.prompt, completion }, preview: { kind: 'selector', state: loaded } }),
+        buildShellFrame({ ...input, preview: { kind: 'selector', state: loaded } }),
+        buildShellFrame({ ...input, overlay: { kind: 'selector', state: { ...loaded, listFocused: true } }, commandFocused: true }),
+      ]
+      const cursor = (frame: typeof frames[number]) => frame.lines.findLastIndex(line => line.includes(CURSOR_MARKER))
+      expect(new Set(frames.map(frame => frame.lines.length)).size).toBe(1)
+      expect(frames.map(cursor)).toEqual(frames.map(() => cursor(frames[0]!)))
+    }
+  })
+
+  test('closing the list restores argument completions without modifying editor state', () => {
+    const input = snapshot(100, 50)
+    input.prompt = {
+      ...input.prompt, lines: ['/share p'], cursorCol: 8,
+      completion: { items: [{ label: 'private', value: 'private' }], selectedIndex: 0, replaceStart: 7, replaceEnd: 8 },
+    }
+    const before = structuredClone(input)
+    const preview = buildShellFrame({ ...input, preview: { kind: 'selector', state: createResumeWindow([]) } })
+    expect(preview.lines.join('\n')).not.toContain('private')
+    expect(buildShellFrame(input).lines.join('\n')).toContain('private')
+    expect(input).toEqual(before)
   })
 
   test('queue and ask replace only editor, keeping status and footer', () => {
@@ -97,6 +132,50 @@ describe('shell composition', () => {
       frame = buildShellFrame(input)
       await render()
       expect(screen.viewport()).toEqual(initial)
+    } finally {
+      renderer.destroy()
+      await screen.settle()
+      screen.terminal.dispose()
+    }
+  })
+
+  test('composer follows content after a full-height frame, then moves down and back with commands', async () => {
+    const screen = new ScreenHarness(100, 50)
+    const renderer = new TermRenderer({ stdout: screen.stdout })
+    const input = snapshot(100, 50)
+    // A tall live region once reached the bottom. Its height must not become
+    // permanent blank padding after it shrinks.
+    let frame = buildShellFrame({
+      ...input,
+      preEditorBlocks: [{ lines: Array.from({ length: 42 }, () => ({ spans: [{ text: 'working' }] })) }],
+    })
+    renderer.init()
+    renderer.setRenderCallback(() => frame)
+    const render = async () => {
+      renderer.requestRender()
+      await Bun.sleep(25)
+      await screen.settle()
+    }
+    const editorRow = () => screen.viewport().findIndex(line => line.includes('draft-marker'))
+    try {
+      await render()
+      input.prompt = { ...input.prompt, lines: ['draft-marker'], cursorCol: 12 }
+      frame = buildShellFrame(input)
+      await render()
+      const initialRow = editorRow()
+      const expectedRow = frame.lines.findIndex(line => line.includes('draft-marker'))
+      expect(initialRow).toBe(expectedRow)
+      expect(initialRow).toBeGreaterThanOrEqual(0)
+      for (const selector of [createModelWindow(undefined, 'model'), createResumeWindow([])]) {
+        frame = buildShellFrame({ ...input, preview: { kind: 'selector', state: selector } })
+        await render()
+        expect(editorRow()).toBeGreaterThan(initialRow)
+        // Clearing the command closes the preview immediately: no Esc and no
+        // retained gap above the composer.
+        frame = buildShellFrame(input)
+        await render()
+        expect(editorRow()).toBe(initialRow)
+      }
     } finally {
       renderer.destroy()
       await screen.settle()

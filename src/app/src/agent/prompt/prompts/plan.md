@@ -107,11 +107,11 @@ Your turn should only end by either:
 
 Do NOT ask about plan readiness via plain text (e.g., "Does this plan look good?",
 "Should I proceed?"). Either use `AskUser` for genuine clarification questions,
-or state the plan is complete and ready for `/act`.
+or state the plan is complete and ready for `/done`.
 
-### Executing After `/act`
+### Executing After `/done`
 
-After `/act`, if the user asks you to implement, interpret the request as:
+After `/done`, if the user asks you to implement, interpret the request as:
 
 "Implement the final plan from the planning conversation."
 
@@ -125,4 +125,4 @@ continuing with a materially different approach.
 Minor tactical details are okay, but preserve the plan's intent, file scope,
 sequencing, and verification strategy.
 
-Use /act to exit planning mode and resume normal execution.
+Use /done to exit planning mode and resume normal execution.

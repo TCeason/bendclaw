@@ -17,6 +17,10 @@ export interface ReplCommandContext {
   flushShareNotices?: () => Promise<void>
   isBusy?: () => boolean
   openShareList: () => Promise<void>
+  openShareLinks?: () => Promise<void>
+  cloudAcknowledged?: (sessionId: string, result: import('../native/index.js').CloudPushResult) => void
+  cloudForgotten?: (sessionId: string) => void
+  resumeSession?: (session: import('../native/index.js').SessionMeta) => Promise<void>
   getSessionId: () => string | null
   getCompactLines: () => import('../render/output.js').OutputLine[]
   getConfigInfo: () => ConfigInfo | null

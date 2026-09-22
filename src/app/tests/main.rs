@@ -109,6 +109,7 @@ mod skill_prompt_test;
 mod storage_memory_test;
 #[path = "storage_test.rs"]
 mod storage_test;
+mod sync_test;
 #[path = "tool_mode_test.rs"]
 mod tool_mode_test;
 mod turn_assembler_test;
