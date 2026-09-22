@@ -243,14 +243,16 @@ fn fixed_model(agent: &Agent, config: &Config, task: &Task) -> Result<crate::con
     if task.model_spec.trim().is_empty() {
         return Err(EvotError::Conf("fixed task has no model".into()));
     }
-    let (provider, model) = config.resolve_model_spec(&task.model_spec)?;
-    let model = model.ok_or_else(|| EvotError::Conf("fixed task has no model".into()))?;
-    if !config.serves(&provider, &model) {
-        return Err(EvotError::Conf(format!(
-            "fixed task model is unavailable: {}",
-            task.model_spec
-        )));
-    }
+    // The spec was saved when the task was created; the catalog may have
+    // moved or regrouped the model since, so resolve it as persisted state.
+    let (provider, model) = config
+        .resolve_persisted_model_spec(&task.model_spec)
+        .map_err(|error| {
+            EvotError::Conf(format!(
+                "fixed task model is unavailable: {} ({error})",
+                task.model_spec
+            ))
+        })?;
     agent.select_configured_model(
         config,
         &provider,

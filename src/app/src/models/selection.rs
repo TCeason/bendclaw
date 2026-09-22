@@ -211,22 +211,24 @@ impl ModelSelection {
         Some(next)
     }
 
-    /// Restore the saved model using current configured effort. If resolution
-    /// fails, refresh the live model instead. Failure leaves the state intact.
+    /// Restore the saved model using current configured effort. The spec is
+    /// persisted state, so it follows the model id when the catalog regrouped
+    /// it. If resolution fails, refresh the live model instead. Failure leaves
+    /// the state intact.
     pub fn reload_provider_for_resume(&self, config: &Config, spec: &str) -> Result<bool> {
         let mut current = self.llm.write();
-        match config.resolve_model_spec(spec) {
+        match config.resolve_persisted_model_spec(spec) {
             Ok((provider, model)) => {
-                let next = config.build_llm(&provider, model)?;
+                let next = config.build_llm(&provider, Some(model))?;
                 *current = next;
                 Ok(true)
             }
             Err(saved_error) => {
                 let current_spec = format!("{}:{}", current.provider, current.model);
                 let (provider, model) = config
-                    .resolve_model_spec(&current_spec)
+                    .resolve_persisted_model_spec(&current_spec)
                     .map_err(|_| saved_error)?;
-                let next = config.build_llm(&provider, model)?;
+                let next = config.build_llm(&provider, Some(model))?;
                 *current = next;
                 Ok(false)
             }

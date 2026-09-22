@@ -96,9 +96,14 @@ pub(super) fn reconcile_cloud_env(
 /// in. Cached-only: no network at config load time; `evot login` refreshes the
 /// cache. Never overrides an explicit BYOK selection.
 ///
-/// The server names, orders, and groups its own providers (one per tier and
-/// protocol), so one account can mix Anthropic and OpenAI models. Which model
-/// a fresh session lands on is decided by catalog rank in
+/// The server names, orders, and groups its own providers, one per tier
+/// (`evot-free`, `evot-pro`). A tier may mix Anthropic and OpenAI models: the
+/// protocol is published per model and [`Config::protocol_for`] routes by it,
+/// so the group name stays a stable identity for saved sessions and tasks.
+/// Older servers split a mixed tier into `<tier>-<protocol>` groups; those
+/// register under the name they arrive with, and a saved spec follows its
+/// model id via [`Config::resolve_persisted_model_spec`]. Which model a fresh
+/// session lands on is decided by catalog rank in
 /// [`Config::preferred_new_session_llm`], not here.
 pub(super) fn apply_cloud_provider(config: &mut Config) -> Result<()> {
     if crate::auth::load_auth()?.is_none() {
@@ -112,6 +117,7 @@ pub(super) fn apply_cloud_provider(config: &mut Config) -> Result<()> {
     let mut model_tiers = std::collections::HashMap::new();
     let mut model_sorts = std::collections::HashMap::new();
     let context_windows = context_windows(&cache.response);
+    let model_protocols = model_protocols(&cache.response);
     let judges: std::collections::HashSet<String> = judge_model_ids(&cache.response);
     let mut judge: Option<crate::conf::JudgeEndpoint> = None;
     for model in &cache.response.models {
@@ -143,7 +149,10 @@ pub(super) fn apply_cloud_provider(config: &mut Config) -> Result<()> {
             if let Some(model) = judge_models.into_iter().next() {
                 judge = Some(crate::conf::JudgeEndpoint {
                     provider: name.clone(),
-                    protocol: protocol.clone(),
+                    protocol: model_protocols
+                        .get(&model)
+                        .cloned()
+                        .unwrap_or_else(|| protocol.clone()),
                     base_url: group.base_url.clone(),
                     api_key: group.api_key.clone(),
                     context_window: context_windows.get(&model).copied(),
@@ -155,18 +164,6 @@ pub(super) fn apply_cloud_provider(config: &mut Config) -> Result<()> {
         if group.models.is_empty() {
             continue;
         }
-        // Cloud OpenAI groups (`evot-pro-openai`, …) are named by the server,
-        // so they never match the first-party `openai` / `grok` transport
-        // profiles. The catalog still lists reasoning models on those routes
-        // and the proxy forwards `reasoning_effort`; without this cap the
-        // footer and Shift+Tab both treat the model as having no selectable
-        // effort.
-        let compat_caps = if protocol == Protocol::OpenAi {
-            CompatCaps::REASONING_EFFORT
-        } else {
-            CompatCaps::default()
-        };
-
         // A catalog routing name is not ownership. If the user already has a
         // custom provider with that name, keep it; only replace a profile that
         // is identifiable as cloud state persisted by an older client.
@@ -179,12 +176,15 @@ pub(super) fn apply_cloud_provider(config: &mut Config) -> Result<()> {
             continue;
         }
 
+        // The group protocol is only the fallback for a model the catalog
+        // did not annotate; transport quirks are decided per route in
+        // `Config::build_llm`.
         let profile = ProviderProfile {
             protocol,
             api_key: group.api_key,
             base_url: group.base_url,
             models: group.models,
-            compat_caps,
+            compat_caps: CompatCaps::default(),
             route_capabilities: RouteCapabilityOverrides::default(),
             thinking_level: None,
             context_window: None,
@@ -198,6 +198,7 @@ pub(super) fn apply_cloud_provider(config: &mut Config) -> Result<()> {
     config.cloud_model_tiers = model_tiers;
     config.cloud_context_windows = context_windows;
     config.cloud_model_sorts = model_sorts;
+    config.cloud_model_protocols = model_protocols;
     config.cloud_default_model =
         Some(cache.response.default_model.trim().to_string()).filter(|model| !model.is_empty());
     config.judge = judge;
@@ -231,6 +232,18 @@ fn context_windows(
         .collect()
 }
 
+/// Wire protocols the server published, by model id. Models an older server
+/// left unannotated are absent and inherit their group's protocol.
+fn model_protocols(
+    response: &crate::auth::ModelsResponse,
+) -> std::collections::HashMap<String, Protocol> {
+    response
+        .models
+        .iter()
+        .filter_map(|model| Some((model.id.clone(), parse_protocol(&model.protocol).ok()?)))
+        .collect()
+}
+
 fn judge_model_ids(response: &crate::auth::ModelsResponse) -> std::collections::HashSet<String> {
     response
         .models
@@ -253,6 +266,7 @@ pub fn current_judge_endpoint() -> Option<crate::conf::JudgeEndpoint> {
         return None;
     }
     let context_windows = context_windows(&cache.response);
+    let model_protocols = model_protocols(&cache.response);
     let mut groups = cache.response.providers;
     groups.sort_by_key(|group| group.sort_order);
     groups.into_iter().find_map(|group| {
@@ -261,7 +275,10 @@ pub fn current_judge_endpoint() -> Option<crate::conf::JudgeEndpoint> {
             .iter()
             .find(|model| judges.contains(*model))?
             .clone();
-        let protocol = parse_protocol(&group.protocol).ok()?;
+        let protocol = match model_protocols.get(&model) {
+            Some(protocol) => protocol.clone(),
+            None => parse_protocol(&group.protocol).ok()?,
+        };
         Some(crate::conf::JudgeEndpoint {
             provider: normalize_provider_name(&group.name),
             protocol,

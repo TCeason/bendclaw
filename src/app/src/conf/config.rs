@@ -236,6 +236,10 @@ pub struct Config {
     pub cloud_context_windows: HashMap<String, u32>,
     /// Catalog display rank per cloud model id (higher shows earlier).
     pub cloud_model_sorts: HashMap<String, i64>,
+    /// Wire protocol per cloud model id. A cloud group is named by tier and
+    /// may mix Anthropic and OpenAI models, so the protocol is a property of
+    /// the model, not the group. Missing ids fall back to the group protocol.
+    pub cloud_model_protocols: HashMap<String, Protocol>,
     /// The account's pinned landing model from the server, if it set one and
     /// the model is currently served by a cloud provider.
     pub cloud_default_model: Option<String>,
@@ -276,6 +280,7 @@ impl Config {
             cloud_model_tiers: HashMap::new(),
             cloud_context_windows: HashMap::new(),
             cloud_model_sorts: HashMap::new(),
+            cloud_model_protocols: HashMap::new(),
             cloud_default_model: None,
             cloud_providers: HashSet::new(),
             judge: None,
@@ -366,12 +371,14 @@ impl Config {
             ))
         })?;
         let model = model_override.unwrap_or_else(|| profile.model().to_string());
+        let protocol = self.protocol_for(provider_name, profile, &model);
+        let compat_caps = self.compat_caps_for(provider_name, profile, &protocol);
         let model_config = resolve_model_config(
-            profile.protocol.clone(),
+            protocol.clone(),
             provider_name,
             &model,
             Some(&profile.base_url),
-            profile.compat_caps,
+            compat_caps,
             profile.route_capabilities,
             profile
                 .context_window
@@ -388,13 +395,46 @@ impl Config {
 
         Ok(LlmConfig {
             provider: provider_name.to_string(),
-            protocol: profile.protocol.clone(),
+            protocol,
             api_key: profile.api_key.clone(),
             base_url: profile.base_url.clone(),
             model,
             thinking_level,
             model_config,
         })
+    }
+
+    /// The wire protocol `model` speaks under `provider`.
+    ///
+    /// A cloud group is one tier and may carry both Anthropic and OpenAI
+    /// models, so the catalog's per-model protocol decides. A BYOK profile
+    /// speaks exactly the protocol it was configured with.
+    pub fn protocol_for(&self, provider: &str, profile: &ProviderProfile, model: &str) -> Protocol {
+        if self.cloud_providers.contains(provider) {
+            if let Some(protocol) = self.cloud_model_protocols.get(model) {
+                return protocol.clone();
+            }
+        }
+        profile.protocol.clone()
+    }
+
+    /// Transport quirks for one route.
+    ///
+    /// Cloud groups are named by the server, so they never match the
+    /// first-party `openai` / `grok` transport profiles. The gateway forwards
+    /// `reasoning_effort` for OpenAI-protocol models; without this cap the
+    /// footer and Shift+Tab would treat such a model as having no selectable
+    /// effort.
+    fn compat_caps_for(
+        &self,
+        provider: &str,
+        profile: &ProviderProfile,
+        protocol: &Protocol,
+    ) -> CompatCaps {
+        if self.cloud_providers.contains(provider) && *protocol == Protocol::OpenAi {
+            return profile.compat_caps | CompatCaps::REASONING_EFFORT;
+        }
+        profile.compat_caps
     }
 
     /// Sort key for one cloud model; the highest key is the default.

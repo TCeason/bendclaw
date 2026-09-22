@@ -62,6 +62,7 @@ mod model_metadata_test;
 #[path = "model_selection_test.rs"]
 mod model_selection_test;
 mod model_settings_test;
+mod model_spec_test;
 #[path = "orchestrator_compact_test.rs"]
 mod orchestrator_compact_test;
 mod process_registry_test;

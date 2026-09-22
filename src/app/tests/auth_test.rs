@@ -229,6 +229,79 @@ const MULTI_CACHE_JSON: &str = r#"{
   }
 }"#;
 
+/// Current server: one group per tier, models of both protocols inside it.
+const TIER_NAMED_CACHE_JSON: &str = r#"{
+  "schema_version": 1,
+  "synced_at": 123,
+  "response": {
+    "version": 9,
+    "providers": [
+      {"name":"evot-pro","label":"Evot Premium","sort_order":1,"protocol":"anthropic",
+       "base_url":"http://localhost:8787/v1/llm","api_key":"evot.scoped.key",
+       "default_model":"evot-fast","models":["evot-fast","grok-4.7","jev-latest"]}
+    ],
+    "models": [
+      {"id":"evot-fast","protocol":"anthropic","tier":"special","provider":"evot-pro","sort_order":9},
+      {"id":"grok-4.7","protocol":"openai","tier":"special","provider":"evot-pro","sort_order":5},
+      {"id":"jev-latest","protocol":"openai","tier":"special","provider":"evot-pro","role":"judge"}
+    ],
+    "notices": []
+  }
+}"#;
+
+/// The provider name is the tier and stays put when the tier mixes wire
+/// formats; each model routes by its own protocol, the judge included.
+#[test]
+fn a_tier_named_group_routes_each_model_by_its_protocol() {
+    let _guard = env_lock().lock().unwrap();
+    let original_home = std::env::var_os("HOME");
+    let env_home = std::env::temp_dir().join(format!("evot-auth-tier-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&env_home);
+    write_test_home(&env_home, Some(AUTH_JSON), Some(TIER_NAMED_CACHE_JSON));
+    std::env::set_var("HOME", &env_home);
+
+    let result = Config::load();
+    restore_env_var("HOME", original_home);
+    let config = result.unwrap();
+
+    assert_eq!(config.providers.keys().collect::<Vec<_>>(), vec![
+        "evot-pro"
+    ]);
+    let pro = config.providers.get("evot-pro").expect("pro registered");
+    assert_eq!(pro.models, vec![
+        "evot-fast".to_string(),
+        "grok-4.7".to_string()
+    ]);
+
+    let fast = config
+        .build_llm("evot-pro", Some("evot-fast".into()))
+        .unwrap();
+    assert_eq!(fast.protocol.to_string(), "anthropic");
+    let grok = config
+        .build_llm("evot-pro", Some("grok-4.7".into()))
+        .unwrap();
+    assert_eq!(grok.protocol.to_string(), "openai");
+    assert!(grok.model_config.honors_reasoning_effort());
+
+    let judge = config.judge.as_ref().expect("judge published");
+    assert_eq!(judge.provider, "evot-pro");
+    assert_eq!(judge.model, "jev-latest");
+    assert_eq!(judge.protocol.to_string(), "openai");
+
+    // A task saved while the server split the tier keeps resolving.
+    assert_eq!(
+        config
+            .resolve_persisted_model_spec("evot-pro-openai:grok-4.7")
+            .unwrap(),
+        ("evot-pro".to_string(), "grok-4.7".to_string())
+    );
+
+    let _ = std::fs::remove_dir_all(&env_home);
+}
+
+/// Catalog from a server that still split a mixed tier into per-protocol
+/// groups (`evot-free` + `evot-free-openai`): groups register under the names
+/// they arrive with, and OpenAI-protocol routes still honor reasoning effort.
 #[test]
 fn each_cloud_protocol_becomes_its_own_provider() {
     let _guard = env_lock().lock().unwrap();
@@ -266,11 +339,13 @@ fn each_cloud_protocol_becomes_its_own_provider() {
         "zzz-pro".to_string(),
         "claude-pro".to_string()
     ]);
+    // Transport quirks are a property of the route, not the profile.
     assert_eq!(pro.compat_caps, evot_engine::provider::CompatCaps::NONE);
-    assert_eq!(
-        compat.compat_caps,
-        evot_engine::provider::CompatCaps::REASONING_EFFORT
-    );
+    assert_eq!(compat.compat_caps, evot_engine::provider::CompatCaps::NONE);
+    let grok = config
+        .build_llm("evot-free-openai", Some("gpt-free".into()))
+        .unwrap();
+    assert!(grok.model_config.honors_reasoning_effort());
 
     // Premium (`special`) wins the landing spot when the account has it, and
     // inside it the top-ranked model serves — not the server's default_model.
