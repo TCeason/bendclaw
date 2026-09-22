@@ -3390,15 +3390,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const { authWhoami } = await import('../native/index.js')
       return Boolean(await authWhoami())
     },
-    syncNotices: async () => {
-      const { authSyncNotices } = await import('../native/index.js')
-      return authSyncNotices()
-    },
+    // The signed-in slot is driven by the account catalog, not the public
+    // /v1/notices list. The catalog already includes every campaign this
+    // account matches (everyone, premium, group); the public list is only the
+    // everyone subset. Feeding it in here replaced the showing notice with
+    // that subset and restarted the ticker every sync.
+    syncNotices: async () => [],
     syncModels: async () => {
       const { authSyncModels } = await import('../native/index.js')
       return authSyncModels()
     },
-    noticesUpdated: notices => reloadCloudContent(cloudCampaigns(notices)),
+    noticesUpdated: () => {},
     modelsUpdated: () => {
       authWatcher?.sync()
       reloadCloudContent()

@@ -14,15 +14,14 @@ export function campaignContent(notices: CampaignNotice[]): AdContent[] {
 export function refreshCampaigns(state: AdSlotState, fresh: AdContent[], premium: boolean, now: number): void {
   const previousById = new Map([...state.notices, ...state.ads].map(campaign => [campaign.id, campaign]))
   const keep = {
-    seenNoticeIds: state.seenNoticeIds,
     triggered: state.triggered,
     currentId: state.currentId,
     shownAt: state.shownAt,
     rotationDueAt: state.rotationDueAt,
     queuedId: state.queuedId,
-    shownFingerprints: state.shownFingerprints,
+    played: state.played,
   }
-  Object.assign(state, createAdSlotState(fresh, { premium, shownFingerprints: state.shownFingerprints }), keep)
+  Object.assign(state, createAdSlotState(fresh, { premium, played: state.played }), keep)
   const showing = [...state.notices, ...state.ads].find(campaign => campaign.id === state.currentId)
   if (state.currentId && !showing) {
     state.currentId = null

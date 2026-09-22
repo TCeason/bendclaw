@@ -43,8 +43,9 @@ describe('ad slot lifecycle', () => {
     triggerAdSlot(state, T0)
     const tick = tickAdSlot(state, T0 + 1000)
     expect(tick.content?.id).toBe('n1')
-    // still visible far into the future — no auto-dismiss
-    expect(tickAdSlot(state, T0 + 10 * AD_STEADY_MS).content).not.toBeNull()
+    // Both items play once; stepping past them leaves the slot quiet.
+    for (let t = T0; t < T0 + 6 * AD_STEADY_MS; t += 250) tickAdSlot(state, t)
+    expect(tickAdSlot(state, T0 + 6 * AD_STEADY_MS).content).toBeNull()
   })
 
   test('progress advances monotonically through the steady phase', () => {
@@ -59,12 +60,11 @@ describe('ad slot lifecycle', () => {
     }
   })
 
-  test('content cycles the whole playlist and wraps, with an erase between items', () => {
+  test('each item plays once, highest priority first, then the slot goes quiet', () => {
     const state = createAdSlotState([notice, ad1, ad2])
     triggerAdSlot(state, T0)
     const order: string[] = []
     let sawErasing = false
-    // Walk many rotations at fine granularity so short erase frames are seen.
     for (let t = T0; t < T0 + AD_STEADY_MS * 8; t += 30) {
       const r = tickAdSlot(state, t)
       if (r.phase === 'erasing') sawErasing = true
@@ -73,9 +73,9 @@ describe('ad slot lifecycle', () => {
       }
     }
     expect(sawErasing).toBe(true)
-    // Every campaign appears, and the list wraps instead of dead-ending.
-    expect(order.slice(0, 4)).toEqual(['n1', 'a1', 'a2', 'n1'])
-    expect(order.length).toBeGreaterThan(5)
+    // Notice (priority 5) leads, then the ads in catalog order. Nothing repeats.
+    expect(order).toEqual(['n1', 'a1', 'a2'])
+    expect(tickAdSlot(state, T0 + AD_STEADY_MS * 8).content).toBeNull()
   })
 
   test('an unseen notice preempts a showing ad', () => {
@@ -355,16 +355,15 @@ describe('premium accounts', () => {
 
   test('copy already shown this session is not shown again', () => {
     const shown = campaignFingerprint(notice)
-    const state = createAdSlotState([notice], { premium: true, shownFingerprints: [shown] })
-    expect(state.notices).toEqual([])
-    triggerAdSlot(state, T0)
+    const state = createAdSlotState([notice], { premium: true, played: [shown] })
+    expect(triggerAdSlot(state, T0)).toBeNull()
     expect(tickAdSlot(state, T0 + 1000).content).toBeNull()
   })
 
   test('edited copy counts as new even under the same id', () => {
     const shown = campaignFingerprint(notice)
     const edited = { ...notice, body: 'fast inference — now cheaper' }
-    const state = createAdSlotState([edited], { premium: true, shownFingerprints: [shown] })
+    const state = createAdSlotState([edited], { premium: true, played: [shown] })
     expect(state.notices.map(n => n.id)).toEqual(['n1'])
   })
 
@@ -375,12 +374,10 @@ describe('premium accounts', () => {
     expect(tickAdSlot(state, T0 + AD_STEADY_MS + 1).content).toBeNull()
   })
 
-  test('retiring records the copy so a refresh cannot replay it', () => {
+  test('going on screen records the copy, so quitting early still counts', () => {
     const state = createAdSlotState([notice], { premium: true })
     triggerAdSlot(state, T0)
-    tickAdSlot(state, T0 + 1000)
-    tickAdSlot(state, T0 + AD_STEADY_MS + 1)
-    expect(Array.from(state.shownFingerprints)).toEqual([campaignFingerprint(notice)])
+    expect(Array.from(state.played)).toEqual([campaignFingerprint(notice)])
   })
 
   test('two new notices are shown one after the other, then the slot goes quiet', () => {
@@ -396,16 +393,39 @@ describe('premium accounts', () => {
     expect(tickAdSlot(state, T0 + AD_STEADY_MS * 4).content).toBeNull()
   })
 
-  test('a free account is untouched: ads stay and rotation still wraps', () => {
+  test('a re-trigger while showing does not restart the clock or replay', () => {
+    const state = createAdSlotState([notice, ad1])
+    triggerAdSlot(state, T0)
+    const shownAt = state.shownAt
+    // Turn ends and syncs re-trigger the slot; the item on screen must hold.
+    triggerAdSlot(state, T0 + 5000)
+    expect(state.currentId).toBe('n1')
+    expect(state.shownAt).toBe(shownAt)
+
+    for (let t = T0; t < T0 + 6 * AD_STEADY_MS; t += 250) tickAdSlot(state, t)
+    expect(tickAdSlot(state, T0 + 6 * AD_STEADY_MS).content).toBeNull()
+    // Everything has played: another trigger stays quiet instead of starting over.
+    expect(triggerAdSlot(state, T0 + 7 * AD_STEADY_MS)).toBeNull()
+    expect(tickAdSlot(state, T0 + 7 * AD_STEADY_MS).content).toBeNull()
+  })
+
+  test('an ad plays once after the notice, then the slot goes quiet', () => {
     const state = createAdSlotState([notice, ad1])
     expect(state.ads.map(a => a.id)).toEqual(['a1'])
     triggerAdSlot(state, T0)
-    expect(tickAdSlot(state, T0 + 10 * AD_STEADY_MS).content).not.toBeNull()
+    const seen: string[] = []
+    for (let t = T0; t < T0 + 6 * AD_STEADY_MS; t += 250) {
+      const content = tickAdSlot(state, t).content
+      if (content && seen[seen.length - 1] !== content.id) seen.push(content.id)
+    }
+    expect(seen).toEqual(['n1', 'a1'])
+    expect(tickAdSlot(state, T0 + 6 * AD_STEADY_MS).content).toBeNull()
   })
 
-  test('shown history is ignored for a free account', () => {
-    const state = createAdSlotState([notice], { shownFingerprints: [campaignFingerprint(notice)] })
-    expect(state.notices.map(n => n.id)).toEqual(['n1'])
+  test('shown copy is skipped for a free account too', () => {
+    const state = createAdSlotState([notice], { played: [campaignFingerprint(notice)] })
+    expect(triggerAdSlot(state, T0)).toBeNull()
+    expect(tickAdSlot(state, T0 + 1000).content).toBeNull()
   })
 })
 
@@ -434,17 +454,16 @@ describe('premium mid-session refresh', () => {
   // Mirrors reloadCloudContent: fresh catalog, runtime state carried across.
   function refresh(state: ReturnType<typeof createAdSlotState>, fresh: AdContent[]) {
     const keep = {
-      seenNoticeIds: state.seenNoticeIds,
       triggered: state.triggered,
       currentId: state.currentId,
       shownAt: state.shownAt,
       rotationDueAt: state.rotationDueAt,
       queuedId: state.queuedId,
-      shownFingerprints: state.shownFingerprints,
+      played: state.played,
     }
     Object.assign(
       state,
-      createAdSlotState(fresh, { premium: true, shownFingerprints: state.shownFingerprints }),
+      createAdSlotState(fresh, { premium: true, played: state.played }),
       keep,
     )
     return state

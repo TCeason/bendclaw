@@ -1,3 +1,4 @@
+import { nextToPlay, type Playable } from './playback.js'
 import { line, plain, type StyledSpan, type ViewBlock } from './types.js'
 import { renderMarkdown } from '../../render/markdown.js'
 import { sliceVisibleAnsi, splitAnsiIntoCells, truncateAnsiToWidth, visibleGraphemeCount, visibleWidth } from '../../render/wrap.js'
@@ -17,8 +18,6 @@ export type AdSlotPhase = 'entering' | 'steady' | 'erasing' | 'gone'
 export interface AdSlotState {
   notices: AdContent[]
   ads: AdContent[]
-  /** Notices already shown once; they stop jumping the queue afterwards. */
-  seenNoticeIds: Set<string>
   /** False until the first trigger; the slot stays hidden before that. */
   triggered: boolean
   currentId: string | null
@@ -31,10 +30,16 @@ export interface AdSlotState {
    * for AD_GAP_MS, then this item types itself in.
    */
   queuedId: string | null
-  /** Granted (premium) model: no ads, and notices announce rather than banner. */
+  /** Granted (premium) model: the only thing it changes is that no ads play. */
   premium: boolean
-  /** Copy shown this session, so the 15s sync cannot replay unchanged copy. */
-  shownFingerprints: Set<string>
+  /**
+   * Keys of items that have started playing. Recorded the moment an item
+   * goes on screen, so quitting early still counts as seen. A notice's key
+   * is its copy, an ad's key is its id: editing a notice plays it again, a
+   * replay of unchanged copy never happens within a session. Resets on the
+   * next launch, so each launch announces once.
+   */
+  played: Set<string>
 }
 
 export function campaignFingerprint(
@@ -45,7 +50,8 @@ export function campaignFingerprint(
 
 export interface AdSlotOptions {
   premium?: boolean
-  shownFingerprints?: Iterable<string>
+  /** Keys of items already played. See `AdSlotState.played`. */
+  played?: Iterable<string>
 }
 
 // ---- timing (ms) -----------------------------------------------------------
@@ -60,22 +66,24 @@ export function createAdSlotState(
   options: AdSlotOptions = {},
 ): AdSlotState {
   const premium = options.premium ?? false
-  const shown = new Set(options.shownFingerprints ?? [])
-  const admitted = premium
-    ? notices.filter(n => n.kind === 'notice' && !shown.has(campaignFingerprint(n)))
-    : notices
+  // Played items stay in the catalog: `nextToPlay` skips them, and the one
+  // on screen must still resolve by id after a refresh or it would vanish.
   return {
-    notices: admitted.filter(n => n.kind === 'notice'),
-    ads: admitted.filter(n => n.kind === 'ad'),
-    seenNoticeIds: new Set(),
+    notices: notices.filter(n => n.kind === 'notice'),
+    ads: premium ? [] : notices.filter(n => n.kind === 'ad'),
     triggered: false,
     currentId: null,
     shownAt: 0,
     rotationDueAt: 0,
     queuedId: null,
     premium,
-    shownFingerprints: shown,
+    played: new Set(options.played ?? []),
   }
+}
+
+/** Notices key on their copy, so an edit is a new item; ads key on their id. */
+function itemKey(content: AdContent): string {
+  return content.kind === 'notice' ? campaignFingerprint(content) : content.id
 }
 
 function byId(state: AdSlotState, id: string | null): AdContent | null {
@@ -83,67 +91,38 @@ function byId(state: AdSlotState, id: string | null): AdContent | null {
   return state.notices.find(n => n.id === id) ?? state.ads.find(a => a.id === id) ?? null
 }
 
-function nextNotice(state: AdSlotState): AdContent | null {
-  // Premium gates on copy, not id: an edit keeps the id.
-  const unseen = state.premium
-    ? (n: AdContent) => !state.shownFingerprints.has(campaignFingerprint(n))
-    : (n: AdContent) => !state.seenNoticeIds.has(n.id)
-  return state.notices
-    .filter(unseen)
-    .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0] ?? null
+/** Every item the slot can play, notices and ads alike, in one list. */
+function playlist(state: AdSlotState): Playable[] {
+  return [...state.notices, ...state.ads].map(item => ({ ...item, key: itemKey(item) }))
 }
 
-/**
- * Every campaign in a stable running order: notices by priority, then ads in
- * server order. Rotation walks this list and wraps, so the slot cycles for as
- * long as the session lives instead of dead-ending on the last item.
- */
-function playlist(state: AdSlotState): AdContent[] {
-  const notices = [...state.notices].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
-  return [...notices, ...state.ads]
+/** The next item to play, or null when everything has played. */
+function nextItem(state: AdSlotState, exceptId?: string): AdContent | null {
+  const next = nextToPlay(playlist(state), state.played, exceptId)
+  return next ? byId(state, next.id) : null
 }
 
-/** The item after `current` in the playlist, wrapping at the end. */
-function pickFollowUp(state: AdSlotState, current: AdContent): AdContent {
-  // An unseen notice jumps the queue so announcements land promptly.
-  const fresh = state.notices
-    .filter(n => n.id !== current.id && !state.seenNoticeIds.has(n.id))
-    .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0]
-  if (fresh) return fresh
-
-  const all = playlist(state)
-  if (all.length === 0) return current
-  const at = all.findIndex(c => c.id === current.id)
-  return all[(at + 1) % all.length] ?? current
-}
-
+/** Put `content` on screen. Going on screen is what counts as played. */
 function pin(state: AdSlotState, content: AdContent, now: number): void {
   state.currentId = content.id
   state.shownAt = now
   state.rotationDueAt = now + AD_STEADY_MS
-}
-
-/** Mark `content` as shown so it stops jumping the rotation queue. */
-function retireCurrent(state: AdSlotState, content: AdContent): void {
-  if (content.kind === 'notice') state.seenNoticeIds.add(content.id)
+  state.played.add(itemKey(content))
 }
 
 /**
  * Frame hook driving the whole lifecycle:
- *   entering → steady → erasing → (gap) → next content entering → …
- * Hidden until the first trigger, then it keeps showing for the session.
- * Content cycles the playlist endlessly, wrapping after the last item.
- * An unseen notice jumps the queue through the same erase transition, so
- * content never hard-cuts.
+ *   entering → steady → erasing → (gap) → next item entering → … → quiet
+ * Hidden until the first trigger. Each item plays once, then the slot goes
+ * quiet — nothing loops. A higher-priority item still waiting jumps the queue
+ * through the same erase transition, so content never hard-cuts.
  */
 export function tickAdSlot(state: AdSlotState, now: number): { content: AdContent | null; phase: AdSlotPhase; progress: number } {
   if (!state.triggered) return { content: null, phase: 'gone', progress: 0 }
 
-  const freshNotice = nextNotice(state)
   const content = byId(state, state.currentId)
   if (!content) {
-    // No playlist fallback for premium: it ignores shown copy.
-    const next = state.premium ? freshNotice : (freshNotice ?? playlist(state)[0] ?? null)
+    const next = nextItem(state)
     if (!next) return { content: null, phase: 'gone', progress: 0 }
     pin(state, next, now)
     return enterFrame(state, next, now)
@@ -163,7 +142,6 @@ export function tickAdSlot(state: AdSlotState, now: number): { content: AdConten
       // Blank beat between items so they don't run together.
       return { content, phase: 'erasing', progress: 0 }
     }
-    retireCurrent(state, content)
     state.queuedId = null
     pin(state, queued, now)
     return enterFrame(state, queued, now)
@@ -171,29 +149,20 @@ export function tickAdSlot(state: AdSlotState, now: number): { content: AdConten
 
   const settled = now - state.shownAt > AD_ENTER_MS * 3
   const rotationDue = now >= state.rotationDueAt
-  // A fresh notice outranks a showing ad, but only once the ad has settled so
-  // a just-typed line isn't yanked away.
-  const preempt = content.kind === 'ad' && freshNotice !== null && settled
+  // A higher-priority item still waiting plays next, but only once the
+  // current line has settled so a just-typed line isn't yanked away.
+  const pending = nextItem(state, content.id)
+  const preempt = pending !== null && (pending.priority ?? 0) > (content.priority ?? 0) && settled
   if (rotationDue || preempt) {
-    // Premium shows a notice once, then goes quiet.
-    if (state.premium) {
-      retireCurrent(state, content)
-      state.shownFingerprints.add(campaignFingerprint(content))
+    const followUp = nextItem(state)
+    if (!followUp) {
       state.currentId = null
       state.queuedId = null
-      const nextFresh = nextNotice(state)
-      if (!nextFresh) return { content: null, phase: 'gone', progress: 0 }
-      pin(state, nextFresh, now)
-      return enterFrame(state, nextFresh, now)
+      return { content: null, phase: 'gone', progress: 0 }
     }
-    const followUp = preempt ? freshNotice! : pickFollowUp(state, content)
-    if (followUp.id !== content.id) {
-      // Start the erase on this frame; the transition completes on later ones.
-      queueTransition(state, followUp.id, now)
-      return { content, phase: 'erasing', progress: 1 }
-    }
-    pin(state, followUp, now)   // sole campaign: retype it in place
-    return enterFrame(state, followUp, now)
+    // Start the erase on this frame; the transition completes on later ones.
+    queueTransition(state, followUp.id, now)
+    return { content, phase: 'erasing', progress: 1 }
   }
 
   const age = now - state.shownAt
@@ -221,7 +190,7 @@ export function nextAdSlotRenderDelay(
   }
   let delay = Math.max(1, state.rotationDueAt - now)
   if (age < total * TYPE_STEP_MS) delay = Math.min(delay, 80, total * TYPE_STEP_MS - age)
-  if (tick.content.kind === 'ad' && nextNotice(state)) {
+  if (nextItem(state, tick.content.id)) {
     delay = Math.min(delay, Math.max(1, AD_ENTER_MS * 3 + 1 - age))
   }
   return delay
@@ -256,14 +225,18 @@ export function queueAdSlotTransition(state: AdSlotState, id: string, now = Date
  * after login and on task completion. Returns the content that will show.
  */
 export function triggerAdSlot(state: AdSlotState, now: number): AdContent | null {
+  // Something on screen keeps its clock. Turn ends and syncs re-trigger the
+  // slot constantly; restarting or replacing the current item here would
+  // retype it every time, or cut it short. Jumping the queue is the frame
+  // hook's call, by priority.
   const resume = byId(state, state.currentId)
-  // Every sync re-triggers the slot; the fallback would bring back shown copy.
-  const fallback = state.premium ? null : playlist(state)[0] ?? null
-  const content = nextNotice(state) ?? resume ?? fallback
+  if (resume) return resume
+  // Otherwise start the next unplayed item. Nothing left means stay quiet:
+  // there is no fallback to something that already played.
+  const content = nextItem(state)
   if (!content) return null
-  if (resume && resume.id !== content.id) retireCurrent(state, resume)
-  state.queuedId = null
   state.triggered = true
+  state.queuedId = null
   pin(state, content, now)
   return content
 }

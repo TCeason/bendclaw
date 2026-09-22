@@ -31,8 +31,9 @@ describe('ad slot repaint scheduling', () => {
     expect(delay(state, T0)).toBe(80)
     const typedAt = T0 + 5 * TYPE_STEP_MS
     expect(delay(state, typedAt)).toBe(AD_STEADY_MS - 5 * TYPE_STEP_MS)
-    expect(delay(state, T0 + AD_STEADY_MS)).toBe(80)
-    expect(state.shownAt).toBe(T0 + AD_STEADY_MS)
+    // A single item plays once, so rotation ends the slot instead of retyping it.
+    expect(delay(state, T0 + AD_STEADY_MS)).toBeNull()
+    expect(state.currentId).toBeNull()
   })
 
   test('a full idle rotation needs only animation frames, not 562 polling frames', () => {
@@ -72,7 +73,8 @@ describe('ad slot repaint scheduling', () => {
   test('new notices wake for preemption even while the current copy is static', () => {
     const state = createAdSlotState([first])
     triggerAdSlot(state, T0)
-    state.notices.push({ ...second, kind: 'notice' })
+    // A higher-priority item still waiting jumps the queue once the line settles.
+    state.notices.push({ ...second, kind: 'notice', priority: 1 })
     expect(delay(state, T0 + 500)).toBe(701)
     expect(delay(state, T0 + 1201)).toBe(80)
     expect(state.queuedId).toBe(second.id)
