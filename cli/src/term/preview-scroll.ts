@@ -1,12 +1,29 @@
 import { wrapTextWithAnsi } from '../render/wrap.js'
 import { PREVIEW_ALERT_PREFIX, PREVIEW_SECTION_PREFIX } from './selector.js'
 
+/**
+ * One split for every list-with-details window (sessions, shares, tasks,
+ * skills): the list is what the user scans and acts on, so it gets the larger
+ * share; the details pane gets about a third, capped at a comfortable reading
+ * width, and extra columns on wide terminals go back to the list.
+ */
+export const PANE_FRACTION = 0.38
+export const PANE_MIN_WIDTH = 24
+export const PANE_MAX_WIDTH = 72
+/** Columns the list keeps before a side pane is worth showing. */
+export const PANE_MIN_LIST_WIDTH = 46
+/** Gap and rail between the list and the pane (`  │ `). */
+const PANE_GUTTER = 4
+
 /** Shared by keyboard handling and rendering: content never sets window size. */
-export function previewGeometry(columns: number, rows: number, fraction: number) {
+export function previewGeometry(columns: number, rows: number) {
   const available = Math.max(1, Math.floor(Number.isFinite(columns) ? columns : 80) - 1)
   const terminalRows = Math.max(1, Math.floor(Number.isFinite(rows) ? rows : 24))
-  const preferred = Math.min(available - 46 - 4, Math.max(24, Math.floor(available * fraction)))
-  const sideBySide = preferred >= 24
+  const preferred = Math.min(
+    available - PANE_MIN_LIST_WIDTH - PANE_GUTTER,
+    Math.min(PANE_MAX_WIDTH, Math.max(PANE_MIN_WIDTH, Math.floor(available * PANE_FRACTION))),
+  )
+  const sideBySide = preferred >= PANE_MIN_WIDTH
   const height = Math.max(3, Math.min(12, terminalRows - (sideBySide ? 10 : 15)))
   return {
     width: sideBySide ? preferred : available,

@@ -354,7 +354,7 @@ export function buildSelectorBlocks(
   // stays free so a full-width row cannot wrap into the next terminal line.
   const available = Math.max(1, finiteSize(columns, 80) - 1)
   const paneWidth = selectorPaneWidth(state, available)
-  const geometry = state.previewPane ? previewGeometry(columns, rows, state.previewPane.fraction) : undefined
+  const geometry = state.previewPane ? previewGeometry(columns, rows) : undefined
   const listLines = buildSelectorListLines(state, geometry?.listRows)
   if (paneWidth > 0) {
     const preview = state.items[state.focusIndex]?.preview ?? []
@@ -488,28 +488,17 @@ const PANE_DIVIDER = '  │ '
  */
 const PANE_MIN_ROWS = SELECTOR_VIEWPORT
 
-/** Columns the list keeps for itself before a pane is worth showing. */
-const PANE_MIN_LIST_WIDTH = 46
-
-/** Widest the pane grows to. Beyond this, extra columns go back to the list. */
-const PANE_MAX_WIDTH = 52
-
 /**
- * Pane width in columns, or 0 when the pane is suppressed. The pane takes a
- * third of the terminal, but never at the cost of the list becoming unreadable
- * — narrow terminals keep the single-column layout they had before.
+ * Pane width in columns, or 0 when the pane is suppressed. Every split window
+ * shares `previewGeometry`, so the list/details proportion is the same
+ * everywhere, and narrow terminals keep the single-column layout.
  */
 function selectorPaneWidth(state: SelectorState, columns: number): number {
   const focused = state.items[state.focusIndex]
   if (!focused?.preview || focused.preview.length === 0) return 0
   // One width for every focused row, so moving between sessions does not
-  // slide the divider. Extra terminal columns stay with the list.
-  const width = state.previewPane
-    ? previewGeometry(columns + 1, 24, state.previewPane.fraction).paneWidth
-    : Math.min(PANE_MAX_WIDTH, Math.max(24, Math.floor(columns / 3)))
-  if (width < 24) return 0
-  if (columns - width - PANE_DIVIDER.length < PANE_MIN_LIST_WIDTH) return 0
-  return width
+  // slide the divider.
+  return previewGeometry(columns + 1, 24).paneWidth
 }
 
 /**

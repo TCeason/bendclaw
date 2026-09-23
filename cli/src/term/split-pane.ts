@@ -26,7 +26,7 @@ export function handleSplitPaneKey(state: SelectorState, event: KeyEvent, column
   const up = event.type === 'up' || (state.noFilter && event.type === 'char' && event.char === 'k')
   if (event.type === 'page-up' || event.type === 'page-down' || (pane.focused && (up || down))) {
     if (!selected?.preview?.length) return { kind: 'none' }
-    const geometry = previewGeometry(columns, rows, pane.fraction)
+    const geometry = previewGeometry(columns, rows)
     const max = previewScrollLimit(selected.preview, geometry.width, geometry.height)
     const offset = Math.min(pane.offset, max)
     const delta = event.type === 'page-down' ? geometry.height - 1

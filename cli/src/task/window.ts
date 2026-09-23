@@ -205,7 +205,7 @@ export function createTaskWindow(
     ...createAppSelectorState('task', 'Tasks', items),
     focusIndex: index >= 0 ? index : 0,
     noFilter: true,
-    previewPane: { fraction: 0.55, offset: 0, confirmDeleteKey: 'd' },
+    previewPane: { offset: 0, confirmDeleteKey: 'd' },
     listFocused: true,
     lowercaseHints: true,
     hints: items.length ? hints : [{ keys: 'n', action: 'new' }, { keys: 'escape', action: 'close' }],

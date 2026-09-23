@@ -192,7 +192,7 @@ describe('repl selector control', () => {
   })
 
   test('bare d requires a second press before removing resume session', () => {
-    const state = { ...createAppSelectorState('resume', RESUME_SELECTOR_TITLE, items), listFocused: true, previewPane: { fraction: 0.55, offset: 0, confirmDeleteKey: 'd' } }
+    const state = { ...createAppSelectorState('resume', RESUME_SELECTOR_TITLE, items), listFocused: true, previewPane: { offset: 0, confirmDeleteKey: 'd' } }
     const first = handleSelectorControl(state, char('d'))
     expect(first.kind).toBe('update')
     if (first.kind !== 'update') return

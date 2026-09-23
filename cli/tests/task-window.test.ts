@@ -4,6 +4,7 @@ import { handleTaskKey } from '../src/task/control.js'
 import { createTaskWindow } from '../src/task/window.js'
 import type { ScheduledTask, TaskListResponse, TaskRunSummary } from '../src/task/types.js'
 import { buildSelectorRegionLines } from '../src/term/viewmodel/selector.js'
+import { PANE_MAX_WIDTH } from '../src/term/preview-scroll.js'
 import stripAnsi from 'strip-ansi'
 
 const now = Date.now()
@@ -187,12 +188,14 @@ describe('task window', () => {
     expect(navigate.state.previewPane?.offset).toBe(next.state.previewPane?.offset)
   })
 
-  test('wide terminals allocate more than the former 52 columns to details', () => {
+  test('wide terminals give the list the larger share and details a readable pane', () => {
     const state = createTaskWindow(response)
     const lines = buildSelectorRegionLines(state, 180, 32).map(stripAnsi)
     const divider = lines.find(row => row.includes('│'))?.indexOf('│') ?? -1
-    expect(divider).toBeGreaterThan(0)
-    expect(divider).toBeLessThan(100)
+    // The shared split: details take about a third, capped at 72 columns.
+    expect(divider).toBeGreaterThan(90)
+    expect(180 - divider).toBeGreaterThan(52)
+    expect(180 - divider).toBeLessThanOrEqual(PANE_MAX_WIDTH + 4)
   })
 
   test('details have fixed height regardless of instruction length or terminal height', () => {

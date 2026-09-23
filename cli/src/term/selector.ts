@@ -115,7 +115,7 @@ export interface SelectorRenameState {
 
 export interface SelectorState {
   /** Fixed-height scrollable details, independent of list navigation. */
-  previewPane?: { fraction: number; offset: number; focused?: boolean; confirmDeleteKey?: string }
+  previewPane?: { offset: number; focused?: boolean; confirmDeleteKey?: string }
   rename?: SelectorRenameState
   /** Opaque host-owned identity. Generic navigation preserves but never interprets it. */
   owner?: symbol

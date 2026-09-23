@@ -4,6 +4,7 @@ import { clipDisplayText } from '../../render/format.js'
 import { wrapTextWithAnsi } from '../../render/wrap.js'
 import { CURSOR_MARKER } from '../render-frame.js'
 import { SELECTOR_VIEWPORT, type SelectorState } from '../selector.js'
+import { previewGeometry } from '../preview-scroll.js'
 import { buildSelectorRow } from './selector-row.js'
 import { styledLineToAnsi } from './types.js'
 
@@ -11,9 +12,11 @@ import { styledLineToAnsi } from './types.js'
 export function buildSkillSelectorLines(state: SelectorState, width: number, rows: number, active: boolean): string[] {
   const theme = getTheme()
   const muted = (text: string) => theme.thinkText.paint(text)
-  const wide = width >= 76
-  const listWidth = wide ? Math.min(40, Math.floor(width * 0.44)) : Math.max(1, width - 2)
-  const detailWidth = wide ? Math.min(56, width - listWidth - 5) : Math.max(1, width - 2)
+  // Same split as every other list-with-details window.
+  const paneWidth = previewGeometry(width + 1, rows).paneWidth
+  const wide = paneWidth > 0
+  const listWidth = wide ? width - paneWidth - 5 : Math.max(1, width - 2)
+  const detailWidth = wide ? paneWidth : Math.max(1, width - 2)
   const clip = (text: string, size = width) => clipDisplayText(text, Math.max(0, size))
   const budget = Math.max(1, Math.min(SELECTOR_VIEWPORT, Math.floor(rows) - (wide ? 14 : 20)))
   let start = Math.min(Math.max(0, state.scrollOffset), Math.max(0, state.items.length - budget))

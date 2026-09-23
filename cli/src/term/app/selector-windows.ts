@@ -73,7 +73,7 @@ export function createResumeWindow(
   const state = createAppSelectorState('resume', RESUME_SELECTOR_TITLE, items, items, initialQuery)
   return {
     ...state,
-    previewPane: { fraction: 0.55, offset: 0, confirmDeleteKey: 'd' },
+    previewPane: { offset: 0, confirmDeleteKey: 'd' },
     listFocused,
     lowercaseHints: true,
     ...(state.query.length === 0 && state.items.length === 0 && state.allItems.some(item => !item.header)

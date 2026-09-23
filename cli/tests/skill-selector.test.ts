@@ -91,10 +91,15 @@ describe('skill browser', () => {
     const lines = render(focused)
     const detailLine = lines.find(row => row.includes('Browse, research'))
     expect(detailLine?.split('│')[1]).toContain('Browse, research')
-    expect(lines.filter(row => row.includes('│')).every(row => row.indexOf('│') === 42)).toBe(true)
+    // The shared split: one aligned divider, the list on the larger side.
+    const dividers = new Set(lines.filter(row => row.includes('│')).map(row => row.indexOf('│')))
+    expect(dividers.size).toBe(1)
+    expect([...dividers][0]!).toBeGreaterThan(50)
     expect(text).not.toContain('[official]')
     expect(text).toContain('Browse, research, and automate the web')
-    expect(text).toContain("opencli: What's new on my Twitter timeline?")
+    // The example wraps inside the pane; read it back as one sentence.
+    const details = lines.map(row => row.split('│')[1]?.trim() ?? '').filter(Boolean).join(' ')
+    expect(details).toContain("opencli: What's new on my Twitter timeline?")
     expect(text).not.toContain('installed')
     expect(text).not.toContain('transcript')
     expect(text).not.toContain('in lark/')
@@ -140,7 +145,7 @@ describe('skill browser', () => {
   test('metadata is a snapshot, and missing or unsafe descriptions degrade safely', () => {
     const { root, entries, state } = fixture()
     rmSync(root, { recursive: true, force: true })
-    expect(render(selectorFocusOn(state, item => item.id === 'opencli')).join('\n')).toContain('Twitter timeline')
+    expect(render(selectorFocusOn(state, item => item.id === 'opencli')).join('\n')).toContain('Twitter')
     expect(createSkillSelectorState(entries).items[0]?.preview).toContain('No description available.')
     mkdirSync(entries[0]!.dir, { recursive: true })
     writeFileSync(join(entries[0]!.dir, 'SKILL.md'), '---\ndescription: "\x1b[31mUnsafe\x07 text"\n---')

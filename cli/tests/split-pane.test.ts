@@ -15,7 +15,7 @@ for (const feature of ['task', 'resume'] as const) {
   test(`${feature}: shared Tab/arrows/Esc, no destructive actions in detail focus`, () => {
     let state: SelectorState = feature === 'resume' ? createResumeWindow(items, undefined, true) : {
       ...createAppSelectorState('task', 'Tasks', items), noFilter: true,
-      previewPane: { fraction: 0.55, offset: 0, confirmDeleteKey: 'd' },
+      previewPane: { offset: 0, confirmDeleteKey: 'd' },
     }
     const handle = feature === 'resume' ? handleSelectorControl : handleTaskKey
     const apply = (event: Parameters<typeof handleTaskKey>[1]) => {

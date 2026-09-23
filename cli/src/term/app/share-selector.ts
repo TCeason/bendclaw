@@ -85,7 +85,7 @@ export function shareSelectorState(shares: SharedSession[]): SelectorState {
   const state = createAppSelectorState('shares', 'Shared links', items)
   return {
     ...state,
-    previewPane: { fraction: 0.55, offset: 0, confirmDeleteKey: 'd' },
+    previewPane: { offset: 0, confirmDeleteKey: 'd' },
     listFocused: true,
     lowercaseHints: true,
     searchHint: 'titles, ids and links',

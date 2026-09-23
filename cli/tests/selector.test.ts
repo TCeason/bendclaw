@@ -702,7 +702,7 @@ describe('preview pane', () => {
     // Entry heights from the end are 2, 1, 2, 2, 2 — suffix sums 2, 3, 5, 7, 9.
     // The post-cut body budget is 6, which no suffix hits, so a row-based cut
     // has to land inside an entry while an entry-based one cannot.
-    const words = Array.from({ length: 16 }, (_, i) => `w${i}`).join(' ')
+    const words = Array.from({ length: 24 }, (_, i) => `w${i}`).join(' ')
     const twoRows = (label: string) => `› ${label} ${words}`
     const state = createSelectorState('Resume session', [{
       label: 'gggggggg',
