@@ -42,6 +42,9 @@ export function darkTheme(): Theme {
     // black text — bright enough to read, close to a real terminal caret.
     cursorHex: '#9ae65c',
     cursorFgHex: '#1a1d24',
+    // Devin's dark `--status-error`: warm and readable on the slate fills
+    // without the neon edge of most terminals' ANSI red.
+    errorHex: '#f44747',
 
     // The panel is a periwinkle-tinted slate: opencode keeps its panel one
     // step above the page, but evot cannot see the terminal's page colour, so

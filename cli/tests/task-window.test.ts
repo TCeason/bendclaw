@@ -5,6 +5,7 @@ import { createTaskWindow } from '../src/task/window.js'
 import type { ScheduledTask, TaskListResponse, TaskRunSummary } from '../src/task/types.js'
 import { buildSelectorRegionLines } from '../src/term/viewmodel/selector.js'
 import { PANE_MAX_WIDTH } from '../src/term/preview-scroll.js'
+import { getTheme } from '../src/render/theme/index.js'
 import stripAnsi from 'strip-ansi'
 
 const now = Date.now()
@@ -98,10 +99,12 @@ describe('task window', () => {
     const failed = lines.find(line => stripAnsi(line).includes('Delivery failed · manual'))
     expect(failed).toBeDefined()
     expect(stripAnsi(failed!)).not.toContain('! ✗')
-    // Red foreground opens right before the glyph.
-    expect(failed).toMatch(/\x1b\[31m✗ /)
+    // The themed error ink opens right before the glyph; never ANSI red.
+    const errorOpen = chalk.hex(getTheme().errorHex)('x').split('x')[0]!
+    expect(failed).toContain(`${errorOpen}✗ `)
+    expect(failed).not.toMatch(/\x1b\[31m/)
     const running = lines.find(line => stripAnsi(line).includes('◷ just now'))
-    expect(running).not.toMatch(/\x1b\[31m/)
+    expect(running).not.toContain(errorOpen)
   })
 
   test('rendered two-pane layout keeps model, metrics, and recent activity visible', () => {

@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import stripAnsi from 'strip-ansi'
-import { renderCommandNotice } from '../src/render/command-notice.js'
+import chalk from 'chalk'
+import { renderCommandNotice, renderErrorNotice } from '../src/render/command-notice.js'
+import { getTheme } from '../src/render/theme/index.js'
 import { createCommandOutput } from '../src/term/command-output.js'
 import { handleUpdateCommand, type ReplCommandContext } from '../src/term/repl-commands.js'
 import type { OutputLine } from '../src/render/output.js'
@@ -90,5 +92,21 @@ describe('update command output', () => {
     await handleUpdateCommand(ctx, async () => { throw new Error('offline') })
     expect(lines).toHaveLength(1)
     expect(stripAnsi(lines[0]?.text ?? '')).toBe('  ✗ update failed: offline')
+  })
+})
+
+describe('error notices', () => {
+  test('spend colour on the mark only and never use ANSI red', () => {
+    chalk.level = 3
+    const row = renderErrorNotice('Connection interrupted')
+    expect(stripAnsi(row)).toBe('  ✗ Connection interrupted')
+    expect(row).toContain(chalk.hex(getTheme().errorHex)('✗'))
+    // The message is the terminal's default ink: no SGR wraps it.
+    expect(row.endsWith('✗\x1b[39m Connection interrupted')).toBe(true)
+    expect(row).not.toContain('\x1b[31m')
+  })
+
+  test('renderErrorNotice is renderCommandNotice in its error state', () => {
+    expect(renderErrorNotice('boom')).toBe(renderCommandNotice({ state: 'error', message: 'boom' }))
   })
 })

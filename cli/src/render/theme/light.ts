@@ -34,6 +34,8 @@ export function lightTheme(): Theme {
     // The block flips to white text against it.
     cursorHex: '#3f9142',
     cursorFgHex: '#ffffff',
+    // Devin's light `--status-error`: deep enough to hold contrast on white.
+    errorHex: '#cb2431',
 
     // Pale periwinkle panel, a few points off white; diff rows a shade deeper.
     panelBg: '#eceef8',

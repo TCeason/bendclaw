@@ -402,9 +402,12 @@ describe('buildOutputBlocks', () => {
     expect(result).toContain('\x1b[32m')
   })
 
-  test('tool status line fail mark uses red', () => {
+  test('tool status line fail mark uses the themed error ink, not ANSI red', () => {
     const result = render([{ id: 't1', kind: 'tool', text: '  ✗ · exit 1' }])
-    expect(result).toContain('\x1b[31m')
+    expect(result).toContain(chalk.hex(getTheme().errorHex)('  ✗'))
+    expect(result).not.toContain('\x1b[31m')
+    // The metadata after the mark stays muted; the mark alone carries failure.
+    expect(result).toContain(chalk.hex(getTheme().mutedHex)(' · exit 1'))
   })
 
   test('tool status line retry mark uses yellow', () => {
@@ -552,9 +555,26 @@ describe('buildOutputBlocks', () => {
     expect(result).not.toContain('\x1b[38;2;119;119;119m')
   })
 
-  test('error lines are red', () => {
-    const result = render([{ id: 'e1', kind: 'error', text: 'something broke' }])
-    expect(result).toContain('\x1b[31m')
+  test('error body rows carry no colour at all', () => {
+    // Failure ink belongs to the status glyph; the reason reads as plain text.
+    const result = render([{ id: 'e1', kind: 'error', text: '  something broke' }])
+    expect(result).toBe('  something broke')
+  })
+
+  test('a standalone Error row becomes a themed ✗ mark with a plain message', () => {
+    const result = render([{ id: 'e1', kind: 'error', text: 'Error: connection interrupted' }])
+    expect(result).toBe(`${chalk.hex(getTheme().errorHex)('✗ ')}connection interrupted`)
+    expect(result).not.toContain('\x1b[31m')
+    expect(stripAnsi(result)).not.toContain('Error:')
+  })
+
+  test('a wrapped standalone Error row hangs continuations under the message', () => {
+    const msg = `Error: ${'word '.repeat(30).trim()}`
+    const result = renderPlainWithColumns([{ id: 'e1', kind: 'error', text: msg }], 40)
+    const lines = result.split('\n').filter(l => l.length > 0)
+    expect(lines.length).toBeGreaterThan(1)
+    expect(lines[0]!.startsWith('✗ word')).toBe(true)
+    for (const l of lines.slice(1)) expect(l.startsWith('  word')).toBe(true)
   })
 
   test('long error wraps instead of truncating', () => {
@@ -642,12 +662,13 @@ describe('tool cards: lifecycle-tinted slabs', () => {
     expect(theme.toolCardBg).not.toBe(theme.panelBg)
   })
 
-  test('the fill survives a failed body whose rows are red', () => {
+  test('the fill survives a failed card and only the mark is red', () => {
     const rows = renderWithColumns(buildToolCard(call('error', { result: 'not found' })), 40).split('\n').slice(1)
     const fill = bgOpen(getTheme().toolCardBg)
     const bodyRow = rows.find(r => stripAnsi(r).includes('not found'))!
     expect(bodyRow.startsWith(fill)).toBe(true)
-    expect(bodyRow).toContain('\x1b[31m')
+    expect(bodyRow).toContain(chalk.hex(getTheme().errorHex)('  ✗'))
+    expect(bodyRow).not.toContain('\x1b[31m')
     // Padding rows share the card fill, so the slab has no seam.
     expect(rows[0]!.startsWith(fill)).toBe(true)
     expect(rows[rows.length - 1]!.startsWith(fill)).toBe(true)

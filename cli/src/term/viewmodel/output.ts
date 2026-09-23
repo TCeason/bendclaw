@@ -236,19 +236,27 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
         break
 
       case 'error': {
+        // Failure ink goes on the mark, never the message: a standalone
+        // `Error: <msg>` row becomes `✗ <msg>` with only the glyph in error
+        // colour, and body rows inside a card (tool stderr, an LLM failure
+        // reason) stay in the terminal's default ink. The reader spots the
+        // failure by the single mark and reads the text as text.
         const cols = wrapColumns
+        const standalone = ol.text.match(/^Error: (.*)$/s)
         // Preserve the 2-space indent used by LLM-error body lines so wrapped
-        // continuations align under the first line.
+        // continuations align under the first line. A standalone row hangs
+        // its continuations under the message, past the mark.
         const indentMatch = ol.text.match(/^(\s*)/)
-        const indent = indentMatch ? indentMatch[1]! : ''
+        const indent = standalone ? '  ' : indentMatch ? indentMatch[1]! : ''
+        const body = standalone ? standalone[1]! : ol.text.slice(indent.length)
         const avail = cols ? Math.max(1, cols - indent.length) : 0
-        const body = ol.text.slice(indent.length)
+        const lead = (first: boolean): StyledSpan => (standalone && first ? colored('✗ ', 'red') : plain(indent))
         if (avail > 0 && stringWidth(body) > avail) {
           const chunks = wrapTextByWidth(body, avail)
-          const errLines = chunks.map(c => line(colored(`${indent}${body.slice(c.start, c.end)}`, 'red')))
+          const errLines = chunks.map((c, i) => line(lead(i === 0), plain(body.slice(c.start, c.end))))
           blocks.push(block(errLines))
         } else {
-          blocks.push(block([line(colored(ol.text, 'red'))]))
+          blocks.push(block([line(lead(true), plain(body))]))
         }
         break
       }

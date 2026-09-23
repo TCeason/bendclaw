@@ -9,7 +9,7 @@ import { runShareCommand } from '../commands/share.js'
 import type { OutputLine } from '../render/output.js'
 import { defaultDeps, type LoginDeps } from '../commands/login-flow.js'
 import { createCommandOutput } from './command-output.js'
-import { renderCommandNotice } from '../render/command-notice.js'
+import { renderCommandNotice, renderErrorNotice } from '../render/command-notice.js'
 import type { RunResult } from '../update/types.js'
 
 export interface ReplCommandContext {
@@ -84,7 +84,7 @@ export function logAnalysisPrompt(logPath: string, judgeTrace: string | null): s
 
 function failureText(label: string, err: unknown): string {
   const message = (err as { message?: string })?.message ?? String(err)
-  return chalk.red(`  ${label}: ${message}`)
+  return renderErrorNotice(`${label}: ${message}`)
 }
 
 /** Distinguishes concurrent reveals; see the comment at its use site. */
@@ -272,10 +272,10 @@ export async function handleLoginCommand(
         return true
       }
       case 'denied':
-        ctx.commitSystem('sys-login-err', chalk.red('  ✗ login denied'))
+        ctx.commitSystem('sys-login-err', renderErrorNotice('login denied'))
         return false
       case 'timeout':
-        ctx.commitSystem('sys-login-err', chalk.red('  ✗ login timed out, try again'))
+        ctx.commitSystem('sys-login-err', renderErrorNotice('login timed out, try again'))
         return false
     }
   } catch (err) {

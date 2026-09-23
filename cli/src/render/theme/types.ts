@@ -40,6 +40,15 @@ export interface Theme {
   cursorHex: string
   /** Text sat on by the cursor block; contrasts against `cursorHex`. */
   cursorFgHex: string
+  /**
+   * Failure ink. Spent on the status glyph only (`✗`, an alert marker), never
+   * on message bodies: an error's *text* stays in the terminal's default ink
+   * and its status word stays muted, so a failure is spotted by a single red
+   * mark rather than a red wall (Devin's `--status-error`). Replaces ANSI 31,
+   * whose shade every terminal palette picks differently, often at full
+   * saturation.
+   */
+  errorHex: string
 
   // Transcript blocks. The user message sits on `panelBg` behind a brand rail
   // (opencode's UserMessage). Tool cards share one neutral fill regardless of

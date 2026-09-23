@@ -1,4 +1,4 @@
-import chalk from 'chalk'
+import { renderErrorNotice } from '../../render/command-notice.js'
 
 import type { QueryStream } from '../../native/index.js'
 import { buildUserMessage, type OutputLine } from '../../render/output.js'
@@ -100,7 +100,7 @@ export function createQueueEdit(deps: QueueEditDeps) {
         // Failed refresh is not proof the entry was consumed. Retain the edit
         // and its draft so the user can retry or explicitly discard it.
       }
-      deps.commitSystem('sys-queue-err', chalk.red(`  Queue edit failed: ${errorText(err)}`))
+      deps.commitSystem('sys-queue-err', renderErrorNotice(`Queue edit failed: ${errorText(err)}`))
       deps.requestRender()
     }
   }
@@ -114,7 +114,7 @@ export function createQueueEdit(deps: QueueEditDeps) {
       openQueueSelector()
     } catch (err) {
       reconcileQueuedUserMessages()
-      deps.commitSystem('sys-queue-err', chalk.red(`  Queue remove failed: ${errorText(err)}`))
+      deps.commitSystem('sys-queue-err', renderErrorNotice(`Queue remove failed: ${errorText(err)}`))
       openQueueSelector()
     }
   }

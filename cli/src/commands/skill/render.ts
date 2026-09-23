@@ -242,7 +242,7 @@ function marker(outcome: UnitOutcome): string {
     case 'new': return chalk.green('✓')
     case 'updated': return chalk.green('↑')
     case 'unchanged': return muted('=')
-    case 'failed': return chalk.red('✗')
+    case 'failed': return chalk.hex(getTheme().errorHex)('✗')
     case 'skipped': return muted('-')
     case 'removed': return chalk.yellow('✕')
   }
@@ -277,7 +277,8 @@ export function renderOperation(view: OperationView): string {
     }
     if (unit.detail) {
       text += ' '.repeat(sizeWidth - stringWidth(size) + COLUMN_GAP)
-      text += unit.outcome === 'failed' ? chalk.red(unit.detail) : muted(unit.detail)
+      // A failure reason reads in default ink; the `✗` already flags the row.
+      text += unit.outcome === 'failed' ? unit.detail : muted(unit.detail)
     }
     lines.push(text)
     for (const note of unit.notes) {

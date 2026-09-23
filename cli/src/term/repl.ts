@@ -26,6 +26,7 @@ import { buildAssistantLines, buildUserMessage, messagesToOutputLines, type Outp
 import { manualCompactionLines } from './viewmodel/manual-compaction.js'
 import { wrapTextWithAnsi } from '../render/wrap.js'
 import { createHyperlink } from '../render/hyperlink.js'
+import { renderErrorNotice } from '../render/command-notice.js'
 import { Agent, QueryStream, fastExit, authNotices, taskShareId, type ManualCompactionOutcome, type SessionMeta, type ConfigInfo } from '../native/index.js'
 import { createInitialState, type AppState } from './app/state.js'
 import { assistantToolCalls } from './app/assistant-content.js'
@@ -355,7 +356,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     loadRunTranscript: async id => await agent.findSession(id) ? agent.loadTranscript(id) : null,
     closeOverlay: () => { overlay = { kind: 'none' } },
     requestRender: () => renderer.requestRender(),
-    notifyError: text => commitSystem('sys-task-err', chalk.red(`  ${text}`)),
+    notifyError: text => commitSystem('sys-task-err', renderErrorNotice(text)),
     notify: text => commitSystem('sys-task', `  ${text}`),
     hyperlink: url => createHyperlink(url),
     collectAnswers: questions => presentAskQuestions(questions, 'idle'),
@@ -1363,7 +1364,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         commitSystem('sys-model-pin', chalk.dim(`  ★ ${label} is now the default for new sessions on this account`))
       }
     } catch (err) {
-      commitSystem('sys-model-pin', chalk.red(`  Could not save default model: ${errorText(err)}`))
+      commitSystem('sys-model-pin', renderErrorNotice(`Could not save default model: ${errorText(err)}`))
     }
     renderer.requestRender()
   }
@@ -1504,7 +1505,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       ? preloadedSessions.find(s => s.session_id === wanted || s.session_id.startsWith(wanted))
       : findPreviousSession(preloadedSessions, agent.cwd)
     if (!source) {
-      commitSystem('sys-fork-err', chalk.red(wanted ? `Session not found: ${wanted}` : 'No session in this directory to fork'))
+      commitSystem('sys-fork-err', renderErrorNotice(wanted ? `Session not found: ${wanted}` : 'No session in this directory to fork'))
       cleanup()
       await sessionHook.close()
       fastExit(1)
@@ -1513,7 +1514,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         const fork = await agent.forkSession(source.session_id)
         await resumeSession(fork, forkNotice(fork, source, chalk.dim, chalk.cyan))
       } catch (err) {
-        commitSystem('sys-fork-err', chalk.red(`Fork failed: ${errorText(err)}`))
+        commitSystem('sys-fork-err', renderErrorNotice(`Fork failed: ${errorText(err)}`))
       }
     }
   } else if (opts.continueLatest) {
@@ -1521,7 +1522,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (match) {
       await resumeSession(match)
     } else {
-      commitSystem('sys-continue-err', chalk.red('No conversation found to continue'))
+      commitSystem('sys-continue-err', renderErrorNotice('No conversation found to continue'))
       cleanup()
       await sessionHook.close()
       fastExit(1)
@@ -1533,7 +1534,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (match) {
       await resumeSession(match)
     } else {
-      commitSystem('sys-resume-err', chalk.red(`Session not found: ${opts.resumeSessionId}`))
+      commitSystem('sys-resume-err', renderErrorNotice(`Session not found: ${opts.resumeSessionId}`))
     }
   }
 
@@ -2222,7 +2223,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     commit: commitBackgroundLine,
     requestRender: () => renderer.requestRender(),
     errorText,
-    paintError: text => chalk.red(text),
+    paintError: text => renderErrorNotice(text.trimStart()),
     readOutput: path => readOutputTail(path),
     watchOutput: watchOutputFile,
     openPanel: state => {
@@ -3213,7 +3214,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       try {
         configInfo = agent.configInfo()
       } catch (err) {
-        commitSystem('sys-model-config', chalk.red(`  Failed to reload model config: ${errorText(err)}`))
+        commitSystem('sys-model-config', renderErrorNotice(`Failed to reload model config: ${errorText(err)}`))
         renderer.requestRender()
         return
       }
@@ -3229,7 +3230,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         planning,
       })
     } catch (err) {
-      commitSystem('sys-command-err', chalk.red(`  Command failed: ${errorText(err)}`))
+      commitSystem('sys-command-err', renderErrorNotice(`Command failed: ${errorText(err)}`))
       renderer.requestRender()
       return
     }
@@ -3391,13 +3392,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
                 cloudLoginRequired = !reloadAfterAuthChange()
                 authWatcher?.sync()
                 if (cloudLoginRequired) {
-                  commitSystem('sys-login-model-err', chalk.red('  Login succeeded, but no cloud model was loaded. Try /login again.'))
+                  commitSystem('sys-login-model-err', renderErrorNotice('Login succeeded, but no cloud model was loaded. Try /login again.'))
                 } else {
                   void syncCloudNow(true)
                 }
               } catch (err) {
                 cloudLoginRequired = true
-                commitSystem('sys-login-model-err', chalk.red(`  Failed to load the signed-in cloud model: ${errorText(err)}`))
+                commitSystem('sys-login-model-err', renderErrorNotice(`Failed to load the signed-in cloud model: ${errorText(err)}`))
               }
             }
           } finally {
@@ -3417,7 +3418,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             authWatcher?.sync()
           } catch (err) {
             cloudLoginRequired = true
-            commitSystem('sys-logout-model-err', chalk.red(`  Failed to reload providers after logout: ${errorText(err)}`))
+            commitSystem('sys-logout-model-err', renderErrorNotice(`Failed to reload providers after logout: ${errorText(err)}`))
           }
         }
       }
@@ -3446,7 +3447,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           commitLines(lines.length > 0 ? lines : [{ id: 'sys-dump', kind: 'system', text: '  (no dump output)' }])
         }
       } catch (err) {
-        commitSystem('sys-dump-err', chalk.red(`  /_dump failed: ${errorText(err)}`))
+        commitSystem('sys-dump-err', renderErrorNotice(`/_dump failed: ${errorText(err)}`))
       }
     } else if (name === '/log') {
       await handleLogCommand(args)
@@ -3473,7 +3474,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           openResumeSelector(undefined)
         }
       } catch (err) {
-        commitSystem('sys-r-err', chalk.red(`  Failed to list sessions: ${errorText(err)}`))
+        commitSystem('sys-r-err', renderErrorNotice(`Failed to list sessions: ${errorText(err)}`))
       }
     } else if (name === '/model' && !args) {
       openModelSelector()
@@ -3494,7 +3495,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       invalidateResumeSessionCache()
       await resumeSession(fork, forkNotice(fork, parent, chalk.dim, chalk.cyan))
     } catch (err) {
-      commitSystem('sys-fork-err', chalk.red(`  /fork failed: ${errorText(err)}`))
+      commitSystem('sys-fork-err', renderErrorNotice(`/fork failed: ${errorText(err)}`))
     }
   }
 
@@ -3520,7 +3521,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       invalidateResumeSessionCache()
       await resumeSession(resolved.target, backNotice(left, resolved.target, resolved.skipped, chalk.dim, chalk.cyan))
     } catch (err) {
-      commitSystem('sys-back-err', chalk.red(`  /back failed: ${errorText(err)}`))
+      commitSystem('sys-back-err', renderErrorNotice(`/back failed: ${errorText(err)}`))
     }
   }
 
@@ -3751,7 +3752,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       renderer.requestRender()
     } catch (err) {
-      commitSystem('sys-rsem-err', chalk.red(`  Semantic search failed: ${errorText(err)}`))
+      commitSystem('sys-rsem-err', renderErrorNotice(`Semantic search failed: ${errorText(err)}`))
       openResumeSelector(query)
     }
   }
@@ -3833,7 +3834,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       if (!activeState()) return
       invalidateExplicitResumeSelector()
       overlay = { kind: 'none' }
-      commitSystem('sys-r-err', chalk.red(`  Failed to list sessions: ${errorText(err)}`))
+      commitSystem('sys-r-err', renderErrorNotice(`Failed to list sessions: ${errorText(err)}`))
       renderer.requestRender()
     })
   }
@@ -3893,7 +3894,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         else lines.push('  PNG:  (no Chrome/Chromium — HTML only. Install chromium or set EVOT_CHROME.)')
         commitSystem('sys-log-shot', lines.join('\n'))
       } catch (err) {
-        commitSystem('sys-log-err', chalk.red(`  Shot failed: ${errorText(err)}`))
+        commitSystem('sys-log-err', renderErrorNotice(`Shot failed: ${errorText(err)}`))
       } finally {
         foregroundCommand = null
         isLoading = false
@@ -3924,7 +3925,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         renderer.requestRender()
         await runLogQuery(forked, query)
       } catch (err) {
-        commitSystem('sys-log-err', chalk.red(`  Fork failed: ${errorText(err)}`))
+        commitSystem('sys-log-err', renderErrorNotice(`Fork failed: ${errorText(err)}`))
       }
     }
     renderer.requestRender()
@@ -3995,7 +3996,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         streamMachine = final.state
         commitFlushResult(final)
       }
-      commitSystem('sys-log-err', chalk.red(`  Log query failed: ${errorText(err)}`))
+      commitSystem('sys-log-err', renderErrorNotice(`Log query failed: ${errorText(err)}`))
       reconcileQueuedUserMessages()
       restoreQueuedUserMessagesToEditor()
     } finally {
@@ -4126,7 +4127,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             shareEvents: modelShareEvents(provider, model, effort),
           })
         } catch (err) {
-          commitSystem('sys-model-err', chalk.red(`  Failed to switch model: ${errorText(err)}`))
+          commitSystem('sys-model-err', renderErrorNotice(`Failed to switch model: ${errorText(err)}`))
         }
         renderer.requestRender()
         return
