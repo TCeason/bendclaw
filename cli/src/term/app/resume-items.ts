@@ -14,7 +14,7 @@
  */
 
 import type { SessionMeta, SessionWithText } from '../../native/index.js'
-import { formatSessionItems } from './resume.js'
+import { formatSessionItems, isInteractiveSession } from './resume.js'
 import type { SelectorItem } from '../selector.js'
 
 export interface ResumeItemInputs {
@@ -68,9 +68,11 @@ export class ResumeItemCache {
     ) {
       return previous.items
     }
+    // Task runs never consume the bounded first paint's row budget.
+    const interactive = inputs.sessions.filter(isInteractiveSession)
     const visible = inputs.limit === undefined
-      ? inputs.sessions
-      : inputs.sessions.slice(0, inputs.limit)
+      ? interactive
+      : interactive.slice(0, inputs.limit)
     const items = formatSessionItems(visible, inputs.cwd, sessionText, inputs.openSessionId)
     this.entries.set(slot, {
       sessions: inputs.sessions,

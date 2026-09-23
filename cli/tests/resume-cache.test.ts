@@ -26,6 +26,23 @@ function fixture() {
 }
 
 describe('resume cache ownership', () => {
+  test('task-heavy first page still shows 20 interactive sessions', async () => {
+    const f = fixture()
+    const pending = f.cache.preview()
+    const tasks = Array.from({ length: 20 }, (_, index) => ({ ...row(`run-${index}`), source: 'automation' }))
+    f.metadata[0]!.result.resolve(tasks)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(f.metadata[1]?.limit).toBe(0)
+    const human = Array.from({ length: 25 }, (_, index) => row(`chat-${index}`))
+    f.metadata[1]!.result.resolve([...tasks, ...human])
+    expect((await pending).map(s => s.session_id)).toEqual(human.slice(0, 20).map(s => s.session_id))
+    expect(f.cache.complete).toBe(true)
+    // The full catalog keeps automation rows, which remain reachable by ID.
+    expect((await f.cache.all()).filter(s => s.source === 'automation')).toHaveLength(20)
+    f.cache.dispose()
+  })
+
   test('coalesces loads and does not replace full metadata with a late preview', async () => {
     const f = fixture()
     const preview = f.cache.preview()

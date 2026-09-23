@@ -230,9 +230,13 @@ function sessionIdLabels(sessions: SessionMeta[]): Map<string, string> {
   return labels
 }
 
-/** How a session came to be, in the one word the list has room for. The
- *  stored `source` is an internal name; `automation` sessions are task runs,
- *  and calling them that is what lets a row be recognised as one. */
+/** Task runs are durable sessions, but they belong under /task rather than
+ * the default resume picker. Direct lookup by id remains available. */
+export function isInteractiveSession(session: SessionMeta): boolean {
+  return session.source !== 'automation'
+}
+
+/** Source label when an automation session is deliberately opened by id. */
 export function sessionSourceBadge(source: string | undefined): string {
   switch (source || '') {
     case 'automation': return 'task'

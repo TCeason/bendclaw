@@ -889,10 +889,24 @@ impl Agent {
     /// Search recent sessions for literal matches before falling back to
     /// semantic ranking with the configured LLM.
     async fn handle_resume_search(&self, query: &str) -> Result<String> {
-        let sessions = self
-            .storage
-            .list_sessions_with_text(crate::search::resume_search::SESSION_LIMIT)
+        // Automation creates a durable session on every run, but /resume is
+        // for conversations a person is likely to continue. Choose the 30
+        // interactive sessions *before* reading their transcripts: otherwise
+        // a frequent task can consume the whole search window (and make us
+        // read irrelevant task transcripts).
+        let catalog = crate::sessions::SessionQueries::new(self.storage.clone())
+            .list(0)
             .await?;
+        let mut sessions = Vec::new();
+        for meta in catalog
+            .into_iter()
+            .filter(|row| row.source != "automation")
+            .take(crate::search::resume_search::SESSION_LIMIT)
+        {
+            if let Some(text) = self.storage.session_with_text(&meta.session_id).await? {
+                sessions.push(text);
+            }
+        }
         if let Some(results) = crate::search::resume_search::literal_results(query, &sessions) {
             return Ok(results);
         }

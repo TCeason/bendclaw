@@ -122,3 +122,35 @@ async fn rsearch_submit_does_not_persist_a_session(
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn rsearch_skips_task_runs_before_the_thirty_session_limit(
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let dir = TempDir::new()?;
+    let config = evot::conf::Config::new(dir.path().to_path_buf());
+    let agent = Agent::new(&config, "/work")?;
+    let storage = agent.storage();
+    let mut chat = SessionMeta::new("chat".into(), "/work".into(), "m".into());
+    chat.title = Some("Find the comet".into());
+    chat.source = "repl".into();
+    chat.updated_at = "2025-01-01T00:00:00Z".into();
+    storage.save_session(chat).await?;
+    for index in 0..35 {
+        let mut run = SessionMeta::new(format!("task-{index}"), "/work".into(), "m".into());
+        run.title = Some("Unrelated task".into());
+        run.source = "automation".into();
+        storage.save_session(run).await?;
+    }
+    let outcome = agent.submit(QueryRequest::text("/_rsearch comet")).await?;
+    match outcome {
+        SubmitOutcome::Command(msg) => {
+            assert!(
+                msg.contains("- chat — Find the comet — exact text match"),
+                "{msg}"
+            );
+            assert!(!msg.contains("task-"));
+        }
+        SubmitOutcome::Run(_) => return Err("expected command outcome, got run".into()),
+    }
+    Ok(())
+}

@@ -12,7 +12,7 @@ export function shouldPreloadStartupSessions(opts: { continueLatest?: boolean; r
 export function findPreviousSession(preloaded: SessionMeta[], cwd: string): SessionMeta | undefined {
   return [...preloaded]
     .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''))
-    .find(s => s.cwd === cwd)
+    .find(s => s.cwd === cwd && s.source !== 'automation')
 }
 
 /**

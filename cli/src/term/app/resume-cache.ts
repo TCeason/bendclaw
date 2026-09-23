@@ -1,5 +1,6 @@
 import type { SessionMeta, SessionWithText, TranscriptItem } from '../../native/index.js'
 import { enrichSessionRecognition, type SessionRecognition } from './session-recognition.js'
+import { isInteractiveSession } from './resume.js'
 
 export interface ResumeSessionClient {
   listSessions(limit: number): Promise<SessionMeta[]>
@@ -110,17 +111,30 @@ export class ResumeSessionCache {
 
   preview(): Promise<SessionMeta[]> {
     if (this.disposed) return Promise.resolve([])
-    if (this.rows !== null && (this.full || this.rows.length > 0)) return Promise.resolve(this.rows.slice(0, RESUME_PREVIEW_ROWS))
+    if (this.rows !== null && (this.full || this.rows.length > 0)) {
+      const interactive = this.rows.filter(isInteractiveSession)
+      if (this.full || interactive.length === RESUME_PREVIEW_ROWS || this.rows.length < RESUME_PREVIEW_ROWS) {
+        return Promise.resolve(interactive.slice(0, RESUME_PREVIEW_ROWS))
+      }
+    }
     if (this.previewLoad) return this.previewLoad
     const generation = this.generation
-    const load = this.client.listSessions(RESUME_PREVIEW_ROWS).then(rows => {
-      if (generation !== this.generation) return (this.rows ?? []).slice(0, RESUME_PREVIEW_ROWS)
+    const load = this.client.listSessions(RESUME_PREVIEW_ROWS).then(async preview => {
+      if (generation !== this.generation) return (this.rows ?? []).filter(isInteractiveSession).slice(0, RESUME_PREVIEW_ROWS)
+      // The storage limit counts all sessions, including task runs. If they
+      // fill the first page, fetch the catalog so the resume picker still has
+      // 20 human sessions instead of a blank or misleading first screen.
+      const rows = preview.length === RESUME_PREVIEW_ROWS
+        && preview.filter(isInteractiveSession).length < RESUME_PREVIEW_ROWS
+        ? await this.client.listSessions(0) : preview
+      if (generation !== this.generation) return (this.rows ?? []).filter(isInteractiveSession).slice(0, RESUME_PREVIEW_ROWS)
       if (!this.full) {
         this.rows = rows
+        this.full = rows !== preview
         this.onLoaded(rows)
-        return rows
+        return rows.filter(isInteractiveSession).slice(0, RESUME_PREVIEW_ROWS)
       }
-      return (this.rows ?? rows).slice(0, RESUME_PREVIEW_ROWS)
+      return (this.rows ?? rows).filter(isInteractiveSession).slice(0, RESUME_PREVIEW_ROWS)
     })
     this.previewLoad = load
     void load.finally(() => { if (this.previewLoad === load) this.previewLoad = null }).catch(() => {})

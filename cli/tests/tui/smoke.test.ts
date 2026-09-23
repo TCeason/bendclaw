@@ -571,8 +571,9 @@ describe.skipIf(!canRun)('evot binary smoke (PTY)', () => {
 
       session.checkpoint()
       session.write('/resume\x0d')
-      const reopened = await session.waitFor('Resume session')
-      expect(reopened).toMatch(/Resume session.*\s1(?:\r|\n)/)
+      // The first paint can be the async metadata placeholder (count 0).
+      // Wait for the real list rather than asserting on that intermediate frame.
+      const reopened = await session.waitForScreen(/Resume session\s+1(?:\r|\n)/)
       expect(reopened).toContain('Current cwd')
       // The local provider fails promptly, so the fallback title can already
       // be set. Assert the actual prompt rather than racing title generation.

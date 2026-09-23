@@ -120,6 +120,7 @@ import {
   COMPACT_SUMMARY_PREFIX,
   applySessionText,
   formatSessionItems,
+  isInteractiveSession,
   isSessionIdPrefix,
   normalizeResumeQuery,
   resolveSessionByPrefix,
@@ -350,6 +351,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         ? overlay.state
         : null,
     showSelector: state => { overlay = { kind: 'selector', state } },
+    currentSessionId: () => sessionId,
+    loadRunTranscript: async id => await agent.findSession(id) ? agent.loadTranscript(id) : null,
     closeOverlay: () => { overlay = { kind: 'none' } },
     requestRender: () => renderer.requestRender(),
     notifyError: text => commitSystem('sys-task-err', chalk.red(`  ${text}`)),
@@ -1205,7 +1208,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // Help remains a modal rather than participating in the stable
     // selector/composer layout. Consume its command on activation so closing
     // the modal cannot immediately recreate the same preview from `/help`.
-    if (preview.kind === 'help') clearAll()
+    // Once the task picker owns the keyboard, `/task` is no longer a draft.
+    // Leaving it in the editor made a background task edit look like it was
+    // responding while the same command was still waiting to be submitted.
+    if (preview.kind === 'help' || preview.trigger === 'task') clearAll()
     renderer.requestRender()
     if (preview.trigger === 'resume') {
       scheduleFocusedResumeEnrichment(preview.generation)
@@ -2037,6 +2043,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   async function resumeSession(session: SessionMeta, notice?: OutputLine[]) {
+    taskSession.cancelFlow()
     try {
       const cloudNotice = await pullBeforeResume(session.session_id)
       const { transcript, model, provider, thinkingLevel, cwd: sessionCwd } = await prepareResume(agent, session)
@@ -2328,6 +2335,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       streamRef = stream
       sessionId = stream.sessionId ?? sessionId
       if (sessionId) {
+        taskSession.bindFlowSession(sessionId, hostToolExtension)
         sessionHook.startSession(sessionId, agent.cwd)
         // The query may have just persisted a formerly unbound first session,
         // and every run can change its title, turn count, and recency.
@@ -2347,6 +2355,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             collectAskUserAnswers,
             hostToolExtension,
           )
+          // A cancelled ask_user aborts an in-progress edit. Do not route the
+          // next ordinary prompt back into a flow the user dismissed.
+          if (hostToolExtension && /^(ask_user|AskUser)$/i.test(event.payload.tool_name)
+              && response.content.some(part =>
+            (response.is_error && part.text === 'User cancelled the question.')
+            || /→ Cancel(?:\n|$)/.test(part.text))) {
+            taskSession.cancelFlow()
+          }
           if (ownsRun(generation)) await stream.respondHostTool(JSON.stringify(response))
           continue
         }
@@ -2450,6 +2466,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         streamMachine = null
         stopSpinner()
         commitRunFooter()
+        if (taskSession.unfinishedFlow(hostToolExtension)) {
+          commitSystem('sys-task-incomplete', '  Task change not saved yet · reply to continue editing, or /task cancel')
+        }
         // Fresh ads/models belong in the background: awaiting the catalog here
         // stalled the prompt for the whole HTTP round-trip after every turn.
         void syncCloudNow(true)
@@ -3011,11 +3030,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             runLogQuery(logMode, expandedText)
           } else {
             commitLines(buildUserMessage(displayText))
+            // If the model stopped the task edit with a plain-text question,
+            // the next reply is still in that edit flow, not a normal coding
+            // turn. Keep its task tool available until confirmation/cancel.
+            const taskExtension = taskSession.followUpExtension(sessionId)
             if (imageBlocks) {
               const contentJson = JSON.stringify(imageBlocks)
-              runQuery('', contentJson)
+              runQuery('', contentJson, undefined, taskExtension)
             } else {
-              runQuery(expandedText)
+              runQuery(expandedText, undefined, undefined, taskExtension)
             }
           }
         })
@@ -3214,6 +3237,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     planning = result.planning
     if (result.overlay) overlay = result.overlay
     if (result.clearContext) {
+      taskSession.cancelFlow()
       // Abort any in-flight streaming and clear local context view without switching sessions.
       if (isLoading && streamRef) {
         revokeRun()
@@ -3240,6 +3264,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       resumeCache.replace(preloadedSessions)
     }
     if (result.newSession) {
+      taskSession.cancelFlow()
       // Abort any in-flight streaming.
       if (isLoading && streamRef) {
         revokeRun()
@@ -3292,7 +3317,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
 
     if (name === '/task') {
-      if (!args || args === 'list') {
+      if (args === 'cancel') {
+        commitSystem('sys-task-cancel', taskSession.cancelFlow()
+          ? '  Task edit cancelled · nothing was saved'
+          : '  No task edit in progress')
+      } else if (!args || args === 'list') {
         taskSession.open()
       } else if (taskShareId(args) !== null) {
         // A pasted share link is an import, not a request to interpret.
@@ -3428,7 +3457,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     } else if (name === '/resume') {
       const query = normalizeResumeQuery(args)
       try {
-        if (query && isSessionIdPrefix(query)) {
+        if (query === '--all') {
+          openResumeSelector(undefined, { includeAutomation: true })
+        } else if (query && isSessionIdPrefix(query)) {
           const allSessions = mergeRemoteSessions(await resumeCache.all(), cloudSessions.remoteSessions)
           const resolved = resolveSessionByPrefix(allSessions, query)
           if (resolved.kind === 'matched') {
@@ -3710,7 +3741,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const allSessions = await resumeCache.all()
       const ranked = ids
         .map(id => allSessions.find(s => s.session_id === id))
-        .filter((s): s is SessionMeta => Boolean(s))
+        .filter((s): s is SessionMeta => s !== undefined && isInteractiveSession(s))
       if (ranked.length === 0) return
       const items = formatSessionItems(ranked, agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudLabel)
       invalidateExplicitResumeSelector()
@@ -3729,21 +3760,24 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
    * `cloudOnly` (from `/share`) narrows the rows structurally, by each
    * session's cloud state, never by matching the word in transcripts.
    */
-  function openResumeSelector(initialQuery?: string, options: { cloudOnly?: boolean } = {}) {
+  function openResumeSelector(initialQuery?: string, options: { cloudOnly?: boolean; includeAutomation?: boolean } = {}) {
     const generation = ++explicitResumeSelectorGeneration
     const cached = resumeCache.withText ?? resumeCache.metadata
     const rows = (sessions: SessionMeta[]) => {
       const merged = mergeRemoteSessions(sessions, cloudSessions.remoteSessions)
-      return options.cloudOnly ? merged.filter(session => sessionCloudLabel(session) !== '') : merged
+      return options.cloudOnly
+        ? merged.filter(session => sessionCloudLabel(session) !== '')
+        : options.includeAutomation ? merged : merged.filter(isInteractiveSession)
     }
     const items = cached === null
       ? []
-      : formatSessionItems(rows(cached), agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudLabel, options.cloudOnly)
+      : formatSessionItems(rows(cached), agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudLabel, options.cloudOnly || options.includeAutomation)
     overlay = {
       kind: 'selector',
       state: {
         ...resumeSelectorState(items, initialQuery),
         ...(options.cloudOnly ? { title: 'Cloud sessions', sessionScope: 'cloud' as const } : {}),
+        ...(options.includeAutomation ? { title: 'All sessions · including task runs' } : {}),
         ...(cached === null ? { emptyMessage: 'Loading sessions…' } : {}),
       },
     }
@@ -3772,7 +3806,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         renderer.requestRender()
         return
       }
-      const metaItems = formatSessionItems(visible, agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudLabel, options.cloudOnly)
+      const metaItems = formatSessionItems(visible, agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudLabel, options.cloudOnly || options.includeAutomation)
       overlay = {
         kind: 'selector',
         // Loaded: the placeholder must not survive as the no-match message.

@@ -7,6 +7,7 @@ export interface TaskRunSummary {
   updated_at?: number
   session_id?: string
   error?: string
+  result_summary?: string
 }
 
 export interface TaskStats {

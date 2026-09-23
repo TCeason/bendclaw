@@ -5,7 +5,7 @@ import { join } from 'path'
 import { AuthIdentityTracker } from '../src/term/app/auth-identity.js'
 import { TaskSession, type TaskSessionHost, type TaskSessionApi } from '../src/task/session.js'
 import type { SelectorState } from '../src/term/selector.js'
-import type { ScheduledTask, TaskListResponse } from '../src/task/types.js'
+import type { ScheduledTask, TaskListResponse, TaskRunSummary } from '../src/task/types.js'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -31,7 +31,8 @@ function harness(api: Partial<TaskSessionApi>, hostOverrides: Partial<TaskSessio
     configInfo: () => undefined, activeModel: () => '', activeModelSpec: () => '',
     modelOptionLabel: model => model.model, ensureDelivery: async () => false,
     isTaskOverlay: () => overlay !== null, taskOverlayState: () => overlay,
-    showSelector: state => { overlay = state }, closeOverlay: () => { overlay = null },
+    currentSessionId: () => 'current-session',
+    showSelector: state => { overlay = state }, loadRunTranscript: async () => null, closeOverlay: () => { overlay = null },
     requestRender: () => {}, notifyError: error => { errors.push(error) }, notify: () => {},
     collectAnswers: async () => null, presentModelPicker: async () => null,
     runTaskTurn: () => {}, primeInput: () => {}, destroyed: () => false,
@@ -321,5 +322,119 @@ test('composer preview from a warm cache neither requests nor repaints', async (
   await flush()
   expect(requests).toBe(1)
   expect(repaints).toBe(0)
+  h.session.dispose()
+})
+
+const finishedRun: TaskRunSummary = {
+  id: 'r1', status: 'succeeded', source: 'manual', delivery_status: 'sent',
+  scheduled_for: 1000, session_id: 'session-r1',
+}
+const preAgentFailure: TaskRunSummary = {
+  id: 'r2', status: 'failed', source: 'scheduled', delivery_status: 'not_requested',
+  scheduled_for: 2000, error: 'model unavailable',
+}
+
+test('task -> runs -> read-only transcript -> runs -> tasks, including failed pre-agent run', async () => {
+  let reads = 0
+  const h = harness({ get: async id => ({ ...task(id), runs: [finishedRun, preAgentFailure] }) }, {
+    loadRunTranscript: async id => {
+      reads++
+      expect(id).toBe('session-r1')
+      return [{ type: 'user', text: 'Review the report' },
+        { type: 'assistant', content: [{ type: 'text', text: 'Report ready' }] }]
+    },
+  })
+  h.session.open()
+  await flush()
+  await h.session.handleKey({ type: 'enter' })
+  expect(h.view()?.title).toBe('a · Runs')
+  expect(h.view()?.items.map(row => row.id)).toEqual(['r2', 'r1'])
+  await h.session.handleKey({ type: 'enter' })
+  expect(h.view()?.items[h.view()!.focusIndex]?.preview?.join(' ')).toContain('model unavailable')
+  expect(reads).toBe(0)
+  await h.session.handleKey({ type: 'down' })
+  await h.session.handleKey({ type: 'enter' })
+  expect(reads).toBe(1)
+  expect(h.view()?.title).toBe('a · Transcript')
+  expect(h.view()?.items.map(row => row.label)).toEqual(['User', 'Assistant'])
+  await h.session.handleKey({ type: 'escape' })
+  expect(h.view()?.title).toBe('a · Runs')
+  expect(h.view()?.items[h.view()!.focusIndex]?.id).toBe('r1')
+  await h.session.handleKey({ type: 'escape' })
+  expect(h.view()?.title).toBe('Tasks')
+  expect(h.view()?.items[h.view()!.focusIndex]?.id).toBe('a')
+  h.session.dispose()
+})
+
+test('closing task history while a transcript loads cannot reopen it', async () => {
+  const pending = deferred<{ type: string; text: string }[]>()
+  const h = harness({ get: async id => ({ ...task(id), runs: [finishedRun] }) }, {
+    loadRunTranscript: () => pending.promise,
+  })
+  h.session.open()
+  await flush()
+  await h.session.handleKey({ type: 'enter' })
+  const load = h.session.handleKey({ type: 'enter' })
+  await h.session.handleKey({ type: 'escape' })
+  expect(h.view()?.title).toBe('Tasks')
+  pending.resolve([{ type: 'user', text: 'hi' }])
+  await load
+  expect(h.view()?.title).toBe('Tasks')
+  h.session.dispose()
+})
+
+test('editing a task sends a normal visible user turn through the run stream', async () => {
+  const turns: { user: string; prompt: string }[] = []
+  const h = harness({}, { runTaskTurn: (user, prompt) => { turns.push({ user, prompt }) } })
+  h.session.open()
+  await flush()
+  await h.session.handleKey({ type: 'char', char: 'e' })
+  expect(h.view()).toBeNull()
+  expect(turns).toHaveLength(1)
+  expect(turns[0]?.user).toBe('/task edit a')
+  expect(turns[0]?.prompt).toContain('user-visible sentence')
+  expect(turns[0]?.prompt).toContain('ordinary assistant text')
+  h.session.dispose()
+})
+
+test('unfinished task edit retains its tool for a plain-text follow-up, but not another session', async () => {
+  const extensions: import('../src/term/host-tools.js').HostToolExtension[] = []
+  const h = harness({}, { runTaskTurn: (_user, _prompt, extension) => { extensions.push(extension) } })
+  h.session.open()
+  await flush()
+  await h.session.handleKey({ type: 'char', char: 'e' })
+  const tool = extensions[0]
+  expect(tool?.handles('automation_task_update')).toBe(true)
+  expect(h.session.unfinishedFlow(tool)).toBe(true)
+  // The model ended with "send me the new instruction". The user's reply
+  // must use the same flow rather than silently becoming a coding chat.
+  expect(h.session.followUpExtension('current-session')).toBe(tool)
+  expect(h.session.followUpExtension('another-session')).toBeUndefined()
+  expect(h.session.unfinishedFlow(tool)).toBe(false)
+  h.session.dispose()
+})
+
+test('task edit flow can be cancelled explicitly and cannot leak into the next reply', async () => {
+  const h = harness({})
+  h.session.open()
+  await flush()
+  await h.session.handleKey({ type: 'char', char: 'e' })
+  expect(h.session.cancelFlow()).toBe(true)
+  expect(h.session.followUpExtension('current-session')).toBeUndefined()
+  expect(h.session.cancelFlow()).toBe(false)
+  h.session.dispose()
+})
+
+test('a task flow started without a chat binds its new session before follow-up', () => {
+  let extension: import('../src/term/host-tools.js').HostToolExtension | undefined
+  const h = harness({}, {
+    currentSessionId: () => null,
+    runTaskTurn: (_user, _prompt, tool) => { extension = tool },
+  })
+  h.session.create('/task daily report', 'daily report')
+  expect(extension).toBeDefined()
+  h.session.bindFlowSession('new-session', extension)
+  expect(h.session.followUpExtension('new-session')).toBe(extension)
+  expect(h.session.followUpExtension('other-session')).toBeUndefined()
   h.session.dispose()
 })

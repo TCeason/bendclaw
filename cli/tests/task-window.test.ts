@@ -245,6 +245,8 @@ describe('task window', () => {
     expect(state.hints).toEqual([
       { keys: ['up', 'down'], action: 'select' },
       { keys: 'tab', action: 'details' },
+      { keys: 'enter', action: 'runs' },
+      { keys: 'h', action: 'runs' },
       { keys: 'e', action: 'edit' },
       { keys: 'r', action: 'run now' },
       { keys: 'space', action: 'pause/resume' },
@@ -268,7 +270,7 @@ describe('task window', () => {
         expect(text).toContain('space to pause/resume')
         expect(text).toContain('to delete')
       }
-      expect(text).not.toContain('to history')
+      if (!focused) expect(text).toContain('to runs')
       expect(text).not.toContain('Tab to focus')
       expect(text).not.toContain('Tab back')
     }

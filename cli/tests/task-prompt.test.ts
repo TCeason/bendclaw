@@ -50,9 +50,13 @@ describe('task prompts', () => {
 
   test('pressing e makes the first turn a field selector with readable current values', () => {
     const prompt = updateTaskPrompt(task, context)
-    expect(prompt).toContain('first and only action in this turn MUST be an ask_user call')
-    expect(prompt).toContain('Do not output explanatory text')
-    expect(prompt).toContain('do not call automation_task_update yet')
+    expect(prompt).toContain('one brief, user-visible sentence')
+    expect(prompt).toContain('ordinary assistant text before calling automation_task_update')
+    expect(prompt).toContain('MUST call ask_user again to collect the new value')
+    expect(prompt).toContain('Do not ask for it using plain assistant text or end the turn')
+    expect(prompt).toContain('Never end an unfinished edit with a plain-text question')
+    expect(prompt).not.toContain('Do not output explanatory text')
+    expect(prompt).toContain('Do not call automation_task_update before the user chooses a field')
     expect(prompt).toContain('What do you want to change')
     expect(prompt).toContain('"label":"Schedule"')
     expect(prompt).toContain('"label":"Instruction"')

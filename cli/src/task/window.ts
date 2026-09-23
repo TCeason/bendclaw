@@ -5,6 +5,8 @@ import type { ScheduledTask, TaskListResponse, TaskRunSummary, TaskStats } from 
 const hints = [
   { keys: ['up', 'down'], action: 'select' },
   { keys: 'tab', action: 'details' },
+  { keys: 'enter', action: 'runs' },
+  { keys: 'h', action: 'runs' },
   { keys: 'e', action: 'edit' },
   { keys: 'r', action: 'run now' },
   { keys: 'space', action: 'pause/resume' },

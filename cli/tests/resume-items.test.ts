@@ -77,6 +77,17 @@ describe('resume item memo', () => {
     expect(bounded1).not.toBe(all1)
   })
 
+  test('task runs do not consume the resume row budget or appear in search', () => {
+    const cache = new ResumeItemCache()
+    const tasks = Array.from({ length: 25 }, (_, index) => ({ ...row(`task-${index}`), source: 'automation' }))
+    const humans = Array.from({ length: 21 }, (_, index) => row(`chat-${index}`))
+    const sessions = [...tasks, ...humans]
+    const bounded = cache.format({ sessions, cwd: '/work', textVersion: 0, limit: 20 }, none)
+    expect(bounded.filter(item => !item.header).map(item => item.id)).toEqual(humans.slice(0, 20).map(s => s.session_id))
+    const full = cache.format({ sessions, cwd: '/work', textVersion: 0 }, none)
+    expect(full.filter(item => !item.header)).toHaveLength(21)
+  })
+
   test('the bounded slot honours its row cap', () => {
     const cache = new ResumeItemCache()
     const sessions = Array.from({ length: 50 }, (_, i) => row(String(i)))

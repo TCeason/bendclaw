@@ -18,9 +18,11 @@ describe('repl session view helpers', () => {
     expect(shouldPreloadStartupSessions({ resumeSessionId: 'aaaaaaaa' })).toBe(true)
   })
 
-  test('findPreviousSession returns latest cwd session', () => {
+  test('findPreviousSession returns latest interactive cwd session, not a task run', () => {
     const older = { session_id: 'cccccccc-3333-4333-8333-cccccccccccc', title: 'older cwd session', cwd: '/work', updated_at: '2026-01-01T00:00:00Z' } as any
-    expect(findPreviousSession([older, ...sessions], '/work')).toBe(sessions[0])
+    const run = { ...older, session_id: 'task-run', source: 'automation', updated_at: '2026-01-04T00:00:00Z' }
+    expect(findPreviousSession([older, run, ...sessions], '/work')).toBe(sessions[0])
+    expect(findPreviousSession([run], '/work')).toBeUndefined()
   })
 
   const makeMessages = (n: number): UIMessage[] =>

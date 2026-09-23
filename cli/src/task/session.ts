@@ -6,7 +6,9 @@
  */
 
 import type { ConfigInfo, ModelOption } from '../native/contracts/config-info.js'
-import { selectorFocusOn, type SelectorState } from '../term/selector.js'
+import { selectorDown, selectorFocusOn, selectorUp, type SelectorState } from '../term/selector.js'
+import { handleSplitPaneKey, resetPaneForSelection } from '../term/split-pane.js'
+import type { TranscriptItem } from '../native/index.js'
 import type { KeyEvent } from '../term/input.js'
 import type { AskUserAnswer, AskUserQuestion, HostToolExtension } from '../term/host-tools.js'
 /** Signatures of the real RPCs. Type-only, so importing this module still
@@ -19,7 +21,8 @@ import { ADJUST_WITH_AGENT, importArguments, importAsRequest, importExtraFields,
 import type { TaskModelDefaults, TaskModelPickerRequest, TaskModelSelection } from './model-picker.js'
 import { createTaskFlowState, createTaskPrompt, updateTaskPrompt, type TaskPromptContext } from './prompt.js'
 import { createTaskWindow } from './window.js'
-import type { ScheduledTask, TaskListResponse } from './types.js'
+import { createTaskRunsWindow, createTaskTranscriptWindow } from './history.js'
+import type { ScheduledTask, TaskListResponse, TaskRunSummary } from './types.js'
 
 /** How often an open Task list re-reads cloud state. */
 const REFRESH_INTERVAL_MS = 10_000
@@ -61,6 +64,9 @@ export interface TaskSessionHost {
   isTaskOverlay: () => boolean
   taskOverlayState: () => SelectorState | null
   showSelector: (state: SelectorState) => void
+  currentSessionId: () => string | null
+  /** Local read-only transcript for a task run; never resumes the agent. */
+  loadRunTranscript: (sessionId: string) => Promise<TranscriptItem[] | null>
   closeOverlay: () => void
   requestRender: () => void
   notifyError: (text: string) => void
@@ -87,6 +93,13 @@ export class TaskSession {
   #loadedAt = 0
   #pending = new Map<string, string>()
   #detail: ScheduledTask | undefined
+  #view: 'tasks' | 'runs' | 'transcript' = 'tasks'
+  #runTaskId: string | undefined
+  #selectedRun: TaskRunSummary | undefined
+  #transcript: TranscriptItem[] | undefined
+  /** Kept when a model ends an edit with a plain-text question. The next
+   * ordinary reply still has the same task tool until save/cancel. */
+  #activeFlow: { flow: ReturnType<typeof createTaskFlowState>; extension: HostToolExtension; sessionId: string | null } | undefined
   #detailRequest = 0
   #loadError = false
   #disposed = false
@@ -106,6 +119,11 @@ export class TaskSession {
     this.#revision++
     this.#response = null
     this.#detail = undefined
+    this.#view = 'tasks'
+    this.#runTaskId = undefined
+    this.#selectedRun = undefined
+    this.#transcript = undefined
+    this.#activeFlow = undefined
     this.#loadedAt = 0
     this.#pending.clear()
     this.#listRequest = null
@@ -148,14 +166,20 @@ export class TaskSession {
   /** Current list state shaped for the composer preview: same rows and pane,
    *  but the composer keeps the keyboard until an arrow promotes the window. */
   previewState(): SelectorState {
+    // A composer preview always shows the top-level task list.
     return { ...this.#windowState(), listFocused: false }
   }
 
   /** `/task` with no argument, and every return to the list after an action. */
   open(focusId?: string): void {
     if (this.#disposed || this.#host.destroyed()) return
+    this.#activeFlow = undefined
     this.#previewListener = null
     this.invalidate()
+    this.#view = 'tasks'
+    this.#runTaskId = undefined
+    this.#selectedRun = undefined
+    this.#transcript = undefined
     this.#loadError = false
     // Open before starting I/O. The first load has a placeholder; subsequent
     // opens render cached rows immediately, even if the server is unavailable.
@@ -168,11 +192,42 @@ export class TaskSession {
   /** `/task <prompt>`: create via an agent turn. */
   create(userLine: string, request: string): void {
     const flow = createTaskFlowState('create')
-    this.#host.runTaskTurn(
-      userLine,
-      createTaskPrompt(request, this.#promptContext()),
-      this.#extension(flow),
-    )
+    this.#startFlow(flow, userLine, createTaskPrompt(request, this.#promptContext()))
+  }
+
+  #startFlow(flow: ReturnType<typeof createTaskFlowState>, userLine: string, prompt: string): void {
+    const extension = this.#extension(flow)
+    this.#activeFlow = { flow, extension, sessionId: this.#host.currentSessionId() }
+    this.#host.runTaskTurn(userLine, prompt, extension)
+  }
+
+  /** Bind a newly created session to the task flow; never carry an unfinished
+   * edit into a different chat after /new, /resume or /fork. */
+  bindFlowSession(sessionId: string, extension?: HostToolExtension): void {
+    const active = this.#activeFlow
+    if (active && active.extension === extension) active.sessionId = sessionId
+  }
+
+  followUpExtension(sessionId: string | null): HostToolExtension | undefined {
+    const active = this.#activeFlow
+    if (!active) return undefined
+    if (active.flow.mutationAttempted || active.sessionId !== sessionId) {
+      this.#activeFlow = undefined
+      return undefined
+    }
+    return active.extension
+  }
+
+  /** Stop routing follow-up messages to a task tool. */
+  cancelFlow(): boolean {
+    const active = this.#activeFlow
+    this.#activeFlow = undefined
+    return Boolean(active && !active.flow.mutationAttempted)
+  }
+
+  unfinishedFlow(extension?: HostToolExtension): boolean {
+    const active = this.#activeFlow
+    return Boolean(active && active.extension === extension && !active.flow.mutationAttempted)
   }
 
   /** `/task <share-link>`: create from a shared definition, no agent turn.
@@ -281,11 +336,21 @@ export class TaskSession {
   invalidate(): void {
     this.#generation++
     this.#detailRequest++
+    // Leaving the task overlay also leaves its drill-down. A later `/task`
+    // composer preview must always start at the task list, not a stale run.
+    this.#view = 'tasks'
+    this.#runTaskId = undefined
+    this.#selectedRun = undefined
+    this.#transcript = undefined
   }
 
   async handleKey(event: KeyEvent): Promise<void> {
     const state = this.#host.taskOverlayState()
     if (!state) return
+    if (this.#view !== 'tasks') {
+      await this.#handleRunKey(state, event)
+      return
+    }
     const size = this.#host.dimensions?.()
     const action = handleTaskKey(state, event, size?.columns, size?.rows)
     const focused = state.items[state.focusIndex]?.id
@@ -319,6 +384,75 @@ export class TaskSession {
     }
   }
 
+  async #handleRunKey(state: SelectorState, event: KeyEvent): Promise<void> {
+    const size = this.#host.dimensions?.()
+    const pane = handleSplitPaneKey(state, event, size?.columns, size?.rows)
+    if (pane) {
+      if (pane.kind === 'update') this.#host.showSelector(pane.state)
+      this.#host.requestRender()
+      return
+    }
+    if (event.type === 'escape') {
+      this.#detailRequest++
+      if (this.#view === 'transcript') {
+        this.#view = 'runs'
+        this.#transcript = undefined
+        this.#paint(this.#selectedRun?.id)
+      } else {
+        this.#view = 'tasks'
+        this.#paint(this.#runTaskId)
+        this.#runTaskId = undefined
+      }
+      return
+    }
+    if (event.type === 'up' || (event.type === 'char' && event.char === 'k')
+        || event.type === 'down' || (event.type === 'char' && event.char === 'j')) {
+      const up = event.type === 'up' || (event.type === 'char' && event.char === 'k')
+      const next = up ? selectorUp(state) : selectorDown(state)
+      this.#host.showSelector(resetPaneForSelection(state, next))
+      this.#host.requestRender()
+      return
+    }
+    if (event.type !== 'enter' || this.#view !== 'runs') return
+    const id = state.items[state.focusIndex]?.id
+    const task = this.#detail
+    const run = task?.runs?.find(row => row.id === id)
+      ?? task?.recent_runs?.find(row => row.id === id)
+      ?? this.#response?.tasks.find(row => row.id === this.#runTaskId)?.recent_runs?.find(row => row.id === id)
+    if (!run?.session_id || !task) return
+    const generation = this.#generation
+    const request = ++this.#detailRequest
+    try {
+      const transcript = await this.#host.loadRunTranscript(run.session_id)
+      if (this.#disposed || this.#host.destroyed() || generation !== this.#generation
+          || request !== this.#detailRequest || this.#view !== 'runs'
+          || !this.#host.isTaskOverlay()) return
+      if (!transcript) {
+        this.#host.notify('Execution transcript is not on this device; run status and errors are still available here.')
+        return
+      }
+      this.#selectedRun = run
+      this.#transcript = transcript
+      this.#view = 'transcript'
+      this.#paint()
+    } catch (error) {
+      if (generation === this.#generation && request === this.#detailRequest && this.#host.isTaskOverlay()) {
+        this.#host.notifyError(`Could not load execution transcript: ${message(error)}`)
+      }
+    }
+  }
+
+  /** Keep the focused run/entry and its detail scroll during a background
+   * refresh. Changing levels deliberately starts at the first row. */
+  #keepBrowsePosition(state: SelectorState, current: SelectorState | null, focus?: string): SelectorState {
+    const index = state.items.findIndex(row => row.id === focus)
+    if (index >= 0) state.focusIndex = index
+    if (!current || current.title !== state.title) return state
+    state.scrollOffset = current.scrollOffset
+    if (index >= 0 && current.previewPane) state.previewPane = { ...current.previewPane }
+    return state
+  }
+
   async #showDetail(id: string): Promise<void> {
     if (this.#pending.has(id)) return
     const generation = this.#generation
@@ -331,6 +465,8 @@ export class TaskSession {
       const task = await this.#api.get(id)
       if (!current()) return
       this.#detail = task
+      this.#runTaskId = id
+      this.#view = 'runs'
       this.#paint()
     } catch (error) {
       if (current()) this.#host.notifyError(`Failed to load task: ${message(error)}`)
@@ -343,11 +479,7 @@ export class TaskSession {
     if (kind === 'edit') {
       this.#close()
       const flow = createTaskFlowState('update', task)
-      this.#host.runTaskTurn(
-        `/task edit ${task.name}`,
-        updateTaskPrompt(task, this.#promptContext(task)),
-        this.#extension(flow),
-      )
+      this.#startFlow(flow, `/task edit ${task.name}`, updateTaskPrompt(task, this.#promptContext(task)))
       return
     }
     const generation = this.#generation
@@ -445,7 +577,13 @@ export class TaskSession {
         if (this.#disposed || this.#host.destroyed() || revision !== this.#revision) return
         this.#response = response
         this.#loadedAt = Date.now()
-        this.#detail = undefined
+        if (this.#runTaskId && !response.tasks.some(row => row.id === this.#runTaskId)) {
+          this.#view = 'tasks'
+          this.#runTaskId = undefined
+          this.#selectedRun = undefined
+          this.#transcript = undefined
+          this.#detail = undefined
+        } else if (this.#view === 'tasks') this.#detail = undefined
       } catch (error) {
         if (this.#disposed || this.#host.destroyed() || revision !== this.#revision) return
         this.#loadError = true
@@ -481,6 +619,17 @@ export class TaskSession {
     const current = this.#host.taskOverlayState()
     const focus = focusId ?? (current ? current.items[current.focusIndex]?.id : undefined)
     const response = this.#response ?? { tasks: [], cache: { ready: false, synced_at: 0, stale: false } }
+    const task = response.tasks.find(row => row.id === this.#runTaskId)
+    if (this.#view === 'transcript' && task && this.#selectedRun && this.#transcript) {
+      const state = createTaskTranscriptWindow(task, this.#selectedRun, this.#transcript)
+      return this.#keepBrowsePosition(state, current, focus)
+    }
+    if (this.#view === 'runs' && task) {
+      const runs = this.#detail?.id === task.id && this.#detail.revision === task.revision
+        ? this.#detail.runs ?? task.recent_runs ?? [] : task.recent_runs ?? []
+      const state = createTaskRunsWindow(task, runs)
+      return this.#keepBrowsePosition(state, current, focus)
+    }
     const state = createTaskWindow(response, focus, this.#detail, this.#modelLabels())
     // Before the first response the empty body carries the whole message;
     // the subtitle only speaks once there is a list to annotate.
@@ -515,6 +664,9 @@ export class TaskSession {
 
   #close(): void {
     this.invalidate()
+    this.#view = 'tasks'
+    this.#runTaskId = undefined
+    this.#transcript = undefined
     this.#host.closeOverlay()
   }
 
