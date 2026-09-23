@@ -51,10 +51,10 @@ export function classifyProviderFailure(error: string): ProviderFailureKind {
 const labels: Record<ProviderFailureKind, string> = {
   connection: 'Connection interrupted', timeout: 'Request timed out',
   dns: 'Unable to resolve service address',
-  busy: 'Model provider unavailable. Retrying usually helps.',
-  overloaded: 'Model provider overloaded. Please retry.',
-  gateway: 'Gateway error, not the model provider. Retry; report it if it persists.',
-  'gateway-no-backend': 'No backend available for this model right now. Retry later or switch model.',
+  busy: 'Model provider unavailable',
+  overloaded: 'Model provider overloaded',
+  gateway: 'Gateway error, not the model provider',
+  'gateway-no-backend': 'No backend available for this model',
   'rate-limit': 'Rate limited', quota: 'Quota unavailable',
   authentication: 'Authentication failed', 'invalid-request': 'Invalid request',
   'context-overflow': 'Context limit exceeded',
@@ -73,25 +73,25 @@ export function providerFailurePresentation(input: {
     kind,
     label: input.sustained && kind === 'connection' ? 'Unable to connect' : labels[kind],
     guidance: kind === 'connection' || kind === 'timeout' || kind === 'dns'
-      ? 'Check your network or proxy settings. The service may also be temporarily unavailable.'
+      ? 'The network, proxy, or service may be unavailable.'
       : kind === 'context-overflow'
-        ? 'Compact the conversation before retrying. The upstream input limit may be smaller than the advertised model window.'
+        ? 'The upstream input limit may be smaller than the advertised model window.'
       : kind === 'model-not-found'
-        ? 'Check the model identifier and access permissions, or select another model.'
+        ? 'The model identifier may be unavailable or access may be restricted.'
       : kind === 'not-found'
-        ? 'Check the API endpoint and requested resource.'
+        ? 'The API endpoint or requested resource was not found.'
       : kind === 'invalid-request'
-        ? 'Check the request content and attachments against the model’s input requirements. Retrying unchanged will not help.'
+        ? 'The request content or attachments do not meet the model’s input requirements.'
         : kind === 'busy' || kind === 'overloaded'
-          ? 'The model provider is having trouble; your request and the gateway are fine. Retrying usually helps, or switch model.'
+          ? 'The model provider is having trouble processing this request.'
         : kind === 'gateway'
-          ? 'The gateway itself failed on this request. Retry; if it keeps happening, tell the gateway administrator and mention the time and model.'
+          ? 'The gateway failed to process this request.'
         : kind === 'gateway-no-backend'
-          ? 'Every backend the gateway has for this model is unavailable or cooling down. Retry in a minute or pick another model.'
+          ? 'Every backend the gateway has for this model is unavailable or cooling down.'
         : kind === 'configuration'
-          ? 'No channel is configured for this model. Pick another model or ask the proxy administrator to add one. Retrying unchanged will not help.'
+          ? 'No channel is configured for this model.'
           : kind === 'backend-version'
-            ? 'The model backend requires a newer client version than the proxy provides. Ask the proxy administrator to update it. Retrying unchanged will not help.'
+            ? 'The model backend requires a newer client version than the proxy provides.'
             : undefined,
   }
 }

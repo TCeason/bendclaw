@@ -1312,7 +1312,7 @@ describe('term stream machine', () => {
     state = first.state
     const firstText = first.commitLines.map(l => l.text).join('\n')
     expect(firstText).toContain('✦ llm  retry')
-    expect(firstText).toContain('Model provider overloaded. Please retry.')
+    expect(firstText).toContain('Model provider overloaded')
     expect(state.spinnerState.phase).toBe('retrying')
     expect(state.spinnerState.retryAttempt).toBe(1)
     expect(state.spinnerState.retryMaxAttempts).toBe(10)
@@ -1356,7 +1356,7 @@ describe('term stream machine', () => {
     }, { termRows: 24 })
 
     const text = [...failed.commitLines, ...retry.commitLines].map(l => l.text).join('\n')
-    expect(text.split('Model provider overloaded. Please retry.').length - 1).toBe(1)
+    expect(text.split('Model provider overloaded').length - 1).toBe(1)
     // Both cards still appear; only the repeated sentence is gone.
     expect(text).toContain('✦ llm  claude-opus-5')
     expect(text).toContain('✦ llm  retry')
@@ -1423,7 +1423,7 @@ describe('term stream machine', () => {
       payload: { model: 'claude-opus-5', turn: 28, error: 'API error: HTTP 500', metrics: { duration_ms: 120 } },
     }, { termRows: 24 })
     // A bare 500 is the gateway's own failure, and the card says so.
-    expect(failed.commitLines.map(l => l.text).join('\n')).toContain('Gateway error, not the model provider.')
+    expect(failed.commitLines.map(l => l.text).join('\n')).toContain('Gateway error, not the model provider')
   })
 
   test('overflow card preserves the diagnosis before compaction starts', () => {
@@ -1488,8 +1488,8 @@ describe('term stream machine', () => {
       payload: { message: err },
     }, { termRows: 24 })
     const visible = terminal.commitLines.map(l => l.text).join('\n')
-    expect(visible).toContain('Model provider overloaded. Please retry.')
-    expect(visible.split('Model provider overloaded. Please retry.').length - 1).toBe(1)
+    expect(visible).toContain('Model provider overloaded')
+    expect(visible.split('Model provider overloaded').length - 1).toBe(1)
     expect(terminal.writeLines.some(line => line.text.includes(err))).toBe(true)
   })
 
@@ -1505,7 +1505,7 @@ describe('term stream machine', () => {
     const tui = [...u1.commitLines, ...u2.commitLines].map(l => l.text).join('\n')
     // Message shows exactly once in the TUI (the llm card), and the redundant
     // standalone error line is routed to screen.log instead.
-    expect(tui.split('Model provider unavailable. Retrying usually helps.').length - 1).toBe(1)
+    expect(tui.split('Model provider unavailable').length - 1).toBe(1)
     expect(tui).toContain('✦ llm  claude-opus-4-6')
     expect(u2.writeLines.some(l => l.text.includes('HTTP 520'))).toBe(true)
   })

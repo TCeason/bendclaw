@@ -198,7 +198,7 @@ export function formatLlmCallRetry(data: Record<string, unknown>): string {
 
 export function formatLongWaitError(model: string, error: string, delayMs: number): string {
   const requestedModel = sanitizeProviderText(model, 80) || 'unknown'
-  const reason = sanitizeProviderText(error, 400) || 'Rate limit exceeded. Please retry later.'
+  const reason = sanitizeProviderText(error, 400) || 'Rate limit exceeded.'
   const seconds = Math.max(0, Math.ceil(delayMs / 1000))
   return `[LLM] ⚠ · ${requestedModel} · quota unavailable · retry in ${formatWaitDuration(seconds)}\n    error     ${reason}`
 }
