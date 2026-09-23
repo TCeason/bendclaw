@@ -19,12 +19,13 @@ fn auth() -> Result<evot::api::auth::AuthState> {
         .ok_or_else(|| Error::from_reason("sharing requires sign-in; run /login"))
 }
 
-/// `"keep"` leaves an already-shared session's visibility as it is.
-fn parse_visibility(value: &str) -> Result<Option<evot::api::CloudVisibility>> {
+/// `"keep"` leaves an already-shared session's access as it is.
+fn parse_access(value: &str) -> Result<Option<evot::api::CloudAccess>> {
     match value {
         "keep" => Ok(None),
-        "private" => Ok(Some(evot::api::CloudVisibility::Private)),
-        "public" => Ok(Some(evot::api::CloudVisibility::Public)),
+        "private" => Ok(Some(evot::api::CloudAccess::Private)),
+        "team" => Ok(Some(evot::api::CloudAccess::Team)),
+        "public" => Ok(Some(evot::api::CloudAccess::Public)),
         other => Err(Error::from_reason(format!("unknown visibility: {other}"))),
     }
 }
@@ -56,7 +57,7 @@ impl NapiAgent {
             &auth()?,
             &self.agent.storage(),
             &session_id,
-            parse_visibility(&visibility)?,
+            parse_access(&visibility)?,
             env!("CARGO_PKG_VERSION"),
         )
         .await

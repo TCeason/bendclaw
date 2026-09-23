@@ -1,6 +1,6 @@
 import { test, expect } from 'bun:test'
 import {
-  CloudSessionSync, cloudBadge, cloudState, mergeRemoteSessions, describeShareResult,
+  CloudSessionSync, CLOUD_LABEL_WIDTH, cloudBadge, cloudLabel, cloudState, mergeRemoteSessions, describeShareResult, shareAccess,
 } from '../src/session/cloud-sessions.js'
 import { formatSessionItems } from '../src/term/app/resume.js'
 import type { CloudPushResult, RemoteSession, SessionMeta } from '../src/native/index.js'
@@ -34,6 +34,10 @@ test('badges: private ☁, public 🌐, suffix says what is pending', () => {
   expect(cloudBadge('pull_pending', 'private')).toBe('☁⇣')
   expect(cloudBadge('remote_only', 'public')).toBe('🌐⇣')
   expect(cloudBadge('diverged', 'private')).toBe('☁!')
+  expect(cloudBadge('synced', 'private', true)).toBe('👥')
+  expect(cloudBadge('push_pending', 'private', true)).toBe('👥↑')
+  // Public wins: a stale team flag never hides that anyone can read it.
+  expect(cloudBadge('synced', 'public', true)).toBe('🌐')
 })
 
 test('remote-only rows join the list after local ones and read as pull-pending', () => {
@@ -45,21 +49,51 @@ test('remote-only rows join the list after local ones and read as pull-pending',
   expect(mergeRemoteSessions(local, [])).toBe(local)
 })
 
+test('list labels spell out who can read the session', () => {
+  expect(cloudLabel('local', 'private')).toBe('')
+  expect(cloudLabel('synced', 'private')).toBe('private')
+  expect(cloudLabel('synced', 'private', true)).toBe('team')
+  expect(cloudLabel('synced', 'public')).toBe('public')
+  // Public wins over a stale team flag.
+  expect(cloudLabel('synced', 'public', true)).toBe('public')
+  expect(cloudLabel('push_pending', 'private', true)).toBe('team ↑')
+  expect(cloudLabel('remote_only', 'public')).toBe('public ⇣')
+  expect(cloudLabel('diverged', 'private')).toBe('private !')
+})
+
 test('the sessions list shows a cloud column only when some row is on the cloud', () => {
   const rows = (items: ReturnType<typeof formatSessionItems>) => items.filter(item => item.id)
   const plain = rows(formatSessionItems([meta('a'), meta('b')], '/w'))
   expect(plain[0]!.detail ?? '').not.toContain('☁')
   const synced = meta('a', { cloud: { visibility: 'private', synced_seq: 5, synced_at: '2024-01-03T00:00:00Z' } })
   const items = rows(formatSessionItems([synced, meta('b')], '/w', () => undefined, null,
-    s => s.session_id === 'a' ? '☁' : ''))
-  expect(items[0]!.detail ?? '').toStartWith('☁  ')
-  expect(items[1]!.detail ?? '').toStartWith('   ')
+    s => s.session_id === 'a' ? 'team' : ''))
+  // One fixed-width column, so titles line up whatever the label.
+  expect(items[0]!.detail ?? '').toStartWith(`${'team'.padEnd(CLOUD_LABEL_WIDTH)} t-a`)
+  expect(items[1]!.detail ?? '').toStartWith(`${''.padEnd(CLOUD_LABEL_WIDTH)} t-b`)
   expect(items[0]!.cloud).toBe(true)
   expect(items[1]!.cloud).toBeUndefined()
   // Remote rows name their origin so the user knows which machine they came from.
   const remoteRow = mergeRemoteSessions([], [remote('z', 4)])
-  const remoteItems = formatSessionItems(remoteRow, '/w', () => undefined, null, () => '☁⇣')
+  const remoteItems = formatSessionItems(remoteRow, '/w', () => undefined, null, () => 'private ⇣')
   expect(remoteItems.find(item => item.id === 'z')?.detail).toContain('(macbook)')
+})
+
+test('the shared list shows sessions from every cwd; resume keeps other cwds for search', () => {
+  const here = meta('a', { cwd: '/w' })
+  const elsewhere = meta('b', { cwd: '/home/ubuntu/other' })
+  const hidden = (items: ReturnType<typeof formatSessionItems>) =>
+    items.filter(item => item.searchOnly).map(item => item.id ?? item.label)
+
+  // /resume: other projects are reachable by search, not listed up front.
+  expect(hidden(formatSessionItems([here, elsewhere], '/w'))).toEqual(['Other cwd', 'b'])
+  // /share: everything shared is listed, with its cwd on the row.
+  const shared = formatSessionItems([here, elsewhere], '/w', () => undefined, null, () => 'team', true)
+  expect(hidden(shared)).toEqual([])
+  expect(shared.map(item => item.header ? item.label.split(' · ')[0] : item.id)).toEqual(['Current cwd', 'a', 'Other cwd', 'b'])
+  expect(shared.find(item => item.id === 'b')?.detail).toContain('/home/ubuntu/other')
+  // Even when nothing shared is from here.
+  expect(hidden(formatSessionItems([elsewhere], '/w', () => undefined, null, () => 'team', true))).toEqual([])
 })
 
 test('CloudSessionSync pushes once per settle, coalesces, and reports failures softly', async () => {
@@ -128,8 +162,14 @@ test('index refresh notifies the open list after replacing rows, without pushing
 })
 
 test('describeShareResult words match the visibility', () => {
-  const cloud = { visibility: 'public' as const, synced_seq: 4, synced_at: 't', public_url: 'https://evot.ai/live/x' }
-  expect(describeShareResult({ kind: 'synced', cloud, pushed: 4 }, 'public')).toContain('https://evot.ai/live/x')
+  const cloud = { visibility: 'public' as const, synced_seq: 4, synced_at: 't', public_url: 'https://evot.ai/share/x' }
+  expect(describeShareResult({ kind: 'synced', cloud, pushed: 4 }, 'public')).toContain('https://evot.ai/share/x')
   expect(describeShareResult({ kind: 'synced', cloud: { ...cloud, visibility: 'private', public_url: null }, pushed: 4 }, 'private')).toContain('any machine')
   expect(describeShareResult({ kind: 'not_shared' }, 'private')).toContain('/share')
+  const team = { ...cloud, visibility: 'private' as const, public_url: null, team: true,
+    team_url: 'https://auto.evot.ai/team/x', team_name: 'Databend' }
+  expect(describeShareResult({ kind: 'synced', cloud: team, pushed: 4 }, 'team')).toContain('👥 Team Databend · https://auto.evot.ai/team/x')
+  expect(shareAccess(team)).toBe('team')
+  expect(shareAccess({ ...team, visibility: 'public' })).toBe('public')
+  expect(shareAccess({ ...team, team: false })).toBe('private')
 })

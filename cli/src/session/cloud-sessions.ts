@@ -7,6 +7,14 @@
  */
 import type { CloudPushResult, RemoteSession, SessionMeta } from '../native/index.js'
 
+/** Who can read a cloud session, as `/share` names it. */
+export type ShareAccess = 'private' | 'team' | 'public'
+
+/** Access a synced cloud block grants: public wins, team rides on private. */
+export function shareAccess(cloud: { visibility: 'private' | 'public'; team?: boolean }): ShareAccess {
+  return cloud.visibility === 'public' ? 'public' : cloud.team ? 'team' : 'private'
+}
+
 export type CloudState = 'local' | 'synced' | 'push_pending' | 'pull_pending' | 'diverged' | 'remote_only'
 
 /** Mirrors `evot::sync::cloud_state`: metadata only, so the list stays cheap. */
@@ -22,16 +30,37 @@ export function cloudState(local: SessionMeta | undefined, remote: RemoteSession
   return 'synced'
 }
 
-/** Row-leading marker. `☁` private, `🌐` public; the suffix says what is pending. */
-export function cloudBadge(state: CloudState, visibility: 'private' | 'public' | undefined): string {
+/** Row-leading marker. `☁` private, `👥` team, `🌐` public; the suffix says what is pending. */
+export function cloudBadge(state: CloudState, visibility: 'private' | 'public' | undefined, team = false): string {
   if (state === 'local') return ''
-  const base = visibility === 'public' ? '🌐' : '☁'
+  const base = visibility === 'public' ? '🌐' : team ? '👥' : '☁'
   switch (state) {
     case 'synced': return base
     case 'push_pending': return `${base}↑`
     case 'pull_pending': case 'remote_only': return `${base}⇣`
     case 'diverged': return `${base}!`
   }
+}
+
+/** Pending-state suffix shared by the badge and the list label. */
+const PENDING: Record<Exclude<CloudState, 'local'>, string> = {
+  synced: '', push_pending: '↑', pull_pending: '⇣', remote_only: '⇣', diverged: '!',
+}
+
+/** Width of the list's access column: the longest label plus its suffix. */
+export const CLOUD_LABEL_WIDTH = 'private ⇣'.length
+
+/**
+ * The access column of the sessions list, spelled out: who can read the
+ * session is the thing a user scans `/share` for, and a glyph (☁ renders as a
+ * speck in many terminals, 👥 reads as "people", not "my team") leaves them
+ * guessing. The suffix says what is pending, as on the badge.
+ */
+export function cloudLabel(state: CloudState, visibility: 'private' | 'public' | undefined, team = false): string {
+  if (state === 'local') return ''
+  const word = shareAccess({ visibility: visibility ?? 'private', team })
+  const pending = PENDING[state]
+  return pending ? `${word} ${pending}` : word
 }
 
 /** A remote-only row rendered from the server's metadata. The synthetic
@@ -47,6 +76,7 @@ export function remoteAsLocal(remote: RemoteSession): SessionMeta {
       synced_at: remote.meta.updated_at,
       origin_host: remote.origin_host ?? '',
       public_url: remote.public_url ?? null,
+      ...(remote.team ? { team: true, team_url: remote.team_url ?? null, team_name: remote.team_name ?? null } : {}),
     },
   }
 }
@@ -114,7 +144,13 @@ export class CloudSessionSync {
   acknowledge(sessionId: string, result: CloudPushResult): void {
     if (result.kind !== 'synced') return
     const existing = this.remote.get(sessionId)
-    if (existing) this.remote.set(sessionId, { ...existing, seq: result.cloud.synced_seq, visibility: result.cloud.visibility, public_url: result.cloud.public_url ?? null })
+    if (existing) {
+      const { cloud } = result
+      this.remote.set(sessionId, {
+        ...existing, seq: cloud.synced_seq, visibility: cloud.visibility, public_url: cloud.public_url ?? null,
+        team: cloud.team ?? false, team_url: cloud.team_url ?? null, team_name: cloud.team_name ?? null,
+      })
+    }
   }
 
   /** After a run settles: push soon, silently, once. Local-only sessions are a no-op. */
@@ -155,11 +191,16 @@ export class CloudSessionSync {
 }
 
 /** One-line confirmation after `/share …`, shared by the command and the selector. */
-export function describeShareResult(result: CloudPushResult, visibility: 'private' | 'public'): string {
+export function describeShareResult(result: CloudPushResult, visibility: ShareAccess): string {
   switch (result.kind) {
     case 'synced': {
       const url = result.cloud.public_url
       if (visibility === 'public' && url) return `🌐 Public · ${url}  (live: the page follows this session)`
+      const teamUrl = result.cloud.team_url
+      if (visibility === 'team' && teamUrl) {
+        const name = result.cloud.team_name ? ` ${result.cloud.team_name}` : ''
+        return `👥 Team${name} · ${teamUrl}  (members sign in to read it; live: the page follows this session)`
+      }
       return `☁ Shared to cloud · resume this session from any machine (${result.cloud.synced_seq} entries)`
     }
     case 'diverged':

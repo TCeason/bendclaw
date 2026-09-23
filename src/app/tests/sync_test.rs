@@ -26,6 +26,35 @@ type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
 const META_V1_WITHOUT_CLOUD: &str = include_str!("fixtures/schema/session-meta-v1-no-cloud.json");
 const META_V1_WITH_CLOUD: &str = include_str!("fixtures/schema/session-meta-v1-cloud.json");
+const META_V1_WITH_TEAM: &str = include_str!("fixtures/schema/session-meta-v1-cloud-team.json");
+
+/// `cloud` as the release before team pages read it: visibility limited to
+/// the two original values, unknown keys ignored like the real struct.
+#[derive(Deserialize)]
+#[allow(dead_code)]
+struct LegacyCloudSync {
+    visibility: LegacyVisibility,
+    #[serde(default)]
+    synced_seq: u64,
+    #[serde(default)]
+    synced_at: String,
+    #[serde(default)]
+    origin_host: String,
+    #[serde(default)]
+    public_url: Option<String>,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum LegacyVisibility {
+    Private,
+    Public,
+}
+
+#[derive(Deserialize)]
+struct LegacyMetaWithCloud {
+    cloud: LegacyCloudSync,
+}
 
 /// Shape a reader released before `cloud` existed requires. Strict, so a
 /// current writer that renames or drops a published field fails here.
@@ -285,6 +314,9 @@ async fn pull_materialises_remote_session_on_a_fresh_machine() -> TestResult {
         origin_host: "macbook".into(),
         updated_at: String::new(),
         public_url: None,
+        team: false,
+        team_url: None,
+        team_name: None,
     };
     assert_eq!(
         sync::cloud_state(Some(&loaded), Some(&remote)),
@@ -354,6 +386,9 @@ fn cloud_state_classifies_from_metadata_alone() {
         origin_host: String::new(),
         updated_at: String::new(),
         public_url: None,
+        team: false,
+        team_url: None,
+        team_name: None,
     };
     assert_eq!(sync::cloud_state(None, None), sync::CloudState::Local);
     assert_eq!(
@@ -396,4 +431,173 @@ fn cloud_state_classifies_from_metadata_alone() {
         sync::cloud_state(Some(&local), Some(&ahead)),
         sync::CloudState::PullPending
     );
+}
+
+#[test]
+fn team_cloud_state_reads_old_data_and_stays_readable_by_old_builds() -> TestResult {
+    // Old data, current reader: no team keys means no team page.
+    let public: SessionMeta = serde_json::from_str(META_V1_WITH_CLOUD)?;
+    let cloud = public.cloud.ok_or("fixture must carry cloud")?;
+    assert!(!cloud.team);
+    assert_eq!(cloud.access(), CloudAccess::Public);
+
+    let team: SessionMeta = serde_json::from_str(META_V1_WITH_TEAM)?;
+    let cloud = team.cloud.clone().ok_or("fixture must carry cloud")?;
+    assert_eq!(cloud.access(), CloudAccess::Team);
+    assert_eq!(cloud.team_name.as_deref(), Some("Databend"));
+
+    // Current writer, legacy reader: a team session reads as plain private,
+    // so an old build narrows access rather than failing or widening it.
+    let written = serde_json::to_string(&team)?;
+    let legacy: LegacyMetaWithCloud = serde_json::from_str(&written)?;
+    assert_eq!(legacy.cloud.visibility, LegacyVisibility::Private);
+    assert_eq!(legacy.cloud.synced_seq, 4);
+
+    // Sessions without a team page write exactly what they did before.
+    let mut plain = CloudSync::new(CloudVisibility::Private, "h");
+    plain.set_access(CloudAccess::Private);
+    let written = serde_json::to_string(&plain)?;
+    assert!(!written.contains("team"));
+    Ok(())
+}
+
+#[test]
+fn cloud_access_round_trips_through_visibility_and_team() {
+    let mut cloud = CloudSync::new(CloudVisibility::Private, "h");
+    for access in [CloudAccess::Team, CloudAccess::Public, CloudAccess::Private] {
+        cloud.set_access(access);
+        assert_eq!(cloud.access(), access);
+    }
+    cloud.set_access(CloudAccess::Team);
+    assert_eq!(cloud.visibility, CloudVisibility::Private);
+    // Public wins over a stale flag.
+    cloud.visibility = CloudVisibility::Public;
+    assert_eq!(cloud.access(), CloudAccess::Public);
+}
+
+async fn one_entry_session(root: &TempDir) -> Result<Arc<dyn Storage>, Box<dyn std::error::Error>> {
+    let storage = fs_storage(root)?;
+    storage
+        .save_session(SessionMeta::new("s1".into(), "/w".into(), "m".into()))
+        .await?;
+    storage.append_entry(user("s1", 1, "a")).await?;
+    Ok(storage)
+}
+
+#[tokio::test]
+async fn share_team_pushes_the_page_and_records_the_link() -> TestResult {
+    let server = MockServer::start().await;
+    let state = state(&server)?;
+    let root = TempDir::new()?;
+    let storage = one_entry_session(&root).await?;
+    Mock::given(method("PUT"))
+        .and(path("/v1/sessions/s1"))
+        .and(body_partial_json(
+            json!({"visibility": "private", "team": true}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "seq": 1, "visibility": "private", "team": true,
+            "team_url": "https://auto.evot.ai/team/abcdefghijklmnopqrstuv",
+            "team_name": "Databend"
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+    let outcome =
+        sync::share_session(&state, &storage, "s1", Some(CloudAccess::Team), "test").await?;
+    let sync::PushOutcome::Synced { cloud, .. } = outcome else {
+        return Err(format!("expected Synced, got {outcome:?}").into());
+    };
+    assert_eq!(cloud.access(), CloudAccess::Team);
+    assert_eq!(cloud.team_name.as_deref(), Some("Databend"));
+    let requests = server.received_requests().await.unwrap_or_default();
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body)?;
+    // The team page is rendered from the same viewer document as public.
+    assert!(body.get("viewer").is_some_and(|v| v.is_object()));
+
+    // Background pushes keep asking for the team page.
+    storage.append_entry(user("s1", 2, "b")).await?;
+    sync::push_session(&state, &storage, "s1", "test", false).await?;
+    let loaded = storage.get_session("s1").await?.ok_or("missing")?;
+    let cloud = loaded.cloud.ok_or("missing cloud")?;
+    assert_eq!(
+        cloud.team_url.as_deref(),
+        Some("https://auto.evot.ai/team/abcdefghijklmnopqrstuv")
+    );
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn share_team_on_a_server_without_team_pages_is_an_error() -> TestResult {
+    let server = MockServer::start().await;
+    let state = state(&server)?;
+    let root = TempDir::new()?;
+    let storage = one_entry_session(&root).await?;
+    Mock::given(method("PUT"))
+        .and(path("/v1/sessions/s1"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"seq": 1, "visibility": "private"})),
+        )
+        .mount(&server)
+        .await;
+    let error = sync::share_session(&state, &storage, "s1", Some(CloudAccess::Team), "test")
+        .await
+        .err()
+        .ok_or("an old server must not look like success")?;
+    assert!(error.to_string().contains("does not support team sharing"));
+    // What the server acknowledged is what is recorded: private, no team.
+    let loaded = storage.get_session("s1").await?.ok_or("missing")?;
+    assert_eq!(loaded.cloud.map(|c| c.access()), Some(CloudAccess::Private));
+    Ok(())
+}
+
+#[tokio::test]
+async fn team_refusal_carries_the_server_reason() -> TestResult {
+    let server = MockServer::start().await;
+    let state = state(&server)?;
+    let root = TempDir::new()?;
+    let storage = one_entry_session(&root).await?;
+    Mock::given(method("PUT"))
+        .and(path("/v1/sessions/s1"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(json!({
+            "error": "team sharing needs a team: this account is not in any group"
+        })))
+        .mount(&server)
+        .await;
+    let error = sync::share_session(&state, &storage, "s1", Some(CloudAccess::Team), "test")
+        .await
+        .err()
+        .ok_or("expected a refusal")?;
+    assert!(error.to_string().contains("not in any group"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn pull_records_the_team_page() -> TestResult {
+    let server = MockServer::start().await;
+    let state = state(&server)?;
+    let root = TempDir::new()?;
+    let storage = fs_storage(&root)?;
+    let remote_meta = SessionMeta::new("s9".into(), "/elsewhere".into(), "m".into());
+    Mock::given(method("GET"))
+        .and(path("/v1/sessions/s9"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "schema_version": 1, "meta": remote_meta, "seq": 1, "visibility": "private",
+            "team": true, "team_url": "https://auto.evot.ai/team/t", "team_name": "Databend",
+            "entries": [user("s9", 1, "hi")],
+        })))
+        .mount(&server)
+        .await;
+    let sync::PullOutcome::Pulled { meta, .. } = sync::pull_session(&state, &storage, "s9").await?
+    else {
+        return Err("expected Pulled".into());
+    };
+    let cloud = meta.cloud.ok_or("missing cloud")?;
+    assert_eq!(cloud.access(), CloudAccess::Team);
+    assert_eq!(
+        cloud.team_url.as_deref(),
+        Some("https://auto.evot.ai/team/t")
+    );
+    Ok(())
 }

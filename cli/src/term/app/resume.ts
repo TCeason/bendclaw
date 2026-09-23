@@ -3,6 +3,7 @@ import type { SessionMeta, SessionWithText } from '../../native/index.js'
 import { PREVIEW_SECTION_PREFIX, type SelectorItem } from '../selector.js'
 import { recognitionSections, type SessionRecognition } from './session-recognition.js'
 import { orderAsForkTree } from './fork-tree.js'
+import { CLOUD_LABEL_WIDTH } from '../../session/cloud-sessions.js'
 
 export const RESUME_SELECTOR_TITLE = 'Resume session'
 
@@ -45,6 +46,7 @@ function groupedSessionItems<T extends SessionMeta>(
   sessions: T[],
   currentCwd: string,
   format: (session: T, otherCwd: boolean, edge: string) => SelectorItem,
+  showOtherCwds = false,
 ): SelectorItem[] {
   // Forks nest under their parent within each group; the tree is per cwd
   // because a fork always keeps its parent's workspace.
@@ -60,11 +62,14 @@ function groupedSessionItems<T extends SessionMeta>(
     // Resume defaults to the project the user is in. Cross-project history
     // remains in the search pool, but never expands the initial picker into a
     // noisy global recents list — including when this cwd has no history yet.
-    items.push(sessionHeader('Other cwd', 'other-cwd', true))
+    // The shared list is the exception: it is short, and a shared session is
+    // as likely to come from another project or machine as from this one.
+    const searchOnly = !showOtherCwds
+    items.push(sessionHeader('Other cwd', 'other-cwd', searchOnly))
     items.push(...other.map(row => ({
       ...format(row.session, true, row.edge),
       group: 'other-cwd',
-      searchOnly: true,
+      ...(searchOnly ? { searchOnly: true } : {}),
     })))
   }
   return items
@@ -258,7 +263,7 @@ function formatSessionItem(
   const cwd = otherCwd ? `  ${shortenSessionCwd(s.cwd)}` : ''
   // The cloud column exists only when some row is on the cloud, and then for
   // every row, so titles stay aligned.
-  const cloudColumn = anyCloud ? `${padRight(cloud, 3)} ` : ''
+  const cloudColumn = anyCloud ? `${padRight(cloud, CLOUD_LABEL_WIDTH)} ` : ''
   return {
     // The graph edge hangs off the id column, like `git log --graph`.
     label: `${edge}${label}`,
@@ -299,6 +304,7 @@ export function formatSessionItems(
   sessionText: (sessionId: string) => SessionWithText | undefined = () => undefined,
   openSessionId?: string | null,
   cloudBadge: (session: SessionMeta) => string = () => '',
+  showOtherCwds = false,
 ): SelectorItem[] {
   const labels = sessionIdLabels(sessions)
   const showSource = mixedSources(sessions)
@@ -316,6 +322,7 @@ export function formatSessionItems(
       badges.get(session.session_id) ?? '',
       anyCloud,
     ),
+    showOtherCwds,
   )
 }
 

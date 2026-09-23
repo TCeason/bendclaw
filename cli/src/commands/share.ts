@@ -1,7 +1,7 @@
 import type { Agent, CloudPushResult, SessionMeta } from '../native/index.js'
 import { resolveSessionByPrefix } from '../term/app/resume.js'
 import { createHyperlink } from '../render/hyperlink.js'
-import { describeShareResult } from '../session/cloud-sessions.js'
+import { describeShareResult, shareAccess } from '../session/cloud-sessions.js'
 
 export interface ShareContext {
   agent: Pick<Agent, 'listSessions' | 'cloudShareSession' | 'cloudUnshareSession' | 'cloudPushSession' | 'cloudForkRemoteSession'>
@@ -20,12 +20,13 @@ export interface ShareContext {
   resumeSession?(session: SessionMeta): Promise<void>
 }
 
-const USAGE = 'Usage: /share [public | private | off | list] [session-id]'
-const WORDS = new Set(['public', 'private', 'off', 'list', 'links', 'cloud', 'local'])
+const USAGE = 'Usage: /share [public | team | private | off | list] [session-id]'
+const WORDS = new Set(['public', 'team', 'private', 'off', 'list', 'links', 'cloud', 'local'])
 
 /**
  * `/share` opens the cloud session list without changing the current session.
- * `private` enables private sync; `public` also publishes a read-only page.
+ * `private` enables private sync; `team` adds a read-only page for signed-in
+ * members of the owner's group; `public` publishes one for anyone with the link.
  * Commands orchestrate only; persistence, auth and transport remain native.
  */
 export async function runShareCommand(ctx: ShareContext, args: string): Promise<void> {
@@ -81,20 +82,25 @@ export async function runShareCommand(ctx: ShareContext, args: string): Promise<
       return
     }
 
-    const requested = word as 'public' | 'private' | 'keep'
+    const requested = word as 'public' | 'team' | 'private' | 'keep'
     if (requested === 'public') {
       // Say what leaves the machine before it does: the page is public-by-link,
       // and turning it private later hides the page, not what was already read.
       show('Publishing… (transcript, system prompt, tool output — anyone with the link can read it)')
       ctx.requestRender()
+    } else if (requested === 'team') {
+      show('Sharing with your team… (transcript, system prompt, tool output — members of your group who sign in can read it)')
+      ctx.requestRender()
     }
     const result = await ctx.agent.cloudShareSession(sid, requested)
     ctx.cloudAcknowledged?.(sid, result)
-    const visibility = result.kind === 'synced' ? result.cloud.visibility : requested === 'public' ? 'public' : 'private'
+    const visibility = result.kind === 'synced' ? shareAccess(result.cloud) : requested === 'keep' ? 'private' : requested
     const line = describeShareResult(result, visibility)
-    const url = result.kind === 'synced' ? result.cloud.public_url : null
-    show(visibility === 'public' && url ? line.replace(url, createHyperlink(url)) : line)
-    if (visibility === 'private' && result.kind === 'synced') show('  Public page instead? /share public')
+    const url = result.kind !== 'synced' ? null
+      : visibility === 'public' ? result.cloud.public_url
+      : visibility === 'team' ? result.cloud.team_url : null
+    show(url ? line.replace(url, createHyperlink(url)) : line)
+    if (visibility === 'private' && result.kind === 'synced') show('  Page for your team or anyone? /share team · /share public')
   } catch (error) {
     ctx.commitSystem('sys-share-error', `Share failed: ${error instanceof Error ? error.message : String(error)}`)
   }

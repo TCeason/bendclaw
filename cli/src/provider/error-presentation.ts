@@ -34,7 +34,7 @@ export function classifyProviderFailure(error: string): ProviderFailureKind {
   // Preserve the engine's overflow diagnosis before the generic HTTP 400 branch.
   if (/context overflow|context_length_exceeded|prompt is too long|request exceeds the model context window|maximum context length/.test(text)) return 'context-overflow'
   if (/quota|insufficient_quota|credit balance/.test(text)) return 'quota'
-  if (status === 401 || status === 403 || /unauthorized|invalid.api.key|authentication/.test(text)) return 'authentication'
+  if (status === 401 || status === 403 || /unauthorized|invalid.api.key|authentication|auth error|session_revoked/.test(text)) return 'authentication'
   if (status === 429 || /rate.limit|too many requests/.test(text)) return 'rate-limit'
   // Standard provider overload semantics, independent of gateway/vendor.
   // Do not label every transport failure or unknown 5xx as overload.
@@ -58,7 +58,7 @@ const labels: Record<ProviderFailureKind, string> = {
   'rate-limit': 'Rate limited', quota: 'Quota unavailable',
   authentication: 'Authentication failed', 'invalid-request': 'Invalid request',
   'context-overflow': 'Context limit exceeded',
-  configuration: 'Configuration error', 'backend-version': 'Backend version unsupported',
+  configuration: 'Configuration error', 'backend-version': 'The model provider requires a newer client version than the gateway uses.',
   'model-not-found': 'Model not found', 'not-found': 'Resource not found',
   unknown: 'Request failed',
 }
@@ -67,31 +67,10 @@ export function providerFailurePresentation(input: {
   error?: string
   kind?: ProviderFailureKind
   sustained?: boolean
-}): { kind: ProviderFailureKind; label: string; guidance?: string } {
+}): { kind: ProviderFailureKind; label: string } {
   const kind = input.kind ?? classifyProviderFailure(input.error ?? '')
   return {
     kind,
     label: input.sustained && kind === 'connection' ? 'Unable to connect' : labels[kind],
-    guidance: kind === 'connection' || kind === 'timeout' || kind === 'dns'
-      ? 'The network, proxy, or service may be unavailable.'
-      : kind === 'context-overflow'
-        ? 'The upstream input limit may be smaller than the advertised model window.'
-      : kind === 'model-not-found'
-        ? 'The model identifier may be unavailable or access may be restricted.'
-      : kind === 'not-found'
-        ? 'The API endpoint or requested resource was not found.'
-      : kind === 'invalid-request'
-        ? 'The request content or attachments do not meet the model’s input requirements.'
-        : kind === 'busy' || kind === 'overloaded'
-          ? 'The model provider is having trouble processing this request.'
-        : kind === 'gateway'
-          ? 'The gateway failed to process this request.'
-        : kind === 'gateway-no-backend'
-          ? 'Every backend the gateway has for this model is unavailable or cooling down.'
-        : kind === 'configuration'
-          ? 'No channel is configured for this model.'
-          : kind === 'backend-version'
-            ? 'The model backend requires a newer client version than the proxy provides.'
-            : undefined,
   }
 }

@@ -121,6 +121,21 @@ async fn send(
     if status.is_success() || status.as_u16() == 409 {
         return Ok(response);
     }
+    // A refusal the server explains (e.g. team sharing without a team) is
+    // more useful than the generic line.
+    if status.as_u16() == 403 {
+        let reason = response
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|body| body.get("error")?.as_str().map(str::to_string));
+        if let Some(reason) = reason {
+            return Err(EvotError::Conf(format!("{reason} (HTTP {status})")));
+        }
+        return Err(EvotError::Conf(format!(
+            "sync permission denied (HTTP {status})"
+        )));
+    }
     let message = match status.as_u16() {
         401 => "sync requires sign-in; run /login",
         403 => "sync permission denied",

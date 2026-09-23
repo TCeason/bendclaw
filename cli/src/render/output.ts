@@ -798,11 +798,7 @@ export function buildLlmCard(text: string): OutputLine[] {
   }
   for (const b of body) {
     const failure = providerFailurePresentation({ error: b })
-    lines.push({ id: genId('tool-res'), kind: 'error', text: `  ${failure.kind === 'unknown' ? b : failure.label}` })
-    // The final failure gets the one-line "what now"; retries stay terse.
-    if (mark === '✗' && failure.guidance) {
-      lines.push({ id: genId('tool-hint'), kind: 'tool_result', text: `  ${failure.guidance}` })
-    }
+    lines.push({ id: genId('tool-res'), kind: 'error', text: `  ${failure.label}` })
   }
   return lines
 }

@@ -33,7 +33,7 @@ export function buildHelpBlocks(_columns: number): ViewBlock[] {
     ['/env', 'Manage variables'],
     ['/skill', 'Manage skills'],
     ['/clip [all|copy]', 'Clip last reply to vault; all = distill; copy = clipboard'],
-    ['/share [public|private|off]', 'List shared sessions; public/private shares this session'],
+    ['/share [public|team|private|off]', 'List shared sessions; public/team/private shares this session'],
     ['/compact', 'Compact session context'],
     ['/version', 'Show current version'],
     ['/login', 'Log in to evot cloud'],

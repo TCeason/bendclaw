@@ -158,6 +158,9 @@ async fn install(
         synced_at: Utc::now().to_rfc3339(),
         origin_host: remote.origin_host,
         public_url: remote.public_url,
+        team: remote.team && remote.visibility == crate::types::CloudVisibility::Private,
+        team_url: remote.team_url,
+        team_name: remote.team_name,
     };
     let mut meta = remote.meta;
     meta.session_id = session_id.to_string();

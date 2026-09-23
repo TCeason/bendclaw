@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "session_id": "0190a1b2-0000-7000-8000-000000000003",
+  "cwd": "/Users/me/work/app",
+  "model": "claude-sonnet-4-20250514",
+  "provider": "anthropic",
+  "thinking_level": null,
+  "title": "team review",
+  "source": "cli",
+  "turns": 2,
+  "message_count": 4,
+  "context_tokens": 1000,
+  "context_budget": 200000,
+  "total_input_tokens": 3000,
+  "total_output_tokens": 800,
+  "span_count": 2,
+  "cloud": {
+    "visibility": "private",
+    "synced_seq": 4,
+    "synced_at": "2025-01-02T00:00:00Z",
+    "origin_host": "macbook",
+    "team": true,
+    "team_url": "https://auto.evot.ai/team/abcdefghijklmnopqrstuv",
+    "team_name": "Databend"
+  },
+  "created_at": "2025-01-01T00:00:00Z",
+  "updated_at": "2025-01-01T00:10:00Z"
+}

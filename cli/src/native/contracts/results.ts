@@ -28,6 +28,10 @@ export interface CloudSync {
   synced_at: string
   origin_host?: string
   public_url?: string | null
+  /** Signed-in members of the owner's group can read it; absent from older addons. */
+  team?: boolean
+  team_url?: string | null
+  team_name?: string | null
 }
 export interface SessionWithText extends SessionMeta {
   search_text: string
@@ -80,6 +84,7 @@ const integer: Schema<number> = { read(value, path) {
 export const cloudSync: Schema<CloudSync> = object({
   visibility: oneOf('private', 'public'), synced_seq: uint, synced_at: text,
   origin_host: optional(text), public_url: optional(nullable(text)),
+  team: optional(boolean), team_url: optional(nullable(text)), team_name: optional(nullable(text)),
 })
 const sessionFields = {
   session_id: text, title: optional(nullable(text)), custom_title: optional(nullable(text)), schema_version: optional(uint), model: text, provider: optional(text),

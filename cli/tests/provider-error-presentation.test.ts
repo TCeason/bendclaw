@@ -10,7 +10,7 @@ test('provider failure vocabulary is reusable without terminal-specific output',
     ['request timed out', 'Request timed out'],
     ['DNS lookup failed', 'Unable to resolve service address'],
     ['HTTP 529 overloaded', 'Model provider overloaded'], ['HTTP 429', 'Rate limited'],
-    ['invalid API key', 'Authentication failed'], ['insufficient_quota', 'Quota unavailable'],
+    ['invalid API key', 'Authentication failed'], ['Auth error: session_revoked', 'Authentication failed'], ['insufficient_quota', 'Quota unavailable'],
   ]) {
     const copy = providerFailurePresentation({ error })
     expect(copy.label).toBe(label)
@@ -18,6 +18,7 @@ test('provider failure vocabulary is reusable without terminal-specific output',
     expect(copy.label).not.toContain('\x1b')
   }
   expect(providerFailurePresentation({ kind: 'busy', error: 'tls' }).label).toBe('Model provider unavailable')
+  expect(providerFailurePresentation({ kind: 'backend-version' }).label).toBe('The model provider requires a newer client version than the gateway uses.')
 })
 
 test('the gateway tells us who failed; the copy says so and nothing more', () => {
@@ -46,19 +47,20 @@ test('the gateway tells us who failed; the copy says so and nothing more', () =>
     expect([error, copy.kind]).toEqual([error, kind])
     expect(copy.label).toBe(label)
     expect(copy.label).not.toContain('PRIVATE')
-    expect(copy.guidance).toBeDefined()
+    expect(copy).not.toHaveProperty('guidance')
   }
-  expect(providerFailurePresentation({ error: 'HTTP 500: gateway_error' }).guidance).toContain('gateway failed')
-  expect(providerFailurePresentation({ error: 'HTTP 502' }).guidance).toContain('model provider')
   // "bad gateway" is HTTP's name for a provider failure, not our gateway.
   expect(providerFailurePresentation({ error: 'HTTP/1.1 502 Bad Gateway' }).kind).toBe('busy')
 })
 
-test('the final failure card carries the guidance; a retry card does not', () => {
+test('final failure and retry cards show only the error fact', () => {
   const failed = buildLlmCard('[LLM] ✗ · gpt-5.6-sol · turn 20 · 40.5s\n    error     HTTP 500: gateway_error: PRIVATE').map(l => l.text).join('\n')
   expect(failed).toContain('Gateway error, not the model provider')
-  expect(failed).toContain('The gateway failed to process this request.')
+  expect(failed).not.toContain('The gateway failed to process this request.')
+  expect(failed).not.toContain('Contact the gateway operator.')
   expect(failed).not.toContain('PRIVATE')
+  expect(buildLlmCard('[LLM] ✗ · model\n    error     PRIVATE').map(l => l.text).join('\n')).toContain('Request failed')
+  expect(buildLlmCard('[LLM] ✗ · model\n    error     PRIVATE').map(l => l.text).join('\n')).not.toContain('PRIVATE')
   const retry = buildLlmCard('[LLM] ↻ · retrying in 2 seconds · attempt 1/10\n    error     HTTP 503: provider_overloaded').map(l => l.text).join('\n')
   expect(retry).toContain('Model provider overloaded')
   expect(retry).not.toContain('The model provider is having trouble processing this request.')
@@ -69,8 +71,7 @@ test('input validation numbers are not mistaken for HTTP status codes', () => {
   const copy = providerFailurePresentation({ error })
   expect(copy.kind).toBe('invalid-request')
   expect(copy.label).toBe('Invalid request')
-  expect(copy.guidance).toContain('attachments')
-  expect(copy.guidance).not.toMatch(/retry|switch model/i)
+  expect(copy).not.toHaveProperty('guidance')
   for (const detail of ['minimum of 512 pixels', 'image width 503', 'max 429 tokens', 'size 401 bytes']) {
     expect(providerFailurePresentation({ error: detail }).kind).toBe('unknown')
   }
@@ -92,8 +93,7 @@ test('overflow semantics take precedence over generic invalid requests', () => {
     const copy = providerFailurePresentation({ error })
     expect(copy.kind).toBe('context-overflow')
     expect(copy.label).toBe('Context limit exceeded')
-    expect(copy.guidance).toContain('upstream input limit')
-    expect(copy.guidance).not.toContain('attachments')
+    expect(copy).not.toHaveProperty('guidance')
   }
   expect(providerFailurePresentation({ kind: 'context-overflow', error: 'HTTP 400' }).kind).toBe('context-overflow')
 })
@@ -144,7 +144,8 @@ test('provider failures describe status without telling the user to control retr
     'configuration', 'backend-version', 'model-not-found', 'not-found', 'unknown',
   ] as const) {
     const copy = providerFailurePresentation({ kind })
-    expect(`${copy.label} ${copy.guidance ?? ''}`).not.toMatch(/retry|try again|switch model|pick another model|select another model|compact the conversation/i)
+    expect(copy).not.toHaveProperty('guidance')
+    expect(copy.label).not.toMatch(/retry|try again|switch model|pick another model|select another model|compact the conversation/i)
   }
 })
 

@@ -247,8 +247,8 @@ export class Agent {
   }
 
   // Cloud session sync: the session itself, kept whole, on the owner's server.
-  /** `keep` leaves an already-shared session's visibility unchanged (new ones start private). */
-  async cloudShareSession(sessionId: string, visibility: 'private' | 'public' | 'keep'): Promise<CloudPushResult> {
+  /** `keep` leaves an already-shared session's access unchanged (new ones start private). */
+  async cloudShareSession(sessionId: string, visibility: 'private' | 'team' | 'public' | 'keep'): Promise<CloudPushResult> {
     return decodeResult(await this.raw.cloudShareSession(sessionId, visibility), cloudPushResult)
   }
 

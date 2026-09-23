@@ -130,7 +130,7 @@ import { saveSessionRename } from './app/session-rename.js'
 import { handleSelectorControl } from './app/selector-control.js'
 import { decideReplControl, type ReplControlAction } from './app/repl-control.js'
 import { ShareNotices } from '../session/share-notices.js'
-import { CloudSessionSync, cloudBadge, mergeRemoteSessions } from '../session/cloud-sessions.js'
+import { CloudSessionSync, cloudBadge, cloudLabel, mergeRemoteSessions } from '../session/cloud-sessions.js'
 import { modelShareEvents } from '../session/share-events.js'
 import { ShareSelector } from './app/share-selector.js'
 import { openWebLink } from './open-link.js'
@@ -383,8 +383,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     },
   })
   resources.add(() => cloudSessions.dispose())
-  const sessionCloudBadge = (session: SessionMeta) =>
-    cloudBadge(cloudSessions.stateFor(session), session.cloud?.visibility)
+  const sessionCloudLabel = (session: SessionMeta) =>
+    cloudLabel(cloudSessions.stateFor(session), session.cloud?.visibility, session.cloud?.team)
   const replCommands: ReplCommandContext = {
     agent,
     flushShareNotices: () => shareNotices.flush(),
@@ -1158,8 +1158,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const state = current()
       if (!state) return
       const sessions = mergeRemoteSessions(resumeCache.metadata ?? [], cloudSessions.remoteSessions)
-        .filter(session => sessionCloudBadge(session) !== '')
-      const items = formatSessionItems(sessions, agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudBadge)
+        .filter(session => sessionCloudLabel(session) !== '')
+      // Every shared session, whichever project or machine it came from.
+      const items = formatSessionItems(sessions, agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudLabel, true)
       const next = {
         ...selectorExpandItems(state, items),
         emptyMessage: 'No shared sessions yet · /share private to sync, /share public to publish',
@@ -2005,7 +2006,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     appState = {
       ...appState,
       forkTrail: forkTrailTitles(lineage),
-      cloudBadge: cloud ? cloudBadge('synced', cloud.visibility) : '',
+      cloudBadge: cloud ? cloudBadge('synced', cloud.visibility, cloud.team) : '',
     }
     return lineage
   }
@@ -3711,7 +3712,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         .map(id => allSessions.find(s => s.session_id === id))
         .filter((s): s is SessionMeta => Boolean(s))
       if (ranked.length === 0) return
-      const items = formatSessionItems(ranked, agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudBadge)
+      const items = formatSessionItems(ranked, agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudLabel)
       invalidateExplicitResumeSelector()
       overlay = {
         kind: 'selector',
@@ -3733,11 +3734,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const cached = resumeCache.withText ?? resumeCache.metadata
     const rows = (sessions: SessionMeta[]) => {
       const merged = mergeRemoteSessions(sessions, cloudSessions.remoteSessions)
-      return options.cloudOnly ? merged.filter(session => sessionCloudBadge(session) !== '') : merged
+      return options.cloudOnly ? merged.filter(session => sessionCloudLabel(session) !== '') : merged
     }
     const items = cached === null
       ? []
-      : formatSessionItems(rows(cached), agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudBadge)
+      : formatSessionItems(rows(cached), agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudLabel, options.cloudOnly)
     overlay = {
       kind: 'selector',
       state: {
@@ -3771,7 +3772,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         renderer.requestRender()
         return
       }
-      const metaItems = formatSessionItems(visible, agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudBadge)
+      const metaItems = formatSessionItems(visible, agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudLabel, options.cloudOnly)
       overlay = {
         kind: 'selector',
         // Loaded: the placeholder must not survive as the no-match message.

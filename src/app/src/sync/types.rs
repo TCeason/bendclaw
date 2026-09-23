@@ -26,13 +26,17 @@ pub struct SyncPush {
     pub expected_seq: u64,
     pub entries: Vec<TranscriptEntry>,
     pub visibility: CloudVisibility,
+    /// Ask for a team page as well (only with `visibility == Private`).
+    /// Omitted when off, which is exactly what older builds send.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub team: bool,
     pub origin_host: String,
     /// Replace the server copy instead of appending. Only the explicit
     /// "overwrite with local" resolution sets this.
     #[serde(default)]
     pub force: bool,
     /// Full viewer document (same contract as `/v1/shares`), present while
-    /// public so the server can render the page without knowing evot's
+    /// public or team so the server can render the page without knowing evot's
     /// transcript format.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewer: Option<serde_json::Value>,
@@ -47,6 +51,13 @@ pub struct SyncAck {
     pub public_url: Option<String>,
     #[serde(default)]
     pub updated_at: String,
+    /// Team page state; see `CloudSync::team`. Absent from older servers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub team: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_name: Option<String>,
 }
 
 /// Push result the caller must branch on. A conflict is a normal outcome, not
@@ -70,6 +81,13 @@ pub struct RemoteSession {
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+    /// Team page state; see `CloudSync::team`. Absent from older servers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub team: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,5 +107,12 @@ pub struct SyncPull {
     pub origin_host: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+    /// Team page state; see `CloudSync::team`. Absent from older servers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub team: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_name: Option<String>,
     pub entries: Vec<TranscriptEntry>,
 }

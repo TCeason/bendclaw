@@ -1,6 +1,6 @@
 /** Outcomes of cloud session sync. Decisions for the user (diverged, local
  *  ahead) arrive as data so the REPL can offer a choice instead of failing. */
-import { array, nullable, object, oneOf, optional, tagged, text, uint } from './schema.js'
+import { array, boolean, nullable, object, oneOf, optional, tagged, text, uint } from './schema.js'
 import { cloudSync, sessionMeta, type CloudSync, type SessionMeta } from './results.js'
 
 export type CloudPushResult =
@@ -34,8 +34,13 @@ export interface RemoteSession {
   origin_host?: string
   updated_at?: string
   public_url?: string | null
+  /** Team page; absent from older servers and addons. */
+  team?: boolean
+  team_url?: string | null
+  team_name?: string | null
 }
 export const remoteSessions = array(object({
   session_id: text, meta: sessionMeta, seq: uint, visibility: oneOf('private', 'public'),
   origin_host: optional(text), updated_at: optional(text), public_url: optional(nullable(text)),
+  team: optional(boolean), team_url: optional(nullable(text)), team_name: optional(nullable(text)),
 })) as import('./schema.js').Schema<RemoteSession[]>

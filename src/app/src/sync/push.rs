@@ -15,6 +15,7 @@ use crate::auth::AuthState;
 use crate::error::EvotError;
 use crate::error::Result;
 use crate::storage::Storage;
+use crate::types::CloudAccess;
 use crate::types::CloudSync;
 use crate::types::CloudVisibility;
 use crate::types::ListTranscriptEntries;
@@ -37,30 +38,41 @@ pub fn local_host() -> String {
         .unwrap_or_default()
 }
 
-/// Turn cloud sync on (or change visibility) and push right away, so the
-/// command that enabled it reports a real server state rather than a promise.
+/// Turn cloud sync on (or change who can read it) and push right away, so
+/// the command that enabled it reports a real server state rather than a
+/// promise.
 ///
-/// `visibility: None` means "keep what it has": a bare `/share` on a public
+/// `access: None` means "keep what it has": a bare `/share` on a public
 /// session must not quietly take the page down. New sessions start private.
 pub async fn share_session(
     state: &AuthState,
     storage: &Arc<dyn Storage>,
     session_id: &str,
-    visibility: Option<CloudVisibility>,
+    access: Option<CloudAccess>,
     evot_version: &str,
 ) -> Result<PushOutcome> {
     let meta = load_meta(storage, session_id).await?;
-    let cloud = match meta.cloud {
-        Some(mut cloud) => {
-            if let Some(visibility) = visibility {
-                cloud.visibility = visibility;
-            }
-            cloud
-        }
-        None => CloudSync::new(visibility.unwrap_or(CloudVisibility::Private), local_host()),
-    };
+    let mut cloud = meta
+        .cloud
+        .unwrap_or_else(|| CloudSync::new(CloudVisibility::Private, local_host()));
+    if let Some(access) = access {
+        cloud.set_access(access);
+    }
     storage.set_session_cloud(session_id, Some(cloud)).await?;
-    push_session(state, storage, session_id, evot_version, false).await
+    let outcome = push_session(state, storage, session_id, evot_version, false).await?;
+    // A server that predates team pages ignores the flag and acknowledges a
+    // plain private session. Say so instead of reporting success.
+    if access == Some(CloudAccess::Team) {
+        if let PushOutcome::Synced { cloud, .. } = &outcome {
+            if !cloud.team {
+                return Err(EvotError::Conf(
+                    "the cloud server does not support team sharing yet; the session stays private"
+                        .into(),
+                ));
+            }
+        }
+    }
+    Ok(outcome)
 }
 
 /// Incremental push of everything after `cloud.synced_seq`. Metadata always
@@ -89,9 +101,10 @@ pub async fn push_session(
             limit: None,
         })
         .await?;
-    // The public page needs the whole transcript; the private copy only the
-    // tail. Both come from one read so they cannot disagree.
-    let viewer = (cloud.visibility == CloudVisibility::Public && !all.is_empty()).then(|| {
+    // A page (public or team) needs the whole transcript; the private copy
+    // only the tail. Both come from one read so they cannot disagree.
+    let access = cloud.access();
+    let viewer = (access != CloudAccess::Private && !all.is_empty()).then(|| {
         serde_json::to_value(crate::share::export_session(&meta, &all, evot_version))
             .unwrap_or(serde_json::Value::Null)
     });
@@ -104,6 +117,7 @@ pub async fn push_session(
         expected_seq: after_seq,
         entries,
         visibility: cloud.visibility,
+        team: access == CloudAccess::Team,
         origin_host: cloud.origin_host.clone(),
         force,
         viewer,
@@ -147,6 +161,10 @@ async fn acknowledge(
     cloud.synced_at = Utc::now().to_rfc3339();
     cloud.visibility = ack.visibility;
     cloud.public_url = ack.public_url.clone();
+    // The server's answer wins: it may have refused or dropped the team page.
+    cloud.team = ack.team && ack.visibility == CloudVisibility::Private;
+    cloud.team_url = ack.team_url.clone();
+    cloud.team_name = ack.team_name.clone();
     let saved = storage
         .set_session_cloud(session_id, Some(cloud.clone()))
         .await?;

@@ -1552,7 +1552,8 @@ describe('term stream machine', () => {
       // BYOK keys are user-managed: evot has nothing to re-mint, so these stay
       // visible errors instead of entering the cloud recovery path.
       expect(update.sessionRevoked).toBe(false)
-      expect(terminal).toContain(raw.includes('session_revoked') ? 'custom gateway session ended' : 'Authentication failed')
+      expect(terminal).toContain('Authentication failed')
+      expect(terminal).not.toContain('custom gateway session ended')
     }
   })
 

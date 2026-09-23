@@ -6,7 +6,7 @@ function synced(visibility: 'private' | 'public', seq = 3): CloudPushResult {
   return {
     kind: 'synced', pushed: seq,
     cloud: { visibility, synced_seq: seq, synced_at: 't', origin_host: 'laptop',
-      public_url: visibility === 'public' ? 'https://evot.ai/live/abcdefghijklmnopqrstuv' : null },
+      public_url: visibility === 'public' ? 'https://evot.ai/share/abcdefghijklmnopqrstuv' : null },
   }
 }
 
@@ -55,8 +55,22 @@ test('/share public warns before publishing and returns the live page link', asy
   await runShareCommand(ctx, 'public')
   expect(calls).toEqual(['flush', 'share:session:public', 'ack:session'])
   expect(output[0]).toContain('anyone with the link can read it')
-  expect(output.at(-1)).toContain('https://evot.ai/live/')
+  expect(output.at(-1)).toContain('https://evot.ai/share/')
   expect(output.at(-1)).toContain('🌐')
+})
+
+test('/share team warns who can read it and returns the team page link', async () => {
+  const team: CloudPushResult = {
+    kind: 'synced', pushed: 3,
+    cloud: { visibility: 'private', synced_seq: 3, synced_at: 't', origin_host: 'laptop', public_url: null,
+      team: true, team_url: 'https://auto.evot.ai/team/abcdefghijklmnopqrstuv', team_name: 'Databend' },
+  }
+  const { ctx, output, calls } = setup(() => team)
+  await runShareCommand(ctx, 'team')
+  expect(calls).toEqual(['flush', 'share:session:team', 'ack:session'])
+  expect(output[0]).toContain('members of your group who sign in')
+  expect(output.at(-1)).toContain('👥 Team Databend')
+  expect(output.at(-1)).toContain('https://auto.evot.ai/team/')
 })
 
 test('/share off removes the cloud copy and keeps the local one', async () => {
@@ -95,7 +109,7 @@ test('does not sync partial runs, and rejects anything that is not a word or id'
   await runShareCommand(ctx, 'https://tmpfiles.org/old#key')
   expect(output.at(-1)).toContain('Usage:')
   await runShareCommand(ctx, 'rm abcdefghijklmnopqrstuv')
-  expect(output.at(-1)).toContain('Usage: /share [public | private | off | list] [session-id]')
+  expect(output.at(-1)).toContain('Usage: /share [public | team | private | off | list] [session-id]')
   expect(calls).toEqual([])
 })
 

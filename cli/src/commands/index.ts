@@ -26,7 +26,7 @@ export const COMMANDS: SlashCommand[] = [
   { name: '/model', description: 'Show or change model', usage: '/model [name]', handler: 'builtin' },
   { name: '/plan', description: 'Enter planning mode', handler: 'builtin' },
   { name: '/task', description: 'Manage scheduled tasks, or import a shared one', usage: '/task [prompt | share-link]', handler: 'builtin' },
-  { name: '/share', description: 'List shared sessions; public/private shares this session', usage: '/share [public | private | off] [session-id]', handler: 'builtin' },
+  { name: '/share', description: 'List shared sessions; public/team/private shares this session', usage: '/share [public | team | private | off] [session-id]', handler: 'builtin' },
   { name: '/login', description: 'Log in to evot cloud', handler: 'builtin' },
   { name: '/logout', description: 'Log out of evot cloud', handler: 'builtin' },
 ]
