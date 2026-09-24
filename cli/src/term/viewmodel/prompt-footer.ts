@@ -171,7 +171,6 @@ type FooterContextDetail = 'full' | 'compact' | 'hidden'
 interface FooterLayout {
   dashboard: boolean
   context: FooterContextDetail
-  provider: boolean
   branch: boolean
   thinking: boolean
   model: boolean
@@ -180,14 +179,13 @@ interface FooterLayout {
 
 /** Widest first: the first entry that fits wins, so detail sheds in this order. */
 const FOOTER_LAYOUTS: FooterLayout[] = [
-  { dashboard: true, context: 'full', provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
-  { dashboard: false, context: 'full', provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
-  { dashboard: false, context: 'compact', provider: true, branch: true, thinking: true, model: true, truncateCwd: false },
-  { dashboard: false, context: 'compact', provider: false, branch: true, thinking: true, model: true, truncateCwd: false },
-  { dashboard: false, context: 'compact', provider: false, branch: false, thinking: true, model: true, truncateCwd: false },
-  { dashboard: false, context: 'hidden', provider: false, branch: false, thinking: true, model: true, truncateCwd: true },
-  { dashboard: false, context: 'hidden', provider: false, branch: false, thinking: false, model: true, truncateCwd: true },
-  { dashboard: false, context: 'hidden', provider: false, branch: false, thinking: false, model: false, truncateCwd: true },
+  { dashboard: true, context: 'full', branch: true, thinking: true, model: true, truncateCwd: false },
+  { dashboard: false, context: 'full', branch: true, thinking: true, model: true, truncateCwd: false },
+  { dashboard: false, context: 'compact', branch: true, thinking: true, model: true, truncateCwd: false },
+  { dashboard: false, context: 'compact', branch: false, thinking: true, model: true, truncateCwd: false },
+  { dashboard: false, context: 'hidden', branch: false, thinking: true, model: true, truncateCwd: true },
+  { dashboard: false, context: 'hidden', branch: false, thinking: false, model: true, truncateCwd: true },
+  { dashboard: false, context: 'hidden', branch: false, thinking: false, model: false, truncateCwd: true },
 ]
 
 interface FooterCandidate {
@@ -214,7 +212,6 @@ function buildFooterCandidate(
     const groups: StyledSpan[][] = [[dim(location)]]
     if (layout.model && input.model) {
       const identity: StyledSpan[] = [dim(input.model)]
-      if (layout.provider && input.provider) identity.push(dim(`@${input.provider}`))
       if (layout.thinking && input.thinkingLevel) {
         const thinking = input.thinkingLevel === 'off' ? 'thinking off' : input.thinkingLevel
         identity.push(dim(` • ${thinking}`))

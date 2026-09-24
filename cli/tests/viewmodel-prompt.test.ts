@@ -837,7 +837,8 @@ describe('prompt footer', () => {
     expect(plain).not.toContain('[log]')
     expect(plain).not.toContain('[plan]')
     expect(plain).toContain('/Users/test/project (main)')
-    expect(plain).toContain('claude-sonnet@anthropic • xhigh')
+    expect(plain).toContain('claude-sonnet • xhigh')
+    expect(plain).not.toContain('@anthropic')
   })
 
   test('footer keeps the mode prefix when no border carries it', () => {
@@ -898,7 +899,7 @@ describe('prompt footer', () => {
       contextWindow: 272000,
     }))).map(stripAnsi)[0]!
 
-    expect(footer).toBe('~/github/evotai/evot (main) │ gpt-5.6-sol@anthropic • high │ context: 38.9% (105.8k/272k)')
+    expect(footer).toBe('~/github/evotai/evot (main) │ gpt-5.6-sol • high │ context: 38.9% (105.8k/272k)')
   })
 
   test('badges the context with jev prune while the catalog publishes a judge', () => {
@@ -915,7 +916,7 @@ describe('prompt footer', () => {
       judge: 'jev-latest',
     }))).map(stripAnsi)[0]!
 
-    expect(footer).toBe('~/github/evotai/evot (main) │ gpt-5.6-sol@anthropic • high │ context: 38.9% (105.8k/272k) • jev prune')
+    expect(footer).toBe('~/github/evotai/evot (main) │ gpt-5.6-sol • high │ context: 38.9% (105.8k/272k) • jev prune')
   })
 
   test('shows the jev prune badge before the first call, and never without a judge', () => {
@@ -940,7 +941,15 @@ describe('prompt footer', () => {
     }
     const wide = footerAt(160)
     expect(wide).toContain('context: 38.9% (105.8k/272k)')
-    expect(wide).toContain('@anthropic')
+    expect(wide).not.toContain('@anthropic')
+  })
+
+  test('the footer hides provider labels even for cloud models while the model picker retains them', () => {
+    const footer = blocksToLines(buildPromptFooterBlocks(defaultInput({
+      columns: 160, model: 'gpt-6-sol', provider: 'Evot Premium', thinkingLevel: 'high',
+    }))).map(stripAnsi)[0]!
+    expect(footer).toContain('gpt-6-sol • high')
+    expect(footer).not.toContain('@Evot Premium')
   })
 
   test('degrades footer details in priority order as width narrows', () => {
@@ -954,19 +963,19 @@ describe('prompt footer', () => {
       contextWindow: 272000,
     }))).map(stripAnsi)[0]!
 
-    const withoutDashboard = footerAt(119)
+    const withDashboard = footerAt(119)
+    expect(withDashboard).toContain('dashboard')
+    expect(withDashboard).toContain('context: 38.9% (105.8k/272k)')
+
+    const withoutDashboard = footerAt(80)
     expect(withoutDashboard).not.toContain('dashboard')
     expect(withoutDashboard).toContain('context: 38.9% (105.8k/272k)')
 
-    const compactContext = footerAt(80)
-    expect(compactContext).toContain('gpt-5.6-sol@anthropic • max')
+    const compactContext = footerAt(70)
+    expect(compactContext).toContain('gpt-5.6-sol • max')
     expect(compactContext).toContain('context: 38.9%')
     expect(compactContext).not.toContain('105.8k')
-
-    const withoutProvider = footerAt(70)
-    expect(withoutProvider).toContain('gpt-5.6-sol • max')
-    expect(withoutProvider).not.toContain('@anthropic')
-    expect(withoutProvider).toContain('(main)')
+    expect(compactContext).toContain('(main)')
 
     const withoutBranch = footerAt(60)
     expect(withoutBranch).not.toContain('(main)')
@@ -1078,7 +1087,8 @@ describe('prompt footer', () => {
   test('footer remains available without the editor', () => {
     const lines = blocksToLines(buildPromptFooterBlocks(defaultInput({ provider: 'openai', model: 'gpt-5.6-sol' }))).map(stripAnsi)
     expect(lines).toHaveLength(2)
-    expect(lines[0]).toContain('gpt-5.6-sol@openai')
+    expect(lines[0]).toContain('gpt-5.6-sol')
+    expect(lines[0]).not.toContain('@openai')
     expect(lines[1]).toBe('')
     expect(lines.join('\n')).not.toContain('Enter a coding task or / for commands')
   })
