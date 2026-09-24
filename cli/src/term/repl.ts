@@ -120,6 +120,7 @@ import {
   RESUME_SELECTOR_TITLE,
   COMPACT_SUMMARY_PREFIX,
   applySessionText,
+  formatRankedSessionItems,
   formatSessionItems,
   isInteractiveSession,
   isSessionIdPrefix,
@@ -157,6 +158,7 @@ import { createSkillSelectorState } from './app/skill-window.js'
 import { transcriptToMessages } from '../session/transcript.js'
 import { GitInfoProvider } from './git-info.js'
 import { isHostToolEvent } from '../native/contracts/query-event.js'
+import { lastAssistantText, parseSessionSearchResults } from './app/session-search.js'
 import { ResumeSessionCache } from './app/resume-cache.js'
 import { ResumeItemCache } from './app/resume-items.js'
 import { CloudSync, ModelAnnouncer } from './app/cloud-sync.js'
@@ -3469,7 +3471,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             openResumeSelector(query)
           }
         } else if (query) {
-          await handleSemanticResume(query)
+          await handleSessionSearch(args)
         } else {
           openResumeSelector(undefined)
         }
@@ -3720,41 +3722,27 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     return false
   }
 
-  async function handleSemanticResume(query: string) {
-    commitSystem('sys-rsem-busy', chalk.dim('  searching sessions…'))
-    renderer.requestRender()
-    try {
-      const outcome = await agent.submit(`/_rsearch ${query}`, sessionId ?? undefined, 'interactive')
-      if (outcome.kind !== 'command') return
-      const message = outcome.message ?? ''
-      const lines = message.split('\n')
-      commitLines(lines.map((line, i) => ({
-        id: `sys-rsem-${i}`,
-        kind: 'system' as const,
-        text: `  ${line}`,
-      })))
-      const ids: string[] = []
-      for (const line of lines) {
-        const m = /^- (\S+) — /.exec(line)
-        if (m) ids.push(m[1]!)
-      }
-      if (ids.length === 0) return
-      const allSessions = await resumeCache.all()
-      const ranked = ids
-        .map(id => allSessions.find(s => s.session_id === id))
-        .filter((s): s is SessionMeta => s !== undefined && isInteractiveSession(s))
-      if (ranked.length === 0) return
-      const items = formatSessionItems(ranked, agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudLabel)
-      invalidateExplicitResumeSelector()
-      overlay = {
-        kind: 'selector',
-        state: resumeSelectorState(items),
-      }
-      renderer.requestRender()
-    } catch (err) {
-      commitSystem('sys-rsem-err', renderErrorNotice(`Semantic search failed: ${errorText(err)}`))
-      openResumeSelector(query)
+  /**
+   * `/sessions <query>`: a normal agent turn with a prepared search task.
+   * When the answer lists sessions, open the resume selector on them in the
+   * agent's order so Enter resumes straight away.
+   */
+  async function handleSessionSearch(args: string) {
+    await runQuery(`/sessions ${args.trim()}`)
+    const ids = parseSessionSearchResults(lastAssistantText(appState.messages))
+    if (ids.length === 0) return
+    const allSessions = await resumeCache.all()
+    const ranked = ids
+      .map(id => allSessions.find(s => s.session_id === id))
+      .filter((s): s is SessionMeta => s !== undefined && isInteractiveSession(s))
+    if (ranked.length === 0) return
+    const items = formatRankedSessionItems(ranked, agent.cwd, id => resumeCache.sessionText(id), sessionId, sessionCloudLabel)
+    invalidateExplicitResumeSelector()
+    overlay = {
+      kind: 'selector',
+      state: resumeSelectorState(items),
     }
+    renderer.requestRender()
   }
 
   /**

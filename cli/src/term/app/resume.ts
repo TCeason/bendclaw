@@ -297,6 +297,36 @@ function mixedSources(sessions: SessionMeta[]): boolean {
   return new Set(sessions.map(session => session.source || '')).size > 1
 }
 
+type SessionRowFormatter = (session: SessionMeta, otherCwd: boolean, edge: string) => SelectorItem
+
+/**
+ * Shared per-row rendering for every session list. Precomputes the list-wide
+ * facts (id label width, mixed sources, cloud badges) once so the list shapes
+ * below only decide ordering and grouping.
+ */
+function sessionRowFormatter(
+  sessions: SessionMeta[],
+  sessionText: (sessionId: string) => SessionWithText | undefined,
+  openSessionId: string | null | undefined,
+  cloudBadge: (session: SessionMeta) => string,
+): SessionRowFormatter {
+  const labels = sessionIdLabels(sessions)
+  const showSource = mixedSources(sessions)
+  const badges = new Map(sessions.map(session => [session.session_id, cloudBadge(session)]))
+  const anyCloud = [...badges.values()].some(Boolean)
+  return (session, otherCwd, edge) => formatSessionItem(
+    session,
+    labels.get(session.session_id) ?? session.session_id,
+    otherCwd,
+    showSource,
+    sessionText(session.session_id),
+    session.session_id === openSessionId,
+    edge,
+    badges.get(session.session_id) ?? '',
+    anyCloud,
+  )
+}
+
 /**
  * The resume list. `sessionText` supplies whatever text has been loaded, so
  * one formatter covers the metadata-only first paint, the focused row whose
@@ -310,24 +340,23 @@ export function formatSessionItems(
   cloudBadge: (session: SessionMeta) => string = () => '',
   showOtherCwds = false,
 ): SelectorItem[] {
-  const labels = sessionIdLabels(sessions)
-  const showSource = mixedSources(sessions)
-  const badges = new Map(sessions.map(session => [session.session_id, cloudBadge(session)]))
-  const anyCloud = [...badges.values()].some(Boolean)
-  return groupedSessionItems(sessions, currentCwd, (session, otherCwd, edge) =>
-    formatSessionItem(
-      session,
-      labels.get(session.session_id) ?? session.session_id,
-      otherCwd,
-      showSource,
-      sessionText(session.session_id),
-      session.session_id === openSessionId,
-      edge,
-      badges.get(session.session_id) ?? '',
-      anyCloud,
-    ),
-    showOtherCwds,
-  )
+  const row = sessionRowFormatter(sessions, sessionText, openSessionId, cloudBadge)
+  return groupedSessionItems(sessions, currentCwd, row, showOtherCwds)
+}
+
+/**
+ * Search results in ranked order. No cwd grouping and no search-only hiding:
+ * a semantic hit from another workspace is the whole point of the query.
+ */
+export function formatRankedSessionItems(
+  sessions: SessionMeta[],
+  currentCwd: string,
+  sessionText: (sessionId: string) => SessionWithText | undefined = () => undefined,
+  openSessionId?: string | null,
+  cloudBadge: (session: SessionMeta) => string = () => '',
+): SelectorItem[] {
+  const row = sessionRowFormatter(sessions, sessionText, openSessionId, cloudBadge)
+  return sessions.map(session => row(session, session.cwd !== currentCwd, ''))
 }
 
 /**

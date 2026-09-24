@@ -65,8 +65,6 @@ mod model_spec_test;
 mod orchestrator_compact_test;
 mod process_registry_test;
 mod resume_context_anchor_test;
-#[path = "resume_search_test.rs"]
-mod resume_search_test;
 #[path = "run_ask_channel_test.rs"]
 mod run_ask_channel_test;
 #[path = "run_manager_test.rs"]
@@ -95,6 +93,8 @@ mod session_observability_test;
 mod session_queries_test;
 mod session_rename_test;
 mod session_service_test;
+#[path = "session_task_test.rs"]
+mod session_task_test;
 #[path = "session_test.rs"]
 mod session_test;
 #[path = "settings_test.rs"]

@@ -77,6 +77,11 @@ impl TurnAssembler {
         }
     }
 
+    /// Root of the on-disk session archive, when storage is on disk.
+    pub(super) fn sessions_dir(&self) -> Option<PathBuf> {
+        self.spill_root.as_ref().map(|root| root.join("sessions"))
+    }
+
     /// Forks inherit limits and sandbox policy, but not skills, variables,
     /// provider overrides, spill storage, or session process managers.
     pub(super) fn fork(&self) -> Self {
@@ -166,9 +171,8 @@ impl TurnAssembler {
             system_dirs.push(skill.base_dir.clone());
         }
         let session_dir = self
-            .spill_root
-            .as_ref()
-            .map(|root| root.join("sessions").join(session_id));
+            .sessions_dir()
+            .map(|sessions| sessions.join(session_id));
         let spill_dir = session_dir.as_ref().map(|dir| dir.join("tool-results"));
         if let Some(spill_dir) = &spill_dir {
             std::fs::create_dir_all(spill_dir)?;

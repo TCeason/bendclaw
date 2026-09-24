@@ -101,25 +101,37 @@ pub enum SubmitOutcome {
     Command(String),
 }
 
+/// Commands that run as an ordinary agent turn with a prepared prompt.
+pub(super) struct PromptCommandContext<'a> {
+    pub skills_dirs: &'a [PathBuf],
+    /// Root of the session archive; `None` when storage is not on disk.
+    pub sessions_dir: Option<&'a std::path::Path>,
+}
+
 pub(super) fn expand_prompt_command(
     mut request: QueryRequest,
-    skills_dirs: &[PathBuf],
+    ctx: &PromptCommandContext<'_>,
 ) -> Result<QueryRequest> {
     use crate::command::clip_session_prompt;
     use crate::command::parse_command;
     use crate::command::Command;
 
-    if !matches!(
-        parse_command(&request.input_text()),
-        Some(Command::ClipSession)
-    ) {
-        return Ok(request);
-    }
-    let memory = crate::agent::prompt::skill::load_skill(skills_dirs, "memory")
-        .map_err(|error| EvotError::Agent(format!("cannot load memory skill: {error}")))?;
-    let instructions = crate::agent::prompt::skill::load_skill_instructions(&memory)
-        .map_err(|error| EvotError::Agent(format!("cannot read memory skill: {error}")))?;
-    let text = clip_session_prompt(&instructions);
+    let text = match parse_command(&request.input_text()) {
+        Some(Command::ClipSession) => {
+            let memory = crate::agent::prompt::skill::load_skill(ctx.skills_dirs, "memory")
+                .map_err(|error| EvotError::Agent(format!("cannot load memory skill: {error}")))?;
+            let instructions = crate::agent::prompt::skill::load_skill_instructions(&memory)
+                .map_err(|error| EvotError::Agent(format!("cannot read memory skill: {error}")))?;
+            clip_session_prompt(&instructions)
+        }
+        Some(Command::SessionSearch(search)) => {
+            let sessions_dir = ctx.sessions_dir.ok_or_else(|| {
+                EvotError::Conf("Session search needs the on-disk session archive.".to_string())
+            })?;
+            search.prompt(sessions_dir, chrono::Utc::now())
+        }
+        _ => return Ok(request),
+    };
     request.input = vec![evot_engine::Content::Text { text }];
     Ok(request)
 }

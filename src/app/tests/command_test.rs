@@ -151,18 +151,6 @@ async fn clip_all_persists_pre_activated_memory_workflow() -> Result<(), Box<dyn
 }
 
 #[test]
-fn parse_rsearch() {
-    assert!(matches!(
-        parse_command("/_rsearch tailscale migration"),
-        Some(Command::ResumeSearch { ref query }) if query == "tailscale migration"
-    ));
-    assert!(matches!(
-        parse_command("/_rsearch"),
-        Some(Command::UsageError(_))
-    ));
-}
-
-#[test]
 fn parse_non_command_returns_none() {
     assert!(parse_command("hello").is_none());
     assert!(parse_command("").is_none());

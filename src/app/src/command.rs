@@ -22,12 +22,11 @@ pub enum Command {
     /// into the memory vault through a normal LLM turn. Bare `/clip` is a TUI
     /// command that saves the latest assistant reply locally.
     ClipSession,
-    /// Hidden `/_rsearch <query>` — semantic session search for `/resume`.
-    /// Handled directly: ranks recent sessions against the query with a
-    /// one-shot LLM call and returns the list as a command outcome.
-    ResumeSearch {
-        query: String,
-    },
+    /// `/sessions <query> [--days N | --since 2w | --all]` — search past
+    /// sessions by meaning through a normal agent turn: the command expands
+    /// into a task prompt and the agent uses its ordinary tools on the
+    /// archive. Bare `/sessions` is a TUI command (the resume selector).
+    SessionSearch(crate::search::SessionSearch),
     UsageError(String),
 }
 
@@ -86,23 +85,18 @@ pub fn parse_command(text: &str) -> Option<Command> {
     if lower == "/clip all" {
         return Some(Command::ClipSession);
     }
+    if let Some(args) = trimmed.strip_prefix("/sessions ") {
+        return Some(match crate::search::SessionSearch::parse(args) {
+            Some(search) => Command::SessionSearch(search),
+            None => Command::UsageError(
+                "Usage: /sessions <query> [--days N | --since 2w | --all]".to_string(),
+            ),
+        });
+    }
     if lower == "/clip" || lower.starts_with("/clip ") {
         return Some(Command::UsageError(
             "/clip saves the last reply locally in the TUI; use `/clip all` to distill this session into memory".to_string(),
         ));
-    }
-    if lower == "/_rsearch" || lower.starts_with("/_rsearch ") {
-        let arg = trimmed
-            .get("/_rsearch".len()..)
-            .map(str::trim)
-            .unwrap_or("");
-        return Some(if arg.is_empty() {
-            Command::UsageError("Usage: /_rsearch <query>".to_string())
-        } else {
-            Command::ResumeSearch {
-                query: arg.to_string(),
-            }
-        });
     }
     None
 }

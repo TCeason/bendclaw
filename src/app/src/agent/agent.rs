@@ -10,6 +10,7 @@ use super::fork::ForkRequest;
 use super::fork::ForkedAgent;
 use super::request::expand_prompt_command;
 use super::request::ExecutionLimits;
+use super::request::PromptCommandContext;
 use super::request::QueryRequest;
 use super::request::SubmitOutcome;
 use super::run::registry::RunRegistry;
@@ -456,16 +457,6 @@ impl Agent {
     // -- query ---------------------------------------------------------------
 
     pub async fn submit(self: &Arc<Self>, mut request: QueryRequest) -> Result<SubmitOutcome> {
-        // Session-independent commands are handled before resolve_session,
-        // which would otherwise persist an empty session when the caller has
-        // no session yet (e.g. `/resume <query>` from a fresh CLI).
-        if let Some(crate::command::Command::ResumeSearch { query }) =
-            crate::command::parse_command(&request.input_text())
-        {
-            let msg = self.handle_resume_search(&query).await?;
-            return Ok(SubmitOutcome::Command(msg));
-        }
-
         // Freeze one selection for session metadata and every turn in this run.
         // Without this snapshot, concurrent callers changing the live model
         // could make a run start or auto-continue on a different provider.
@@ -498,9 +489,14 @@ impl Agent {
         if let Some(outcome) = self.maybe_handle_command(&request, &session).await? {
             return Ok(outcome);
         }
-        // `/clip all` loads the memory workflow and continues as a normal run.
+        // `/clip all` and `/sessions <query>` become prepared prompts and
+        // continue as a normal run.
         let skills_dirs = self.assembler.skills_dirs.read().clone();
-        let request = expand_prompt_command(request, &skills_dirs)?;
+        let sessions_dir = self.assembler.sessions_dir();
+        let request = expand_prompt_command(request, &PromptCommandContext {
+            skills_dirs: &skills_dirs,
+            sessions_dir: sessions_dir.as_deref(),
+        })?;
 
         let run = self.start_run(request, session).await?;
         Ok(SubmitOutcome::Run(run))
@@ -563,12 +559,7 @@ impl Agent {
             }
             // Expanded into a normal prompt by `expand_prompt_command` after
             // this interception step; nothing to handle here.
-            Command::ClipSession => Ok(None),
-            // Semantic session search — one-shot LLM ranking, no agent run.
-            Command::ResumeSearch { query } => {
-                let msg = self.handle_resume_search(&query).await?;
-                Ok(Some(SubmitOutcome::Command(msg)))
-            }
+            Command::ClipSession | Command::SessionSearch(_) => Ok(None),
         }
     }
 
@@ -885,44 +876,6 @@ impl Agent {
     }
 
     // -- private -------------------------------------------------------------
-
-    /// Search recent sessions for literal matches before falling back to
-    /// semantic ranking with the configured LLM.
-    async fn handle_resume_search(&self, query: &str) -> Result<String> {
-        // Automation creates a durable session on every run, but /resume is
-        // for conversations a person is likely to continue. Choose the 30
-        // interactive sessions *before* reading their transcripts: otherwise
-        // a frequent task can consume the whole search window (and make us
-        // read irrelevant task transcripts).
-        let catalog = crate::sessions::SessionQueries::new(self.storage.clone())
-            .list(0)
-            .await?;
-        let mut sessions = Vec::new();
-        for meta in catalog
-            .into_iter()
-            .filter(|row| row.source != "automation")
-            .take(crate::search::resume_search::SESSION_LIMIT)
-        {
-            if let Some(text) = self.storage.session_with_text(&meta.session_id).await? {
-                sessions.push(text);
-            }
-        }
-        if let Some(results) = crate::search::resume_search::literal_results(query, &sessions) {
-            return Ok(results);
-        }
-
-        let llm = self.selection.snapshot();
-        if llm.provider.is_empty() || llm.api_key.trim().is_empty() {
-            return Err(EvotError::Conf(
-                "Semantic session search needs a configured LLM provider.".to_string(),
-            ));
-        }
-        let ctx = crate::search::resume_search::RankContext {
-            provider: self.llm_provider(&llm.protocol),
-            llm,
-        };
-        crate::search::resume_search::rank_sessions(&ctx, query, &sessions).await
-    }
 
     /// Build a structured snapshot of what evot would send to the LLM right
     /// now (system prompt + tool definitions). Persists
