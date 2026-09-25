@@ -9,10 +9,10 @@ use super::model::CreatedTask;
 use super::model::TaskList;
 use super::model::TaskShareCreated;
 use super::model::TaskShareSnapshot;
-use super::share_link::parse_task_share_id;
 use crate::auth::AuthState;
 use crate::error::EvotError;
 use crate::error::Result;
+use crate::share::parse_task_share_id;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 

@@ -9,6 +9,9 @@ export const shareList = object({ shares: array(object({
   created_at: optional(nullable(uint)), size_bytes: optional(nullable(uint)),
   /** `session` (also when absent: older servers only had sessions) or `task`. */
   kind: optional(text),
+  /** The local record the link was made from — session id or task id — so
+   *  the selector can match a link to what it shows. Absent on older servers. */
+  source_id: optional(text),
   /** Task shares only: schedule and model, so the selector can say what the
    *  link holds without fetching it. Every field is optional. */
   summary: optional(nullable(json)),

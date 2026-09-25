@@ -6,6 +6,7 @@ use std::sync::Arc;
 use chrono::Utc;
 
 use super::client;
+use super::portable::has_path_images;
 use super::types::RemoteSession;
 use super::types::SyncPull;
 use crate::auth::AuthState;
@@ -122,14 +123,28 @@ pub async fn fork_remote_session(
     session_id: &str,
 ) -> Result<SessionMeta> {
     let remote = client::pull(state, session_id, 0).await?;
+    install_fork(storage, remote, "cloud copy").await
+}
+
+/// Write a pulled session under a fresh local id with no cloud link, titled
+/// `<title> (<label>)`. Shared by the cloud fork and by importing someone
+/// else's public share: both are a local conversation that starts from a
+/// remote transcript and never writes back to it.
+pub async fn install_fork(
+    storage: &Arc<dyn Storage>,
+    remote: SyncPull,
+    label: &str,
+) -> Result<SessionMeta> {
+    validate_fork(&remote)?;
     let new_id = new_id();
     let mut meta = remote.meta.clone();
     meta.session_id = new_id.clone();
     meta.cloud = None;
     meta.title = Some(format!(
-        "{} (cloud copy)",
+        "{} ({label})",
         meta.display_title().unwrap_or("session")
     ));
+    meta.custom_title = None;
     let entries: Vec<TranscriptEntry> = remote
         .entries
         .into_iter()
@@ -140,9 +155,51 @@ pub async fn fork_remote_session(
         .collect();
     storage.save_session(meta.clone()).await?;
     if !entries.is_empty() {
-        storage.append_entries(entries).await?;
+        if let Err(error) = storage.append_entries(entries).await {
+            // Do not leave a resumable metadata-only session on disk when
+            // writing the transcript fails. Surface the original failure.
+            if let Err(cleanup) = storage.delete_session(&new_id).await {
+                return Err(EvotError::Store(format!(
+                    "shared transcript write failed: {error}; cleanup failed: {cleanup}"
+                )));
+            }
+            return Err(error);
+        }
     }
     Ok(meta)
+}
+
+/// A fork must have every entry and no machine-local image references.
+/// Validate before creating a session: never report a partial import as a
+/// conversation that is safe to continue.
+fn validate_fork(remote: &SyncPull) -> Result<()> {
+    if remote.schema_version != super::types::SYNC_SCHEMA_VERSION {
+        return Err(EvotError::Conf(format!(
+            "unsupported shared session schema version: {}",
+            remote.schema_version
+        )));
+    }
+    if remote.seq != remote.entries.len() as u64 {
+        return Err(EvotError::Conf(format!(
+            "shared session is incomplete: expected {} entries, got {}",
+            remote.seq,
+            remote.entries.len()
+        )));
+    }
+    for (index, entry) in remote.entries.iter().enumerate() {
+        if entry.seq != index as u64 + 1 || entry.session_id != remote.meta.session_id {
+            return Err(EvotError::Conf(
+                "shared session has an invalid transcript sequence or session id".into(),
+            ));
+        }
+        if has_path_images(entry)? {
+            return Err(EvotError::Conf(
+                "shared session contains machine-local images; ask the owner to re-share with a newer evot"
+                    .into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 async fn install(

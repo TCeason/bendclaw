@@ -1,4 +1,5 @@
 mod client;
+mod portable;
 mod pull;
 mod push;
 mod types;
@@ -6,6 +7,7 @@ mod types;
 pub use client::index as remote_index;
 pub use pull::cloud_state;
 pub use pull::fork_remote_session;
+pub use pull::install_fork;
 pub use pull::pull_session;
 pub use pull::CloudState;
 pub use pull::PullOutcome;

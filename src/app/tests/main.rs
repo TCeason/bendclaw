@@ -101,6 +101,8 @@ mod session_test;
 mod settings_test;
 mod share_client;
 mod share_export;
+#[path = "share_import_test.rs"]
+mod share_import_test;
 #[path = "skill_loader_test.rs"]
 mod skill_loader_test;
 #[path = "skill_prompt_test.rs"]

@@ -90,3 +90,18 @@ test('delete completion respects filtering and does not reopen a closed selector
   await next
   expect(ctx.current()).toBeUndefined()
 })
+
+test('details name the local session or task a link was made from', () => {
+  const state = shareSelectorState([
+    { ...shares[0]!, source_id: '019ecf98-a948-7ee1-b28a-e352da2aee40' },
+    { id: 'share-t', title: 'Nightly', url: 'https://evot.ai/share/t/share-t', kind: 'task', source_id: 'task-7' },
+    shares[1]!,
+  ])
+  const preview = (id: string) => state.items.find(item => item.id === id)?.preview ?? []
+  expect(preview('share-0')).toContain('Session: 019ecf98-a948-7ee1-b28a-e352da2aee40')
+  expect(preview('share-t')).toContain('Task: task-7')
+  // Older servers send no source; the row simply omits the line.
+  expect(preview('share-1').some(line => line.startsWith('Session:'))).toBe(false)
+  // `/` finds a link by the session it was made from.
+  expect(selectorType(state, '019ecf98').items.map(item => item.id).filter(Boolean)).toEqual(['share-0'])
+})

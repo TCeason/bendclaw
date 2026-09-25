@@ -7,6 +7,8 @@ use std::sync::Arc;
 use chrono::Utc;
 
 use super::client;
+use super::portable::has_path_images;
+use super::portable::portable_entries;
 use super::types::PushResponse;
 use super::types::SyncAck;
 use super::types::SyncPush;
@@ -52,14 +54,25 @@ pub async fn share_session(
     evot_version: &str,
 ) -> Result<PushOutcome> {
     let meta = load_meta(storage, session_id).await?;
-    let mut cloud = meta
-        .cloud
+    let previous = meta.cloud;
+    let mut cloud = previous
+        .clone()
         .unwrap_or_else(|| CloudSync::new(CloudVisibility::Private, local_host()));
     if let Some(access) = access {
         cloud.set_access(access);
     }
     storage.set_session_cloud(session_id, Some(cloud)).await?;
-    let outcome = push_session(state, storage, session_id, evot_version, false).await?;
+    let outcome = match push_session(state, storage, session_id, evot_version, false).await {
+        Ok(PushOutcome::Synced { cloud, pushed }) => PushOutcome::Synced { cloud, pushed },
+        Ok(other) => {
+            storage.set_session_cloud(session_id, previous).await?;
+            return Ok(other);
+        }
+        Err(error) => {
+            storage.set_session_cloud(session_id, previous).await?;
+            return Err(error);
+        }
+    };
     // A server that predates team pages ignores the flag and acknowledges a
     // plain private session. Say so instead of reporting success.
     if access == Some(CloudAccess::Team) {
@@ -101,15 +114,37 @@ pub async fn push_session(
             limit: None,
         })
         .await?;
-    // A page (public or team) needs the whole transcript; the private copy
-    // only the tail. Both come from one read so they cannot disagree.
+    // Private sync and public/team shares must never send local-only image
+    // paths. Use the same portable entries for the viewer and the raw copy.
     let access = cloud.access();
-    let viewer = (access != CloudAccess::Private && !all.is_empty()).then(|| {
-        serde_json::to_value(crate::share::export_session(&meta, &all, evot_version))
-            .unwrap_or(serde_json::Value::Null)
-    });
-    let entries: Vec<_> = all.into_iter().filter(|e| e.seq > after_seq).collect();
-    let local_seq = entries.last().map(|e| e.seq).unwrap_or(after_seq);
+    if access != CloudAccess::Private && !force {
+        // Old clients could sync paths instead of image bytes. A visibility
+        // change only uploads the tail, so the page could show an image while
+        // the raw transcript handed to importers still contains a dead path.
+        for entry in all.iter().filter(|entry| entry.seq <= after_seq) {
+            if has_path_images(entry)? {
+                return Err(EvotError::Conf(
+                    "earlier cloud entries contain local image paths; /share off and re-share to upload the full conversation"
+                        .into(),
+                ));
+            }
+        }
+    }
+    let portable = portable_entries(&all)?;
+    let viewer = if access != CloudAccess::Private && !portable.is_empty() {
+        Some(serde_json::to_value(crate::share::export_session(
+            &meta,
+            &portable,
+            evot_version,
+        ))?)
+    } else {
+        None
+    };
+    let entries: Vec<_> = portable
+        .into_iter()
+        .filter(|entry| entry.seq > after_seq)
+        .collect();
+    let local_seq = all.last().map(|entry| entry.seq).unwrap_or(after_seq);
     let payload = SyncPush {
         schema_version: SYNC_SCHEMA_VERSION,
         evot_version: evot_version.to_string(),

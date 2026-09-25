@@ -4,7 +4,6 @@ pub mod dispatcher;
 pub mod executor;
 pub mod lease;
 pub mod model;
-pub mod share_link;
 
 pub use client::claim;
 pub use client::create_task;
@@ -31,4 +30,6 @@ pub use model::TaskShareCreated;
 pub use model::TaskShareData;
 pub use model::TaskShareSnapshot;
 pub use model::TaskStats;
-pub use share_link::parse_task_share_id;
+
+// The link grammar is shared with session shares and lives in `share`.
+pub use crate::share::parse_task_share_id;

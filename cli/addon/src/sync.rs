@@ -133,4 +133,13 @@ impl NapiAgent {
                 .map_err(failure)?;
         serde_json::to_string(&meta).map_err(failure)
     }
+
+    /// `/share <url>`: fork a public page's transcript into a new local session.
+    #[napi]
+    pub async fn import_shared_session(&self, link: String) -> Result<String> {
+        let meta = evot::api::import_shared_session(&auth()?, &self.agent.storage(), &link)
+            .await
+            .map_err(failure)?;
+        serde_json::to_string(&meta).map_err(failure)
+    }
 }

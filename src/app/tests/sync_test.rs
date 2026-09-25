@@ -227,6 +227,318 @@ async fn share_pushes_full_then_incremental_and_tracks_seq() -> TestResult {
 }
 
 #[tokio::test]
+async fn share_embeds_path_images_in_viewer_and_raw_transcript() -> TestResult {
+    let server = MockServer::start().await;
+    let state = state(&server)?;
+    let root = TempDir::new()?;
+    let storage = fs_storage(&root)?;
+    let image = root.path().join("photo.png");
+    std::fs::write(&image, b"image bytes")?;
+    storage
+        .save_session(SessionMeta::new("s1".into(), "/w".into(), "m".into()))
+        .await?;
+    let entry = TranscriptEntry::new("s1".into(), None, 1, 1, TranscriptItem::User {
+        text: "look at this".into(),
+        content: vec![
+            TranscriptUserContent::Text {
+                text: "look at this".into(),
+            },
+            TranscriptUserContent::Image {
+                mime_type: "image/png".into(),
+                source: TranscriptImageSource::Path {
+                    path: image.to_string_lossy().into_owned(),
+                },
+            },
+        ],
+    });
+    storage.append_entry(entry.clone()).await?;
+    Mock::given(method("PUT"))
+        .and(path("/v1/sessions/s1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "seq": 1, "visibility": "public", "public_url": "https://evot.ai/share/token"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    sync::share_session(&state, &storage, "s1", Some(CloudAccess::Public), "test").await?;
+    let requests = server.received_requests().await.unwrap_or_default();
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body)?;
+    assert_eq!(
+        body["entries"][0]["item"]["content"][1]["source"],
+        json!({"type": "base64", "data": "aW1hZ2UgYnl0ZXM="})
+    );
+    assert!(body["viewer"].to_string().contains("aW1hZ2UgYnl0ZXM="));
+    // Sharing only changes the wire copy, not the local conversation.
+    let saved = storage
+        .list_entries(ListTranscriptEntries {
+            session_id: "s1".into(),
+            run_id: None,
+            after_seq: None,
+            limit: None,
+        })
+        .await?;
+    assert_eq!(
+        serde_json::to_value(&saved[0])?,
+        serde_json::to_value(&entry)?
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn share_push_preserves_thinking_metadata_and_tool_sequence() -> TestResult {
+    let server = MockServer::start().await;
+    let state = state(&server)?;
+    let root = TempDir::new()?;
+    let storage = fs_storage(&root)?;
+    storage
+        .save_session(SessionMeta::new("s1".into(), "/w".into(), "m".into()))
+        .await?;
+    let assistant = TranscriptEntry::new(
+        "s1".into(),
+        Some("run-1".into()),
+        1,
+        1,
+        TranscriptItem::Assistant {
+            content: vec![
+                AssistantBlock::Thinking {
+                    text: "private reasoning".into(),
+                    metadata: Some(evot_engine::ThinkingMetadata::Anthropic {
+                        signature: "sig".into(),
+                    }),
+                },
+                AssistantBlock::Text {
+                    text: "reading".into(),
+                },
+                AssistantBlock::ToolCall {
+                    id: "call-1".into(),
+                    name: "read".into(),
+                    input: json!({"path":"file"}),
+                    metadata: None,
+                },
+            ],
+            stop_reason: "tool_use".into(),
+            usage: Default::default(),
+            model: "m".into(),
+            provider: "p".into(),
+            timestamp: 42,
+            error_message: None,
+        },
+    );
+    storage.append_entry(assistant.clone()).await?;
+    storage
+        .append_entry(TranscriptEntry::new(
+            "s1".into(),
+            Some("run-1".into()),
+            2,
+            1,
+            TranscriptItem::ToolResult {
+                tool_call_id: "call-1".into(),
+                tool_name: "read".into(),
+                content: "file contents".into(),
+                is_error: false,
+                details: json!({"rows": 2}),
+            },
+        ))
+        .await?;
+    Mock::given(method("PUT"))
+        .and(path("/v1/sessions/s1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "seq": 2, "visibility": "public", "public_url": "https://evot.ai/share/token"
+        })))
+        .mount(&server)
+        .await;
+    sync::share_session(&state, &storage, "s1", Some(CloudAccess::Public), "test").await?;
+    let requests = server.received_requests().await.unwrap_or_default();
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body)?;
+    assert_eq!(body["entries"][0], serde_json::to_value(&assistant)?);
+    assert_eq!(body["entries"][1]["item"]["details"], json!({"rows": 2}));
+    assert!(body["viewer"].to_string().contains("private reasoning"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn share_with_missing_path_image_fails_before_contacting_server() -> TestResult {
+    let server = MockServer::start().await;
+    let state = state(&server)?;
+    let root = TempDir::new()?;
+    let storage = fs_storage(&root)?;
+    storage
+        .save_session(SessionMeta::new("s1".into(), "/w".into(), "m".into()))
+        .await?;
+    storage
+        .append_entry(TranscriptEntry::new(
+            "s1".into(),
+            None,
+            1,
+            1,
+            TranscriptItem::User {
+                text: "photo".into(),
+                content: vec![TranscriptUserContent::Image {
+                    mime_type: "image/png".into(),
+                    source: TranscriptImageSource::Path {
+                        path: root.path().join("gone.png").to_string_lossy().into_owned(),
+                    },
+                }],
+            },
+        ))
+        .await?;
+    let error = sync::share_session(&state, &storage, "s1", Some(CloudAccess::Public), "test")
+        .await
+        .err()
+        .ok_or("expected unavailable image error")?;
+    assert!(error.to_string().contains("image"));
+    assert!(server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .is_empty());
+    assert!(storage
+        .get_session("s1")
+        .await?
+        .ok_or("missing")?
+        .cloud
+        .is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn share_embeds_images_in_compacted_engine_context_without_changing_tool_inputs() -> TestResult
+{
+    let server = MockServer::start().await;
+    let state = state(&server)?;
+    let root = TempDir::new()?;
+    let storage = fs_storage(&root)?;
+    let image = root.path().join("compacted.png");
+    std::fs::write(&image, b"snapshot bytes")?;
+    let image_path = image.to_string_lossy().into_owned();
+    storage
+        .save_session(SessionMeta::new("s1".into(), "/w".into(), "m".into()))
+        .await?;
+    let compact = TranscriptEntry::new("s1".into(), None, 1, 1, TranscriptItem::Compact {
+        id: "compact-1".into(),
+        created_at: 1,
+        reason: CompactReason::Manual,
+        summary: "history".into(),
+        tokens_before: 1,
+        tokens_after: 1,
+        messages_before: 2,
+        messages_after: 2,
+        messages: vec![TranscriptItem::User {
+            text: "image".into(),
+            content: vec![TranscriptUserContent::Image {
+                mime_type: "image/png".into(),
+                source: TranscriptImageSource::Path {
+                    path: image_path.clone(),
+                },
+            }],
+        }],
+        engine_messages: vec![
+            evot_engine::AgentMessage::Llm(evot_engine::Message::User {
+                content: vec![evot_engine::Content::Image {
+                    mime_type: "image/png".into(),
+                    source: evot_engine::ImageSource::Path {
+                        path: image_path.clone(),
+                    },
+                }],
+                timestamp: 1,
+            }),
+            evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant {
+                content: vec![evot_engine::Content::ToolCall {
+                    id: "tool-1".into(),
+                    name: "read".into(),
+                    arguments: json!({"type":"image", "source":{"type":"path", "path":image_path}}),
+                    metadata: None,
+                }],
+                stop_reason: evot_engine::StopReason::ToolUse,
+                model: "m".into(),
+                provider: "p".into(),
+                usage: Default::default(),
+                timestamp: 2,
+                error_message: None,
+                response_id: None,
+            }),
+        ],
+        state: Box::default(),
+        details: Default::default(),
+    });
+    storage.append_entry(compact.clone()).await?;
+    Mock::given(method("PUT"))
+        .and(path("/v1/sessions/s1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "seq": 1, "visibility": "public", "public_url": "https://evot.ai/share/token"
+        })))
+        .mount(&server)
+        .await;
+    sync::share_session(&state, &storage, "s1", Some(CloudAccess::Public), "test").await?;
+    let requests = server.received_requests().await.unwrap_or_default();
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body)?;
+    let item = &body["entries"][0]["item"];
+    let encoded = "c25hcHNob3QgYnl0ZXM=";
+    assert_eq!(
+        item["messages"][0]["content"][0]["source"],
+        json!({"type":"base64","data":encoded})
+    );
+    assert_eq!(
+        item["engine_messages"][0]["content"][0]["source"],
+        json!({"type":"base64","data":encoded})
+    );
+    assert_eq!(
+        item["engine_messages"][1]["content"][0]["arguments"],
+        serde_json::to_value(&compact)?["item"]["engine_messages"][1]["content"][0]["arguments"]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn previously_synced_path_image_cannot_create_a_mismatched_share() -> TestResult {
+    let server = MockServer::start().await;
+    let state = state(&server)?;
+    let root = TempDir::new()?;
+    let storage = fs_storage(&root)?;
+    let image = root.path().join("photo.png");
+    std::fs::write(&image, b"image bytes")?;
+    storage
+        .save_session(SessionMeta::new("s1".into(), "/w".into(), "m".into()))
+        .await?;
+    storage
+        .append_entry(TranscriptEntry::new(
+            "s1".into(),
+            None,
+            1,
+            1,
+            TranscriptItem::User {
+                text: "photo".into(),
+                content: vec![TranscriptUserContent::Image {
+                    mime_type: "image/png".into(),
+                    source: TranscriptImageSource::Path {
+                        path: image.to_string_lossy().into_owned(),
+                    },
+                }],
+            },
+        ))
+        .await?;
+    let mut synced = CloudSync::new(CloudVisibility::Private, "host");
+    synced.synced_seq = 1;
+    storage.set_session_cloud("s1", Some(synced)).await?;
+    let error = sync::share_session(&state, &storage, "s1", Some(CloudAccess::Public), "test")
+        .await
+        .err()
+        .ok_or("expected path-image error")?;
+    assert!(error.to_string().contains("earlier cloud entries"));
+    assert!(server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .is_empty());
+    let saved = storage.get_session("s1").await?.ok_or("missing")?;
+    assert_eq!(
+        saved.cloud.ok_or("missing cloud")?.visibility,
+        CloudVisibility::Private
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn push_conflict_is_reported_not_raised_and_leaves_state_untouched() -> TestResult {
     let server = MockServer::start().await;
     let state = state(&server)?;

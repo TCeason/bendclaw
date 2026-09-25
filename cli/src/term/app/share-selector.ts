@@ -12,6 +12,7 @@ export interface SharedSession {
   created_at?: number | null
   size_bytes?: number | null
   kind?: string
+  source_id?: string
   summary?: unknown
 }
 
@@ -49,11 +50,11 @@ function taskFacts(summary: unknown): string[] {
 function preview(share: SharedSession): string[] {
   const head = [share.title || '(untitled)', share.url, '', ...created(share.created_at)]
   if (shareKind(share) === 'task') {
-    return [...head, ...taskFacts(share.summary), '',
+    return [...head, ...source(share.source_id, 'Task'), ...taskFacts(share.summary), '',
       'Anyone with the link can read the instruction.',
       'Deleting revokes this link, not the task.']
   }
-  return [...head, ...size(share.size_bytes),
+  return [...head, ...source(share.source_id, 'Session'), ...size(share.size_bytes),
     'Anyone with the link can read this snapshot.',
     'Deleting revokes this link, not the local session.']
 }
@@ -65,7 +66,7 @@ function row(share: SharedSession): SelectorItem {
     label: `${kind === 'task' ? 'task    ' : 'session '}${share.id.slice(0, 8)}`,
     detail: [share.title || '(untitled)', age(share.created_at)].filter(Boolean).join('  ·  '),
     group: kind === 'task' ? 'Tasks' : 'Sessions',
-    searchText: `${kind} ${share.title ?? ''} ${share.id} ${share.url}`,
+    searchText: `${kind} ${share.title ?? ''} ${share.id} ${share.url} ${share.source_id ?? ''}`,
     preview: preview(share),
     hints: HINTS,
   }
@@ -168,6 +169,10 @@ function age(createdAt: number | null | undefined): string {
 
 function created(createdAt: number | null | undefined): string[] {
   return typeof createdAt === 'number' ? [`Created: ${new Date(createdAt).toLocaleString()}`] : []
+}
+
+function source(sourceId: string | undefined, label: string): string[] {
+  return sourceId ? [`${label}: ${sourceId}`] : []
 }
 
 function size(sizeBytes: number | null | undefined): string[] {

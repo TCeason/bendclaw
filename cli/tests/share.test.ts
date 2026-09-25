@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test'
-import { runShareCommand, type ShareContext } from '../src/commands/share.js'
+import { isShareLink, runShareCommand, type ShareContext } from '../src/commands/share.js'
 import type { CloudPushResult, SessionMeta } from '../src/native/index.js'
 
 function synced(visibility: 'private' | 'public', seq = 3): CloudPushResult {
@@ -20,6 +20,7 @@ function setup(result: (visibility: string) => CloudPushResult = v => synced(v =
       cloudUnshareSession: async sid => { calls.push(`off:${sid}`) },
       cloudPushSession: async (sid, force) => { calls.push(`push:${sid}:${force}`); return synced('private') },
       cloudForkRemoteSession: async sid => { calls.push(`fork:${sid}`); return { session_id: 'fork0000-1111', cwd: '/w', model: 'm', turns: 1, created_at: '', updated_at: '' } as SessionMeta },
+      importSharedSession: async link => { calls.push(`import:${link}`); return { session_id: 'imp00000-2222', cwd: '/w', model: 'm', turns: 1, created_at: '', updated_at: '' } as SessionMeta },
     },
     openShareList: async () => { calls.push('open-list') },
     getSessionId: () => 'session',
@@ -109,7 +110,7 @@ test('does not sync partial runs, and rejects anything that is not a word or id'
   await runShareCommand(ctx, 'https://tmpfiles.org/old#key')
   expect(output.at(-1)).toContain('Usage:')
   await runShareCommand(ctx, 'rm abcdefghijklmnopqrstuv')
-  expect(output.at(-1)).toContain('Usage: /share [public | team | private | off | list] [session-id]')
+  expect(output.at(-1)).toContain('Usage: /share [public | team | private | off | list] [session-id | url]')
   expect(calls).toEqual([])
 })
 
@@ -140,4 +141,41 @@ test('list rejects extra arguments instead of silently ignoring them', async () 
   await runShareCommand(ctx, 'list abc1')
   expect(calls).toEqual([])
   expect(output.at(-1)).toContain('Usage:')
+})
+
+test('/share <url> imports the public page as a local session and lands in it', async () => {
+  const { ctx, output, calls } = setup()
+  ctx.getSessionId = () => null // works without a current session
+  const url = 'https://evot.ai/share/abcdefghijklmnopqrstuv'
+  await runShareCommand(ctx, `  ${url}  `)
+  expect(calls).toEqual([`import:${url}`, 'resume:imp00000-2222'])
+  expect(output[0]).toContain('Fetching the shared session')
+  expect(output[1]).toContain('saved as imp00000')
+  expect(output[1]).toContain('original is untouched')
+})
+
+test('/share <team-url> with deep-link parameters imports and resumes', async () => {
+  const { ctx, output, calls } = setup()
+  const url = 'https://auto.evot.ai/team/hRJJIer7dHx160uXgASZxQ?leafId=e135&targetId=e134'
+  await runShareCommand(ctx, url)
+  expect(calls).toEqual([`import:${url}`, 'resume:imp00000-2222'])
+  expect(output.at(-1)).toContain('original is untouched')
+})
+
+test('/share <url> reports an import failure and never changes visibility', async () => {
+  const { ctx, output, calls } = setup()
+  ctx.agent.importSharedSession = async () => { throw new Error('shared session not found; ask the owner') }
+  await runShareCommand(ctx, 'https://evot.ai/share/abcdefghijklmnopqrstuv/session.json')
+  expect(calls).toEqual([])
+  expect(output.at(-1)).toContain('Import failed: shared session not found')
+})
+
+test('task links and local ids are not treated as session imports', async () => {
+  expect(isShareLink('https://evot.ai/share/abcdefghijklmnopqrstuv')).toBe(true)
+  expect(isShareLink('evot.ai/share/abcdefghijklmnopqrstuv/content')).toBe(true)
+  expect(isShareLink('https://auto.evot.ai/team/hRJJIer7dHx160uXgASZxQ?leafId=e135&targetId=e134')).toBe(true)
+  expect(isShareLink('https://evot.ai/share/t/abcdefghijklmnopqrstuv')).toBe(false)
+  expect(isShareLink('abcdefghijklmnopqrstuv')).toBe(false)
+  expect(isShareLink('abc12345')).toBe(false)
+  expect(isShareLink('public')).toBe(false)
 })

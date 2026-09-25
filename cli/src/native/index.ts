@@ -273,6 +273,11 @@ export class Agent {
     return decodeResult(await this.raw.cloudForkRemoteSession(sessionId), results.sessionMeta)
   }
 
+  /** `/share <url>`: fork a public page's transcript into a new local session. */
+  async importSharedSession(link: string): Promise<SessionMeta> {
+    return decodeResult(await this.raw.importSharedSession(link), results.sessionMeta)
+  }
+
   async recordShareNotices(sessionId: string, notices: ShareNotice[]): Promise<void> {
     await this.raw.recordShareNotices(sessionId, JSON.stringify(notices))
   }

@@ -4,7 +4,7 @@ import { createHyperlink } from '../render/hyperlink.js'
 import { describeShareResult, shareAccess } from '../session/cloud-sessions.js'
 
 export interface ShareContext {
-  agent: Pick<Agent, 'listSessions' | 'cloudShareSession' | 'cloudUnshareSession' | 'cloudPushSession' | 'cloudForkRemoteSession'>
+  agent: Pick<Agent, 'listSessions' | 'cloudShareSession' | 'cloudUnshareSession' | 'cloudPushSession' | 'cloudForkRemoteSession' | 'importSharedSession'>
   openShareList(): Promise<void>
   /** Legacy one-shot share links, kept so they can still be revoked. */
   openShareLinks?(): Promise<void>
@@ -16,11 +16,16 @@ export interface ShareContext {
   /** The list caches remote state; tell it what just happened. */
   cloudAcknowledged?(sessionId: string, result: CloudPushResult): void
   cloudForgotten?(sessionId: string): void
-  /** `/share cloud` lands in the fetched copy. */
+  /** `/share cloud` and `/share <url>` land in the fetched copy. */
   resumeSession?(session: SessionMeta): Promise<void>
 }
 
-const USAGE = 'Usage: /share [public | team | private | off | list] [session-id]'
+const USAGE = 'Usage: /share [public | team | private | off | list] [session-id | url]'
+
+/** A pasted share page, as opposed to a visibility word or a local id. */
+export function isShareLink(arg: string): boolean {
+  return /^(https?:\/\/)?[^\s/]+\/(?:share|team)\/[A-Za-z0-9_-]{22}(?:\/(?:content|session\.json))?(?:[?#][^\s]*)?$/.test(arg)
+}
 const WORDS = new Set(['public', 'team', 'private', 'off', 'list', 'links', 'cloud', 'local'])
 
 /**
@@ -31,11 +36,26 @@ const WORDS = new Set(['public', 'team', 'private', 'off', 'list', 'links', 'clo
  */
 export async function runShareCommand(ctx: ShareContext, args: string): Promise<void> {
   const parts = args.trim().split(/\s+/).filter(Boolean)
+  const show = (text: string) => ctx.commitSystem('sys-share', text)
+  if (parts.length === 1 && isShareLink(parts[0]!)) {
+    // A public or team share becomes a local session; the original is
+    // unchanged. The server checks team membership for team links.
+    try {
+      if (ctx.isBusy?.()) throw new Error('Wait for the current run to finish before importing.')
+      show('Fetching the shared session…')
+      ctx.requestRender()
+      const fork = await ctx.agent.importSharedSession(parts[0]!)
+      show(`☁ Shared session saved as ${fork.session_id.slice(0, 8)} · continue here; the original is untouched`)
+      await ctx.resumeSession?.(fork)
+    } catch (error) {
+      ctx.commitSystem('sys-share-error', `Import failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    return
+  }
   // A bare command is navigation, like /sessions. Keep the historical
   // /share <id> form for explicit targets, without changing their visibility.
   const word = parts.length === 0 ? 'list' : parts[0] && WORDS.has(parts[0]) ? parts.shift()! : 'keep'
   const target = parts.shift()
-  const show = (text: string) => ctx.commitSystem('sys-share', text)
   try {
     if (parts.length > 0) throw new Error(USAGE)
     if (word === 'list') {

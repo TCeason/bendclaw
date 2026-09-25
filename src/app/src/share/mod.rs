@@ -1,5 +1,7 @@
 mod client;
 mod export;
+mod import;
+mod link;
 mod notice;
 mod settings;
 mod stats;
@@ -9,6 +11,10 @@ pub use client::delete;
 pub use client::list;
 pub use client::upload;
 pub use export::export_session;
+pub use import::import_shared_session;
+pub use link::parse_session_share_link;
+pub use link::parse_task_share_id;
+pub use link::SessionShareLink;
 pub use notice::record_notices;
 pub use types::ShareCreated;
 pub use types::ShareNotice;
