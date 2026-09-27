@@ -93,6 +93,23 @@ describe('task window', () => {
     ])
   })
 
+  test('long run errors are complete and reachable in the details pane', () => {
+    const error = "conf error: fixed task model is unavailable: evot-pro:evot-fast (conf error: model 'evot-fast' is not served by any configured provider)"
+    const failed: TaskRunSummary = {
+      id: 'run-model-error', status: 'needs_attention', source: 'schedule', delivery_status: 'not_requested',
+      scheduled_for: now - 60_000, updated_at: now - 60_000, error,
+    }
+    const state = createTaskWindow({ ...response, tasks: [{ ...task, recent_runs: [failed] }] })
+    const preview = state.items[0]?.preview ?? []
+    expect(preview.find(line => line.includes('Needs attention'))).toContain(error)
+    for (const columns of [90, 120]) {
+      const rendered = Array.from({ length: 12 }, (_, page) => buildSelectorRegionLines(
+        { ...state, previewPane: { ...state.previewPane!, offset: page * 5 } }, columns, 20,
+      ).map(stripAnsi).join('\n')).join('\n')
+      expect(rendered).toContain('provider)')
+    }
+  })
+
   test('the alert marker renders the run in red and is not shown as text', () => {
     const state = createTaskWindow(response, undefined, undefined, modelLabels)
     const lines = buildSelectorRegionLines(state, 120, 24)

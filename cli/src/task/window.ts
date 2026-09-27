@@ -130,7 +130,7 @@ function recentRun(run: TaskRunSummary): string {
       : run.delivery_status === 'failed'
         ? 'delivery failed'
         : '',
-    run.error ? run.error.replace(/\s+/g, ' ').slice(0, 48) : '',
+    run.error ? run.error.replace(/\s+/g, ' ') : '',
   ].filter(Boolean)
   const alert = runWentWrong(run) ? PREVIEW_ALERT_PREFIX : ''
   return `${alert}${statusIcon(run)} ${relativeTime(at)}  ${status(run)}${details.length ? ` · ${details.join(' · ')}` : ''}`
