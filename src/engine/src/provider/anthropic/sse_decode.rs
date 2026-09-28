@@ -358,9 +358,7 @@ async fn process_sse_event(
             if let Some(reason) = data.delta.stop_reason.as_deref() {
                 state.stop_reason = map_stop_reason(reason)?;
                 if state.stop_reason == StopReason::Error {
-                    state.error_message = Some(format!(
-                        "Provider ended the response with stop reason '{reason}' (safety filter / refusal)"
-                    ));
+                    state.error_message = Some(crate::provider::error::refusal_message(reason));
                 }
             }
             // Preserve message_start values for fields omitted by message_delta.

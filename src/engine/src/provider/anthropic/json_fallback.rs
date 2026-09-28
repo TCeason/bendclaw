@@ -86,8 +86,8 @@ fn parse_success_response(
         Some("tool_use") => StopReason::ToolUse,
         Some("max_tokens") => StopReason::Length,
         Some(reason @ ("refusal" | "sensitive")) => {
-            return Err(ProviderError::Api(format!(
-                "Provider ended the response with stop reason '{reason}' (safety filter / refusal)"
+            return Err(ProviderError::Api(crate::provider::error::refusal_message(
+                reason,
             )));
         }
         Some(reason) => {

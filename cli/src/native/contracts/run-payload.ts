@@ -13,7 +13,7 @@ const assistantBlock = tagged('type', {
   thinking: object({ type: oneOf('thinking'), text, metadata: optional(nullable(json)) }),
   tool_call: object({ type: oneOf('tool_call'), id: text, name: text, input: json, metadata: optional(nullable(json)) }),
 })
-const reason = oneOf('threshold', 'overflow', 'manual', 'prune')
+const reason = oneOf('threshold', 'overflow', 'manual', 'prune', 'refusal')
 const compactionResult = tagged('type', {
   no_op: object({ type: oneOf('no_op') }),
   compacted: object({

@@ -354,3 +354,56 @@ fn throttling_error_is_not_overflow() {
     // Error stop reason that is not overflow -> Skip (no usable usage data).
     assert_eq!(evaluate(&input, &config), TriggerDecision::Skip);
 }
+
+fn refusal_usage() -> UsageSnapshot {
+    let mut usage = make_usage(5_000, 0, StopReason::Error);
+    usage.error_message = Some(evotengine::provider::error::refusal_message("refusal"));
+    usage
+}
+
+#[test]
+fn refusal_compacts_and_retries_once() {
+    let config = default_config();
+    let input = TriggerInput {
+        usage: Some(refusal_usage()),
+        current_model: model_id(),
+        last_compaction_ts: None,
+        overflow_recovery_attempted: false,
+    };
+    assert_eq!(evaluate(&input, &config), TriggerDecision::Refusal {
+        context_tokens: 5_000,
+    });
+}
+
+#[test]
+fn refusal_exhausted_after_a_recovery_attempt() {
+    let config = default_config();
+    let input = TriggerInput {
+        usage: Some(refusal_usage()),
+        current_model: model_id(),
+        last_compaction_ts: None,
+        overflow_recovery_attempted: true,
+    };
+    assert_eq!(
+        evaluate(&input, &config),
+        TriggerDecision::RefusalExhausted {
+            context_tokens: 5_000,
+        }
+    );
+}
+
+#[test]
+fn refusal_recovers_with_unknown_window() {
+    let mut config = default_config();
+    config.context_window = 0;
+    let input = TriggerInput {
+        usage: Some(refusal_usage()),
+        current_model: model_id(),
+        last_compaction_ts: None,
+        overflow_recovery_attempted: false,
+    };
+    assert!(matches!(
+        evaluate(&input, &config),
+        TriggerDecision::Refusal { .. }
+    ));
+}

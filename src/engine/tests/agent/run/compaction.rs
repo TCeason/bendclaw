@@ -1701,3 +1701,225 @@ async fn test_llm_call_stats_no_images() {
     assert_eq!(stats.user_count, 1);
     assert!(stats.user_tokens > 0);
 }
+
+/// A safety refusal caused by content already in the context compacts it and
+/// retries once, so the user does not have to run `/compact` by hand.
+#[tokio::test]
+async fn test_refusal_compacts_and_retries_once() {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    use evotengine::context::ContextConfig;
+
+    struct RefusesOnce {
+        main_calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl StreamProvider for RefusesOnce {
+        async fn stream(
+            &self,
+            config: StreamConfig,
+            tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+            _cancel: tokio_util::sync::CancellationToken,
+        ) -> Result<StreamOutcome, ProviderError> {
+            let is_summary = config
+                .system_prompt
+                .starts_with("You are a context summarization");
+            let call = if is_summary {
+                None
+            } else {
+                Some(self.main_calls.fetch_add(1, Ordering::SeqCst))
+            };
+            let refused = call == Some(0);
+            let text = match call {
+                None => "compacted history",
+                Some(0) => "",
+                Some(_) => "recovered after refusal",
+            };
+            let message = Message::Assistant {
+                content: vec![Content::Text { text: text.into() }],
+                stop_reason: if refused {
+                    StopReason::Error
+                } else {
+                    StopReason::Stop
+                },
+                model: config.model,
+                provider: "mock".into(),
+                usage: Usage::default(),
+                timestamp: evotengine::now_ms() + 60_000,
+                error_message: refused
+                    .then(|| evotengine::provider::error::refusal_message("refusal")),
+                response_id: None,
+            };
+            let _ = tx.send(StreamEvent::Start);
+            if !text.is_empty() {
+                let _ = tx.send(StreamEvent::TextDelta {
+                    content_index: 0,
+                    delta: text.into(),
+                });
+            }
+            let _ = tx.send(StreamEvent::Done {
+                message: message.clone(),
+            });
+            Ok(StreamOutcome::complete(message))
+        }
+    }
+
+    let provider = std::sync::Arc::new(RefusesOnce {
+        main_calls: AtomicUsize::new(0),
+    });
+    let mut config = make_config(MockProvider::text("unused"));
+    config.provider = provider.clone();
+    config.retry_policy = evotengine::RetryPolicy::disabled();
+    config.context_config = Some(ContextConfig {
+        max_context_tokens: 100_000,
+        system_prompt_tokens: 0,
+        advertised_context_window: None,
+        reserve_tokens: Some(1_000),
+        trigger_tokens: None,
+        keep_recent_tokens: Some(300),
+    });
+
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: (0..12)
+            .map(|index| {
+                AgentMessage::Llm(Message::user(format!(
+                    "old history {index} {}",
+                    "x".repeat(1_000)
+                )))
+            })
+            .collect(),
+        tools: vec![],
+        cwd: std::path::PathBuf::new(),
+        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+        prompt_cache_key: None,
+    };
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    let new_messages = agent_loop(
+        vec![AgentMessage::Llm(Message::user("continue"))],
+        &mut context,
+        &config,
+        tx,
+        CancellationToken::new(),
+    )
+    .await;
+    let events = collect_events(rx);
+
+    assert_eq!(provider.main_calls.load(Ordering::SeqCst), 2);
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::ContextCompactionEnd {
+            reason: evotengine::context::CompactReason::Refusal,
+            will_retry: true,
+            ..
+        })));
+    assert!(new_messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::Llm(Message::Assistant { content, .. })
+            if content.iter().any(|block| matches!(block, Content::Text { text } if text == "recovered after refusal"))
+    )));
+}
+
+/// A refusal that recurs after the one compact-and-retry ends the run with a
+/// visible error instead of looping.
+#[tokio::test]
+async fn test_repeated_refusal_stops_after_one_retry() {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    use evotengine::context::ContextConfig;
+
+    struct AlwaysRefuses {
+        main_calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl StreamProvider for AlwaysRefuses {
+        async fn stream(
+            &self,
+            config: StreamConfig,
+            tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+            _cancel: tokio_util::sync::CancellationToken,
+        ) -> Result<StreamOutcome, ProviderError> {
+            if !config
+                .system_prompt
+                .starts_with("You are a context summarization")
+            {
+                self.main_calls.fetch_add(1, Ordering::SeqCst);
+            }
+            // Refuse the summarizer too: recovery must fall back to the
+            // deterministic summary rather than give up. The timestamp is in
+            // the future so the second refusal is never read as stale usage
+            // from before the compaction.
+            let message = Message::Assistant {
+                content: vec![Content::Text {
+                    text: String::new(),
+                }],
+                stop_reason: StopReason::Error,
+                model: config.model,
+                provider: "mock".into(),
+                usage: Usage::default(),
+                timestamp: evotengine::now_ms() + 60_000,
+                error_message: Some(evotengine::provider::error::refusal_message("refusal")),
+                response_id: None,
+            };
+            let _ = tx.send(StreamEvent::Start);
+            let _ = tx.send(StreamEvent::Done {
+                message: message.clone(),
+            });
+            Ok(StreamOutcome::complete(message))
+        }
+    }
+
+    let provider = std::sync::Arc::new(AlwaysRefuses {
+        main_calls: AtomicUsize::new(0),
+    });
+    let mut config = make_config(MockProvider::text("unused"));
+    config.provider = provider.clone();
+    config.retry_policy = evotengine::RetryPolicy::disabled();
+    config.context_config = Some(ContextConfig {
+        max_context_tokens: 100_000,
+        system_prompt_tokens: 0,
+        advertised_context_window: None,
+        reserve_tokens: Some(1_000),
+        trigger_tokens: None,
+        keep_recent_tokens: Some(300),
+    });
+
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: (0..12)
+            .map(|index| {
+                AgentMessage::Llm(Message::user(format!(
+                    "old history {index} {}",
+                    "x".repeat(1_000)
+                )))
+            })
+            .collect(),
+        tools: vec![],
+        cwd: std::path::PathBuf::new(),
+        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+        prompt_cache_key: None,
+    };
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    agent_loop(
+        vec![AgentMessage::Llm(Message::user("continue"))],
+        &mut context,
+        &config,
+        tx,
+        CancellationToken::new(),
+    )
+    .await;
+    let events = collect_events(rx);
+
+    assert_eq!(provider.main_calls.load(Ordering::SeqCst), 2);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Error { error }
+            if error.message.contains("refused the request again after compacting")
+    )));
+}

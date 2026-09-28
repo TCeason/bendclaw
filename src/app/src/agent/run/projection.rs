@@ -636,6 +636,7 @@ fn map_compact_reason(reason: evot_engine::CompactReason) -> crate::types::Compa
         evot_engine::CompactReason::Threshold => crate::types::CompactReason::Threshold,
         evot_engine::CompactReason::Overflow => crate::types::CompactReason::Overflow,
         evot_engine::CompactReason::Manual => crate::types::CompactReason::Manual,
+        evot_engine::CompactReason::Refusal => crate::types::CompactReason::Refusal,
     }
 }
 

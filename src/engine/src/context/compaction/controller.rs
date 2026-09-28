@@ -369,6 +369,21 @@ impl CompactionController {
                 }
             }
 
+            TriggerDecision::Refusal { context_tokens } => {
+                self.recover_from_refusal(messages, context_tokens, contexts, cancel)
+                    .await
+            }
+
+            TriggerDecision::RefusalExhausted { context_tokens } => CompactionResponse {
+                action: AfterResponseAction::Continue,
+                stats: None,
+                reason: Some(CompactReason::Refusal),
+                context_tokens: Some(context_tokens),
+                overflow_exhausted: true,
+                overflow_recovery_failed: false,
+                pruned: None,
+            },
+
             TriggerDecision::Threshold { context_tokens } => {
                 // With a judge, `run_compaction` prunes first and only
                 // summarises if the lossless cut is not enough: the prefix is
@@ -469,6 +484,82 @@ impl CompactionController {
         .await
     }
 
+    /// Safety-refusal recovery: compact so the retry no longer resends the
+    /// content the provider refused, then retry once.
+    ///
+    /// The judge prune is skipped: it keeps what is still relevant, and the
+    /// refused content is usually the most recent (relevant) tool output, so a
+    /// prune-only pass would resend it and be refused again. The summary uses
+    /// the manual `/compact` policy: LLM first, deterministic fallback when the
+    /// summarizer is refused for the same content.
+    async fn recover_from_refusal(
+        &mut self,
+        messages: &mut Vec<AgentMessage>,
+        context_tokens: usize,
+        contexts: SummaryContexts<'_>,
+        cancel: CancellationToken,
+    ) -> CompactionResponse {
+        // The refused response is not part of the conversation to retry.
+        if matches!(
+            messages.last(),
+            Some(AgentMessage::Llm(crate::types::Message::Assistant { .. }))
+        ) {
+            messages.pop();
+        }
+
+        let request_overhead_tokens = contexts.request_overhead_tokens();
+        let mut stats = self
+            .summarize_compaction(
+                messages,
+                contexts,
+                request_overhead_tokens,
+                LlmPolicy::PreferLlm,
+                0,
+                cancel.clone(),
+            )
+            .await;
+        if stats.is_none()
+            && !cancel.is_cancelled()
+            && matches!(
+                messages.last(),
+                Some(AgentMessage::Llm(crate::types::Message::ToolResult { .. }))
+            )
+        {
+            // The retained tail covers the whole context, typically one active
+            // tool turn whose output was refused. Summarize the complete turn
+            // deterministically so the refused output leaves the request.
+            let minimum_first_kept = messages.len();
+            stats = self
+                .summarize_compaction(
+                    messages,
+                    SummaryContexts::default(),
+                    request_overhead_tokens,
+                    LlmPolicy::Skip,
+                    minimum_first_kept,
+                    cancel.clone(),
+                )
+                .await;
+        }
+
+        let retry = stats.is_some();
+        if retry {
+            self.overflow_recovery_attempted = true;
+        }
+        CompactionResponse {
+            action: if retry {
+                AfterResponseAction::Retry
+            } else {
+                AfterResponseAction::Continue
+            },
+            stats,
+            reason: Some(CompactReason::Refusal),
+            context_tokens: Some(context_tokens),
+            overflow_exhausted: false,
+            overflow_recovery_failed: !retry && !cancel.is_cancelled(),
+            pruned: None,
+        }
+    }
+
     /// Shared threshold path: honor suppression, compact, then arm suppression
     /// so a compaction that could not lower usage does not repeat every turn.
     async fn threshold_compact(
@@ -558,7 +649,27 @@ impl CompactionController {
         {
             return Some(stats);
         }
+        self.summarize_compaction(
+            messages,
+            contexts,
+            request_overhead_tokens,
+            llm_policy,
+            minimum_first_kept,
+            cancel,
+        )
+        .await
+    }
 
+    /// Plan and summarize without the judge prune step.
+    async fn summarize_compaction(
+        &mut self,
+        messages: &mut Vec<AgentMessage>,
+        contexts: SummaryContexts<'_>,
+        request_overhead_tokens: usize,
+        llm_policy: LlmPolicy,
+        minimum_first_kept: usize,
+        cancel: CancellationToken,
+    ) -> Option<CompactionStats> {
         // A resumed context already contains the previous summary as a user
         // message. Remove only the exact message recorded in state so the
         // summarizer receives it once via `previous_summary`, not again as
@@ -696,12 +807,13 @@ pub struct CompactionResponse {
     pub stats: Option<CompactionStats>,
     pub reason: Option<CompactReason>,
     pub context_tokens: Option<usize>,
-    /// Set when overflow recovery was already attempted this turn and the
-    /// context still overflows. The loop should surface this to the user.
+    /// Set when a compact-and-retry was already attempted this turn and the
+    /// same failure recurred (overflow, or refusal when `reason` is
+    /// `Refusal`). The loop should surface this to the user.
     pub overflow_exhausted: bool,
-    /// Set when an overflow demanded a compact-and-retry but compaction could
-    /// not run (nothing to evict). The loop should surface this to the user
-    /// instead of failing silently.
+    /// Set when an overflow or refusal demanded a compact-and-retry but
+    /// compaction could not run (nothing to evict). The loop should surface
+    /// this to the user instead of failing silently.
     pub overflow_recovery_failed: bool,
     /// What the mid-run prune branch did on this response, if anything.
     pub pruned: Option<PruneOutcome>,

@@ -15,7 +15,8 @@ pub struct TriggerInput {
     pub current_model: ModelId,
     /// Timestamp of the last compaction (to skip stale usage).
     pub last_compaction_ts: Option<u64>,
-    /// Whether overflow recovery was already attempted this turn.
+    /// Whether a compact-and-retry (overflow or refusal recovery) was already
+    /// attempted this turn.
     pub overflow_recovery_attempted: bool,
 }
 
@@ -61,7 +62,21 @@ pub fn evaluate(input: &TriggerInput, config: &CompactionConfig) -> TriggerDecis
                 will_retry: true,
             };
         }
-        // Non-overflow errors use the caller's anchored estimate fallback.
+        // A safety refusal is usually caused by content already in the
+        // context (often a tool result). Resending it unchanged is refused
+        // again, so compact once and retry. The allowance is shared with
+        // overflow recovery: one compact-and-retry per turn.
+        if usage
+            .error_message
+            .as_deref()
+            .is_some_and(crate::provider::error::is_refusal_message)
+        {
+            if input.overflow_recovery_attempted {
+                return TriggerDecision::RefusalExhausted { context_tokens };
+            }
+            return TriggerDecision::Refusal { context_tokens };
+        }
+        // Other errors use the caller's anchored estimate fallback.
         return TriggerDecision::Skip;
     }
 

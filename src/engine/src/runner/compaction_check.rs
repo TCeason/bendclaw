@@ -28,6 +28,17 @@ const OVERFLOW_RECOVERY_FAILED_MESSAGE: &str =
     "Context overflow recovery failed: could not compact the context. \
      Try reducing context or switching to a larger-context model.";
 
+/// User-visible message emitted when the provider refuses again after the
+/// context was already compacted and retried once.
+const REFUSAL_EXHAUSTED_MESSAGE: &str =
+    "The provider refused the request again after compacting the context and retrying. \
+     Rephrase the request or remove the content that triggers the safety filter.";
+
+/// User-visible message emitted when refusal recovery could not compact.
+const REFUSAL_RECOVERY_FAILED_MESSAGE: &str =
+    "Refusal recovery failed: could not compact the context. \
+     Rephrase the request or remove the content that triggers the safety filter.";
+
 pub(super) struct CompactionRequestShape<'a> {
     pub(super) system_prompt: &'a str,
     pub(super) tools: &'a [crate::provider::ToolDefinition],
@@ -235,11 +246,17 @@ async fn emit_compaction_events(
         tracker.record_compaction_done(ctrl.state().timestamp);
     }
 
+    let refusal = response.reason == Some(crate::context::CompactReason::Refusal);
     if response.overflow_exhausted {
+        let message = if refusal {
+            REFUSAL_EXHAUSTED_MESSAGE
+        } else {
+            OVERFLOW_EXHAUSTED_MESSAGE
+        };
         tx.send(AgentEvent::Error {
             error: AgentErrorInfo {
                 kind: AgentErrorKind::Runtime,
-                message: OVERFLOW_EXHAUSTED_MESSAGE.to_string(),
+                message: message.to_string(),
             },
         })
         .await
@@ -247,10 +264,15 @@ async fn emit_compaction_events(
     }
 
     if response.overflow_recovery_failed {
+        let message = if refusal {
+            REFUSAL_RECOVERY_FAILED_MESSAGE
+        } else {
+            OVERFLOW_RECOVERY_FAILED_MESSAGE
+        };
         tx.send(AgentEvent::Error {
             error: AgentErrorInfo {
                 kind: AgentErrorKind::Runtime,
-                message: OVERFLOW_RECOVERY_FAILED_MESSAGE.to_string(),
+                message: message.to_string(),
             },
         })
         .await

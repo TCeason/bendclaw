@@ -334,6 +334,26 @@ fn is_context_overflow(status: u16, message: &str) -> bool {
     is_context_overflow_message(message)
 }
 
+// ---------------------------------------------------------------------------
+// Safety refusal detection
+// ---------------------------------------------------------------------------
+
+/// Stable marker carried by every provider-terminal safety refusal. The SSE and
+/// JSON decode paths build their message through [`refusal_message`], and the
+/// compaction trigger recognizes it through [`is_refusal_message`], so the two
+/// sides cannot drift apart.
+const REFUSAL_MARKER: &str = "(safety filter / refusal)";
+
+/// User-visible error text for a provider stop reason that is a safety refusal.
+pub fn refusal_message(stop_reason: &str) -> String {
+    format!("Provider ended the response with stop reason '{stop_reason}' {REFUSAL_MARKER}")
+}
+
+/// Whether an error message is a provider safety refusal.
+pub fn is_refusal_message(message: &str) -> bool {
+    message.contains(REFUSAL_MARKER)
+}
+
 pub(crate) fn is_overloaded_message(message: &str) -> bool {
     message.to_lowercase().contains("overloaded")
 }

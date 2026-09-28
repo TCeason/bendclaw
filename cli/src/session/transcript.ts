@@ -35,7 +35,7 @@ interface RawItem {
   kind?: string
   data?: Record<string, unknown>
   // Compact
-  reason?: 'threshold' | 'overflow' | 'manual'
+  reason?: 'threshold' | 'overflow' | 'manual' | 'prune' | 'refusal'
   summary?: string
   tokens_before?: number
   tokens_after?: number

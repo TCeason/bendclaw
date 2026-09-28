@@ -23,7 +23,7 @@ export interface UIMessage {
 }
 
 export interface UICompaction {
-  reason: 'threshold' | 'overflow' | 'manual'
+  reason: 'threshold' | 'overflow' | 'manual' | 'prune' | 'refusal'
   summary: string
   tokensBefore: number
   tokensAfter: number

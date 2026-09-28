@@ -355,7 +355,11 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
         ? ` · blob ${remoteBlobBytes >= 1024 ? `${(remoteBlobBytes / 1024).toFixed(1)} KB` : `${remoteBlobBytes} B`}`
         : ''
       const reason = (data.reason as string | undefined) ?? 'threshold'
-      const reasonLabel = reason === 'overflow' ? 'overflow recovery' : reason
+      const reasonLabel = reason === 'overflow'
+        ? 'overflow recovery'
+        : reason === 'refusal'
+          ? 'refusal recovery'
+          : reason
 
       // A prune compaction is the judge cutting stale tool calls until the
       // context fits again; nothing was summarised, nothing was lost.

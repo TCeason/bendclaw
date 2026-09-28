@@ -329,3 +329,51 @@ fn cache_store_rejects_future_schema_and_rewrites_legacy_atomically() -> TestRes
     restore_env_var("HOME", original_home);
     result
 }
+
+/// `CompactReason` as released before the `refusal` variant.
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum LegacyCompactReason {
+    Threshold,
+    Overflow,
+    Manual,
+    Prune,
+}
+
+#[test]
+fn compact_reason_historical_values_and_refusal_contract() -> TestResult {
+    use evot::types::CompactReason;
+
+    // Old data → current reader: every historical value still parses.
+    for (wire, expected) in [
+        ("\"threshold\"", CompactReason::Threshold),
+        ("\"overflow\"", CompactReason::Overflow),
+        ("\"manual\"", CompactReason::Manual),
+        ("\"prune\"", CompactReason::Prune),
+    ] {
+        let reason: CompactReason = serde_json::from_str(wire)?;
+        assert_eq!(reason, expected);
+    }
+
+    // Current writer → legacy reader: historical values keep their spelling.
+    for reason in [
+        CompactReason::Threshold,
+        CompactReason::Overflow,
+        CompactReason::Manual,
+        CompactReason::Prune,
+    ] {
+        let wire = serde_json::to_string(&reason)?;
+        let _: LegacyCompactReason = serde_json::from_str(&wire)?;
+    }
+
+    // `refusal` is new. Its spelling is fixed here, and a legacy reader is
+    // known to reject it: an accepted, deliberate contract change.
+    let wire = serde_json::to_string(&CompactReason::Refusal)?;
+    assert_eq!(wire, "\"refusal\"");
+    assert_eq!(
+        serde_json::from_str::<CompactReason>(&wire)?,
+        CompactReason::Refusal
+    );
+    assert!(serde_json::from_str::<LegacyCompactReason>(&wire).is_err());
+    Ok(())
+}

@@ -1377,3 +1377,119 @@ async fn below_the_prune_threshold_nothing_is_pruned() {
         .await;
     assert!(response.stats.is_none() && response.pruned.is_none());
 }
+
+fn refusal_usage(ts: u64) -> UsageSnapshot {
+    UsageSnapshot {
+        input: 0,
+        cache_read: 0,
+        cache_write: 0,
+        output: 0,
+        total_tokens: 0,
+        model: model_id(),
+        timestamp: ts,
+        stop_reason: StopReason::Error,
+        error_message: Some(evotengine::provider::error::refusal_message("refusal")),
+    }
+}
+
+#[tokio::test]
+async fn refusal_compacts_and_retries_then_exhausts() {
+    let mut ctrl = CompactionController::new(config_small());
+    let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];
+    for _ in 0..20 {
+        messages.push(user_msg(&big_text(300)));
+        messages.push(assistant_msg(&big_text(300)));
+    }
+    messages.push(user_msg("recent"));
+    messages.push(assistant_msg("refused"));
+    let original = messages.len();
+    let future_ts = evotengine::context::now_ms() + 60_000;
+
+    let first = ctrl
+        .after_response(
+            &mut messages,
+            &refusal_usage(future_ts),
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(first.action, AfterResponseAction::Retry);
+    assert_eq!(
+        first.reason,
+        Some(evotengine::context::CompactReason::Refusal)
+    );
+    assert!(first.stats.is_some());
+    assert!(messages.len() < original);
+    // The refused response must not be resent.
+    assert!(messages.iter().all(|message| !matches!(
+        message,
+        AgentMessage::Llm(Message::Assistant { content, .. })
+            if content.iter().any(|block| matches!(block, Content::Text { text } if text == "refused"))
+    )));
+
+    messages.push(assistant_msg("refused again"));
+    let second = ctrl
+        .after_response(
+            &mut messages,
+            &refusal_usage(future_ts + 1),
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(second.action, AfterResponseAction::Continue);
+    assert!(second.overflow_exhausted);
+    assert_eq!(
+        second.reason,
+        Some(evotengine::context::CompactReason::Refusal)
+    );
+}
+
+#[tokio::test]
+async fn refusal_on_single_tool_turn_summarizes_the_whole_turn() {
+    let mut ctrl = CompactionController::new(config_small());
+    let mut messages = vec![
+        user_msg("inspect the project"),
+        AgentMessage::Llm(Message::Assistant {
+            content: vec![Content::ToolCall {
+                id: "call_1".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({"command": "ls"}),
+                metadata: None,
+            }],
+            stop_reason: StopReason::ToolUse,
+            model: "test".into(),
+            provider: "test".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+            response_id: None,
+        }),
+        AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: "call_1".into(),
+            tool_name: "bash".into(),
+            content: vec![Content::Text {
+                text: "refused output".into(),
+            }],
+            is_error: false,
+            timestamp: 0,
+            retention: Default::default(),
+        }),
+        assistant_msg("refused"),
+    ];
+
+    let response = ctrl
+        .after_response(
+            &mut messages,
+            &refusal_usage(evotengine::context::now_ms() + 60_000),
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(response.action, AfterResponseAction::Retry);
+    assert!(messages
+        .iter()
+        .all(|message| !matches!(message, AgentMessage::Llm(Message::ToolResult { .. }))));
+}

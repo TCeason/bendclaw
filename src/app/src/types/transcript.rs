@@ -89,6 +89,8 @@ pub enum CompactReason {
     Manual,
     /// Judge-decided prune applied at run end (no summary written).
     Prune,
+    /// Automatic compact-and-retry after a provider safety refusal.
+    Refusal,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

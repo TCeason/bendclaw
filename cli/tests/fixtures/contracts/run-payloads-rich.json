@@ -204,5 +204,22 @@
       },
       "context_window": 120000
     }
+  },
+  {
+    "kind": "context_compaction_completed",
+    "payload": {
+      "reason": "refusal",
+      "result": {
+        "type": "compacted",
+        "before_message_count": 4,
+        "after_message_count": 1,
+        "before_tokens": 120,
+        "after_tokens": 20,
+        "messages_evicted": 3,
+        "current_run_reclaimed": 0
+      },
+      "context_window": 0,
+      "will_retry": true
+    }
   }
 ]

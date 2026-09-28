@@ -14,6 +14,9 @@ pub enum CompactReason {
     Threshold,
     Overflow,
     Manual,
+    /// The provider refused the request (safety filter); the context was
+    /// compacted so the retry no longer carries the triggering content.
+    Refusal,
 }
 
 pub fn bounded_fallback_reason(reason: &str) -> String {
@@ -98,6 +101,13 @@ pub enum TriggerDecision {
     /// attempted this turn. Do not retry — surface a user-visible message so
     /// the user can reduce context or switch to a larger-context model.
     OverflowExhausted { context_tokens: usize },
+    /// The provider refused the request (safety filter / refusal). Compact
+    /// the context so the triggering content leaves the active request, then
+    /// retry once.
+    Refusal { context_tokens: usize },
+    /// A refusal recurred after a compact-and-retry was already attempted
+    /// this turn. Do not retry again.
+    RefusalExhausted { context_tokens: usize },
 }
 
 // ---------------------------------------------------------------------------
