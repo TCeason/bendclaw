@@ -358,3 +358,79 @@ async fn responses_requires_terminal_event() {
     ));
     assert!(evotengine::retry::should_retry(&error));
 }
+
+#[tokio::test]
+async fn responses_incomplete_content_filter_is_a_refusal() -> Result<(), Box<dyn std::error::Error>>
+{
+    let sse = concat!(
+        "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\n",
+        "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"partial\"}\n\n",
+        "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"content_filter\"},\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}\n\n",
+    );
+    let (message, _) = run_provider_sse(
+        &OpenAiResponsesProvider,
+        responses_config("gpt-5.5").build(),
+        sse,
+        200,
+    )
+    .await?;
+    let Message::Assistant {
+        stop_reason,
+        error_message,
+        ..
+    } = message
+    else {
+        return Err("expected assistant message".into());
+    };
+    assert_eq!(stop_reason, StopReason::Error);
+    assert!(error_message
+        .as_deref()
+        .is_some_and(evotengine::provider::error::is_refusal_message));
+    Ok(())
+}
+
+#[tokio::test]
+async fn responses_incomplete_max_output_tokens_stays_a_length_stop(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let sse = concat!(
+        "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\n",
+        "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"partial\"}\n\n",
+        "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}\n\n",
+    );
+    let (message, _) = run_provider_sse(
+        &OpenAiResponsesProvider,
+        responses_config("gpt-5.5").build(),
+        sse,
+        200,
+    )
+    .await?;
+    assert!(matches!(
+        message,
+        Message::Assistant {
+            stop_reason: StopReason::Length,
+            error_message: Some(ref reason),
+            ..
+        } if reason == "response incomplete: max_output_tokens"
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn responses_content_filter_error_event_is_a_refusal(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let result = run_provider_sse(
+        &OpenAiResponsesProvider,
+        responses_config("gpt-5.5").build(),
+        "event: error\ndata: {\"type\":\"error\",\"code\":\"content_filter\",\"message\":\"filtered\"}\n\n",
+        200,
+    )
+    .await;
+    let Err(error) = result else {
+        return Err("expected a refusal error".into());
+    };
+    assert!(evotengine::provider::error::is_refusal_message(
+        &error.to_string()
+    ));
+    assert!(!evotengine::retry::should_retry(&error));
+    Ok(())
+}

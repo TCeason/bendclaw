@@ -78,6 +78,14 @@ pub(crate) async fn decode_sse_stream(
         ));
     }
 
+    // Output stopped by the content filter is a safety refusal, not a length
+    // truncation: surface it as an error so refusal recovery can compact.
+    let refused = incomplete_reason
+        .as_deref()
+        .is_some_and(crate::provider::error::is_content_filter_reason);
+    if refused {
+        stop_reason = StopReason::Error;
+    }
     if stop_reason == StopReason::Stop
         && content
             .iter()
@@ -85,7 +93,7 @@ pub(crate) async fn decode_sse_stream(
     {
         stop_reason = StopReason::ToolUse;
     }
-    if content.is_empty() && usage.context_tokens() == 0 {
+    if !refused && content.is_empty() && usage.context_tokens() == 0 {
         return Err(ProviderError::Api(
             "Empty response from provider (OpenAI Responses: no content, no usage)".into(),
         ));
@@ -101,7 +109,9 @@ pub(crate) async fn decode_sse_stream(
             .unwrap_or_else(|| "openai".into()),
         usage,
         timestamp: now_ms(),
-        error_message: incomplete_reason.map(|reason| format!("response incomplete: {reason}")),
+        error_message: incomplete_reason
+            .as_deref()
+            .map(crate::provider::error::incomplete_message),
         response_id,
     };
     let _ = tx

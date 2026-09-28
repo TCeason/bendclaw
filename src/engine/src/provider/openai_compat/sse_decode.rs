@@ -72,8 +72,20 @@ pub(crate) async fn decode_sse_stream(
         }
     }
 
+    // `finish_reason: content_filter` means the output was stopped by the
+    // safety filter: surface it as an error so refusal recovery can compact,
+    // never as a normal completion or a tool call.
+    let refused = incomplete_reason
+        .as_deref()
+        .is_some_and(crate::provider::error::is_content_filter_reason);
+
     // Detect empty response: no content and no usage from provider
-    if content.is_empty() && tool_call_buffers.is_empty() && usage.input == 0 && usage.output == 0 {
+    if !refused
+        && content.is_empty()
+        && tool_call_buffers.is_empty()
+        && usage.input == 0
+        && usage.output == 0
+    {
         return Err(ProviderError::Api(
             "Empty response from provider (no content, no usage)".into(),
         ));
@@ -82,7 +94,9 @@ pub(crate) async fn decode_sse_stream(
     // Finalize tool calls
     finalize_tool_calls(&tx, &mut content, &tool_call_buffers).await;
 
-    if !tool_call_buffers.is_empty()
+    if refused {
+        stop_reason = StopReason::Error;
+    } else if !tool_call_buffers.is_empty()
         || content
             .iter()
             .any(|c| matches!(c, Content::ToolCall { .. }))
@@ -101,7 +115,9 @@ pub(crate) async fn decode_sse_stream(
             .unwrap_or_else(|| "openai".into()),
         usage,
         timestamp: now_ms(),
-        error_message: incomplete_reason.map(|reason| format!("response incomplete: {reason}")),
+        error_message: incomplete_reason
+            .as_deref()
+            .map(crate::provider::error::incomplete_message),
         response_id,
     };
 
@@ -353,6 +369,10 @@ async fn process_sse_chunk(
 
         // Handle finish reason
         if let Some(reason) = &choice.finish_reason {
+            if crate::provider::error::is_content_filter_reason(reason) {
+                // Finalized as a refusal after the stream ends.
+                *incomplete_reason = Some(reason.clone());
+            }
             *stop_reason = match reason.as_str() {
                 "stop" => StopReason::Stop,
                 "length" => StopReason::Length,

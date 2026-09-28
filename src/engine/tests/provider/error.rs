@@ -591,3 +591,29 @@ fn transport_detail_strips_docs_rs_reference() {
         "peer closed connection without sending TLS close_notify (url: https://example.com/v1/messages)"
     );
 }
+
+#[test]
+fn content_filter_codes_are_refusals_and_plain_invalid_requests_are_not() {
+    use evotengine::provider::stream::http::classify_json_error;
+
+    for value in [
+        serde_json::json!({"error": {"message": "filtered", "code": "content_filter"}}),
+        serde_json::json!({"error": {
+            "message": "filtered",
+            "type": "invalid_request_error",
+            "innererror": {"code": "ResponsibleAIPolicyViolation"}
+        }}),
+    ] {
+        let error = classify_json_error(&value);
+        assert!(is_refusal_message(&error.to_string()), "{value}");
+        assert!(!evotengine::retry::should_retry(&error));
+    }
+
+    // Message wording alone never classifies a refusal.
+    let plain = classify_json_error(&serde_json::json!({"error": {
+        "message": "content_filter mentioned in text",
+        "type": "invalid_request_error"
+    }}));
+    assert!(matches!(plain, ProviderError::InvalidRequest(_)));
+    assert!(!is_refusal_message(&plain.to_string()));
+}

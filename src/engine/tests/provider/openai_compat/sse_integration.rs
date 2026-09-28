@@ -744,3 +744,93 @@ async fn openai_sse_parallel_calls_with_whole_argument_chunks_stay_separate() {
     assert_eq!(calls[1].0, "call_B");
     assert_eq!(calls[1].1["path"], "/b/list.md");
 }
+
+// ---------------------------------------------------------------------------
+// Content filter — surfaced as a safety refusal so recovery can compact
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn openai_sse_content_filter_is_a_refusal_even_with_a_partial_tool_call(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let sse = openai_sse::body(vec![
+        openai_sse::text_chunk("partial", None),
+        openai_sse::tool_call_chunk(0, Some("call_1"), Some("bash"), Some("{\"command\"")),
+        openai_sse::finish_with_usage("content_filter", 10, 2),
+        openai_sse::done(),
+    ]);
+
+    let (message, _) = run_provider_sse(&OpenAiCompatProvider, openai_config(), &sse, 200).await?;
+
+    let Message::Assistant {
+        stop_reason,
+        error_message,
+        ..
+    } = message
+    else {
+        return Err("expected assistant message".into());
+    };
+    assert_eq!(stop_reason, StopReason::Error);
+    assert!(error_message
+        .as_deref()
+        .is_some_and(evotengine::provider::error::is_refusal_message));
+    Ok(())
+}
+
+#[tokio::test]
+async fn openai_json_fallback_content_filter_is_a_refusal() -> Result<(), Box<dyn std::error::Error>>
+{
+    let json = serde_json::json!({
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": ""},
+            "finish_reason": "content_filter"
+        }],
+        "usage": {"prompt_tokens": 30, "completion_tokens": 0, "total_tokens": 30}
+    });
+
+    let Err(error) = run_provider_json(
+        &OpenAiCompatProvider,
+        openai_config(),
+        &json.to_string(),
+        200,
+    )
+    .await
+    else {
+        return Err("expected a refusal error".into());
+    };
+    assert!(evotengine::provider::error::is_refusal_message(
+        &error.to_string()
+    ));
+    assert!(!evotengine::retry::should_retry(&error));
+    Ok(())
+}
+
+#[tokio::test]
+async fn azure_http_400_prompt_filter_is_a_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    let body = serde_json::json!({
+        "error": {
+            "message": "The response was filtered due to the prompt triggering Azure OpenAI's content management policy.",
+            "type": null,
+            "param": "prompt",
+            "code": "content_filter",
+            "status": 400,
+            "innererror": {"code": "ResponsibleAIPolicyViolation"}
+        }
+    });
+
+    let Err(error) = run_provider_json(
+        &OpenAiCompatProvider,
+        openai_config(),
+        &body.to_string(),
+        400,
+    )
+    .await
+    else {
+        return Err("expected a refusal error".into());
+    };
+    let message = error.to_string();
+    assert!(evotengine::provider::error::is_refusal_message(&message));
+    assert!(message.contains("content management policy"));
+    assert!(!evotengine::retry::should_retry(&error));
+    Ok(())
+}

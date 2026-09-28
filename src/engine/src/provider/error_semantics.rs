@@ -22,6 +22,17 @@ pub(super) fn model_not_found(message: &str, value: Option<&serde_json::Value>) 
         || (lower.contains("model") && lower.contains("does not exist"))
 }
 
+/// OpenAI / Azure OpenAI content-filter rejection, recognized from structured
+/// error codes only (never from message wording).
+pub(super) fn content_filter(value: &serde_json::Value) -> bool {
+    let error = error_node(value);
+    [error.get("code"), error.pointer("/innererror/code")]
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .any(|code| matches!(code, "content_filter" | "ResponsibleAIPolicyViolation"))
+}
+
 pub(super) fn permanent_type(value: &serde_json::Value) -> bool {
     let error = error_node(value);
     ["type", "code"].iter().any(|field| {

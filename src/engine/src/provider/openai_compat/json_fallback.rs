@@ -93,6 +93,13 @@ fn parse_success_response(
 
         // Stop reason
         let stop_reason = match choice.finish_reason.as_deref() {
+            // Same contract as the SSE path: a content-filter stop is a
+            // refusal error, never a normal completion.
+            Some(reason) if crate::provider::error::is_content_filter_reason(reason) => {
+                return Err(ProviderError::Api(crate::provider::error::refusal_message(
+                    reason,
+                )));
+            }
             Some("stop") => StopReason::Stop,
             Some("length") => StopReason::Length,
             Some("tool_calls") => StopReason::ToolUse,

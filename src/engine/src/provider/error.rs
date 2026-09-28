@@ -126,6 +126,14 @@ impl ProviderError {
         display: &str,
         should_retry: Option<bool>,
     ) -> Self {
+        // Checked before the permanent types: Azure reports prompt filtering
+        // as `invalid_request_error` with code `content_filter`, and it must
+        // reach refusal recovery rather than fail as an invalid request.
+        if !matches!(status, 401 | 403 | 429)
+            && value.is_some_and(super::error_semantics::content_filter)
+        {
+            return Self::Other(content_filter_message(display));
+        }
         if !matches!(status, 401 | 403 | 429)
             && value.is_some_and(super::error_semantics::permanent_type)
             && !is_context_overflow_message(evidence)
@@ -177,6 +185,9 @@ pub(crate) fn classify_stream_error(
         .is_some_and(is_auth_error_type)
     {
         return ProviderError::Auth(message.to_string());
+    }
+    if value.is_some_and(super::error_semantics::content_filter) {
+        return ProviderError::Other(content_filter_message(message));
     }
     let evidence = value.map(serde_json::Value::to_string);
     let evidence = evidence.as_deref().unwrap_or(message);
@@ -352,6 +363,28 @@ pub fn refusal_message(stop_reason: &str) -> String {
 /// Whether an error message is a provider safety refusal.
 pub fn is_refusal_message(message: &str) -> bool {
     message.contains(REFUSAL_MARKER)
+}
+
+/// Error text for a request rejected by the provider's content filter (for
+/// example an Azure OpenAI prompt filter), before or while generating.
+pub fn content_filter_message(detail: &str) -> String {
+    format!("Provider content filter rejected the request {REFUSAL_MARKER}: {detail}")
+}
+
+/// Error text for a response that ended incomplete. A `content_filter` reason
+/// is a safety refusal; every other reason keeps the plain incomplete wording.
+pub(crate) fn incomplete_message(reason: &str) -> String {
+    if is_content_filter_reason(reason) {
+        refusal_message(reason)
+    } else {
+        format!("response incomplete: {reason}")
+    }
+}
+
+/// Whether an OpenAI `finish_reason` / `incomplete_details.reason` means the
+/// output was stopped by the content filter.
+pub(crate) fn is_content_filter_reason(reason: &str) -> bool {
+    reason == "content_filter"
 }
 
 pub(crate) fn is_overloaded_message(message: &str) -> bool {
