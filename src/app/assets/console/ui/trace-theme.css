@@ -1,0 +1,26 @@
+/* Trace-local semantic aliases: inherit the shared product palette. */
+:root {
+  --panel: var(--bg);
+  --panel2: var(--fill);
+  --border: var(--line);
+  --fg: var(--ink);
+  --accent-dim: var(--accent-soft);
+  --del: var(--red);
+  --cache: var(--amber);
+  --blue: #93c5fd;
+  --blue-dim: #60a5fa1f;
+  --orange: #fb923c;
+  --orange-dim: #fb923c1f;
+  --purple: #c4b5fd;
+  --purple-dim: #a78bfa1f;
+  --success-tint: #22c55e14;
+}
+:root[data-theme="light"] {
+  --blue: #295ec6;
+  --blue-dim: #4176e61f;
+  --orange: #9a590b;
+  --orange-dim: #9a590b1f;
+  --purple: #6d39a4;
+  --purple-dim: #6d39a41f;
+  --success-tint: #17834514;
+}

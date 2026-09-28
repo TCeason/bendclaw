@@ -1,31 +1,8 @@
-/* Shared shell for the evot local console: topbar, sidenav, panels, forms.
-   One stylesheet backs every page so navigation never changes typeface,
-   spacing, or color. Type, skeleton bars, and the top refresh bar match the
-   evot-server admin so the two surfaces read as one product. IBM Plex Mono
-   is loaded by each document (same <link> as admin), not via @import, so a
+/* Shared console layout and controls; theme.css owns all palette tokens.
+   IBM Plex Mono is loaded by each document rather than via @import, so a
    slow font host cannot block this stylesheet. */
 
 :root {
-  color-scheme: dark;
-  --page: #0a0d10;
-  --bg: #101417;
-  --fill: #171d21;
-  --ink: #e9eeed;
-  --muted: #8b9a9a;
-  --faint: #626e6e;
-  --line: #ffffff1f;
-  /* Inverted controls: a light chip on a dark room. */
-  --btn: #e9eeed;
-  --btn-ink: #0a0d10;
-  --btn-hover: #ffffff;
-  --green: #34c759;
-  --green-ink: #4ade80;
-  --red: #ff6b60;
-  --red-line: #ff6b6040;
-  --red-fill: #ff6b6014;
-  --amber: #e2a13c;
-  --sk: #1d2429;
-  --sk-hi: #273037;
   --font: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
   --mono: var(--font);
@@ -47,132 +24,116 @@ a { color: inherit; text-decoration: none; }
 a:hover { text-decoration: underline; }
 code, pre, .mono { font-family: var(--mono); }
 
-/* ---- topbar ---- */
-.topbar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  height: 56px;
-  padding: 0 28px;
-  border-bottom: 1px solid var(--line);
-  position: sticky;
-  top: 0;
-  background: var(--bg);
-  z-index: 5;
-}
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  font-weight: 700;
-}
-.brand:hover { text-decoration: none; }
-.brand .mark { color: var(--ink); display: flex; }
-.brand span { color: var(--muted); font-weight: 500; }
-.topbar-right {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  color: var(--muted);
-  font-size: 12.5px;
-  min-width: 0;
-}
-.topbar-right .cwd {
-  max-width: 42ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ---- shell ---- */
+/* ---- shell: one fixed left rail + one right pane, on every page ---- */
+html, body { height: 100%; overflow: hidden; }
 .shell {
-  display: flex;
-  width: 100%;
-  max-width: 1680px;
-  margin: 0 auto;
-  padding: 28px 40px 80px;
-  gap: 24px;
-  align-items: flex-start;
+  display: grid;
+  /* Fixed column: long session titles must ellipsize, never widen the rail. */
+  grid-template-columns: 248px minmax(0, 1fr);
+  height: 100vh;
+  height: 100dvh;
 }
-.sidenav { flex: 0 0 168px; position: sticky; top: 84px; }
-.sidenav nav { display: flex; flex-direction: column; }
-.sidenav a {
-  position: relative;
+.sidenav {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px 10px 10px;
+  border-right: 1px solid var(--line);
+  background: var(--side-bg);
+}
+.rail-brand { flex: none; padding: 4px 8px 12px; }
+.brand { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 700; }
+.brand:hover { text-decoration: none; }
+.brand span.mark { color: var(--accent); display: flex; }
+.brand span { color: var(--muted); font-weight: 500; }
+.rail-nav { display: flex; flex: none; flex-direction: column; gap: 1px; }
+.rail-nav a {
   display: block;
-  padding: 10px 16px 10px 18px;
+  padding: 7px 10px;
+  border-radius: 8px;
   color: var(--muted);
   font-size: 13px;
   font-weight: 500;
 }
-.sidenav a:hover { color: var(--ink); text-decoration: none; }
-.sidenav a.active { color: var(--ink); font-weight: 700; }
-.sidenav a.active::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 2px;
-  background: var(--ink);
+.rail-nav a:hover { background: var(--fill); color: var(--ink); text-decoration: none; }
+.rail-nav a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+/* Chat's session list lives here; on other pages it only pushes Settings down. */
+.rail-slot { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+.rail-settings { flex: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.rail-label {
+  padding: 4px 10px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
 }
-
-.main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 22px; }
-.page-head { display: flex; align-items: flex-start; gap: 16px; padding-bottom: 4px; }
-.page-head h1 { font-size: 28px; line-height: 1.15; font-weight: 600; }
-.page-actions {
-  margin-left: auto;
+.rail-row {
   display: flex;
-  gap: 8px;
   align-items: center;
-  flex-shrink: 0;
-  padding-top: 6px;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 2px 2px 10px;
+  color: var(--muted);
+  font-size: 12.5px;
 }
-.lede { margin-top: 8px; color: var(--muted); font-size: 13px; max-width: 68ch; }
-.content { display: flex; flex-direction: column; gap: 28px; }
 
-/* Full-height variant for pages that own their own scrolling (chat). The shell
-   stops paginating and hands the remaining viewport to the page. */
-html.fill, html.fill body { height: 100%; overflow: hidden; }
-.shell.fill {
-  height: calc(100vh - 56px);
-  padding: 0;
-  max-width: none;
-  gap: 0;
-  align-items: stretch;
-}
-.shell.fill .sidenav {
-  flex: 0 0 168px;
-  position: static;
-  padding: 20px 12px;
-  border-right: 1px solid var(--line);
+/* ---- right pane: one header bar (same as Chat's) + scrolling content ---- */
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
   overflow-y: auto;
+  background: var(--page);
 }
-.shell.fill .main { gap: 0; min-height: 0; overflow: hidden; }
-/* Compact action strip for fill pages, standing in for the page heading. */
-.fill-bar {
-  flex: none;
+.page-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
   display: flex;
+  flex: none;
   align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
+  gap: 16px;
+  min-height: 58px;
+  padding: 9px 22px;
   border-bottom: 1px solid var(--line);
+  background: var(--page);
 }
-.fill-bar .spacer { flex: 1; }
+.page-titles { min-width: 0; }
+.page-head h1 { font-size: 14px; line-height: 1.3; font-weight: 600; }
+.page-meta {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.page-meta span { overflow: hidden; text-overflow: ellipsis; }
+.page-meta span:empty { display: none; }
+.page-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; flex: none; }
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  max-width: 1120px;
+  padding: 24px 28px 64px;
+}
+/* Pages that own their scrolling regions (chat) take the remaining height. */
+.shell.fill .main { overflow: hidden; }
 .fill-content { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-
-@media (max-width: 860px) {
-  html.fill, html.fill body { overflow: auto; }
-  .shell.fill { height: auto; flex-direction: column; }
-  .shell.fill .sidenav { border-right: 0; border-bottom: 1px solid var(--line); padding: 10px 12px; }
-}
 
 /* ---- panel ---- */
 .panel {
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 0;
+  border-radius: 12px;
   overflow: hidden;
 }
 .panel-head {
@@ -334,7 +295,7 @@ td.num { font-variant-numeric: tabular-nums; }
   border: 1px solid var(--line);
   background: var(--bg);
   color: var(--ink);
-  border-radius: 3px;
+  border-radius: 8px;
   padding: 8px 12px;
   font-size: 13px;
   font-weight: 500;
@@ -371,12 +332,12 @@ input, select, textarea {
   font-family: inherit;
   padding: 8px 10px;
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: 8px;
   background: var(--bg);
   color: var(--ink);
   width: 100%;
 }
-input:focus, select:focus, textarea:focus { outline: none; border-color: var(--ink); }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
 input:disabled, select:disabled, textarea:disabled {
   color: var(--muted);
   background: var(--fill);
@@ -390,7 +351,7 @@ label { display: block; font-size: 12px; font-weight: 500; margin-bottom: 6px; }
 .field.full { grid-column: 1 / -1; }
 .field .help { font-size: 12px; color: var(--muted); margin-top: 6px; }
 .check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
-.check input { width: 15px; height: 15px; accent-color: var(--btn); cursor: pointer; }
+.check input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
 .check span { font-size: 13px; }
 
 /* ---- toast ---- */
@@ -401,7 +362,7 @@ label { display: block; font-size: 12px; font-weight: 500; margin-bottom: 6px; }
   background: var(--btn);
   color: var(--btn-ink);
   padding: 10px 14px;
-  border-radius: 3px;
+  border-radius: 10px;
   font-size: 13px;
   opacity: 0;
   transform: translateY(8px);
@@ -414,13 +375,21 @@ label { display: block; font-size: 12px; font-weight: 500; margin-bottom: 6px; }
 .toast.err { background: var(--red); color: #fff; }
 
 @media (max-width: 860px) {
-  .shell { flex-direction: column; padding: 20px 18px 60px; gap: 16px; }
-  .sidenav { position: static; flex: none; width: 100%; }
-  .sidenav nav { flex-direction: row; flex-wrap: wrap; gap: 4px; }
-  .sidenav a { padding: 8px 12px; }
-  .sidenav a.active::before { display: none; }
-  .sidenav a.active { background: var(--fill); border-radius: 3px; }
+  .shell { grid-template-columns: 216px minmax(0, 1fr); }
+  .content { padding: 20px 18px 56px; }
   .form { grid-template-columns: 1fr; }
+}
+/* Narrow screens: the rail becomes a compact top strip; same entries, same order. */
+@media (max-width: 640px) {
+  .shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .sidenav { flex-flow: row wrap; align-items: center; gap: 4px 8px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .rail-brand { padding: 4px 8px; }
+  .rail-nav { flex-direction: row; }
+  .rail-slot { display: none; }
+  .rail-settings { display: flex; align-items: center; margin: 0 0 0 auto; padding: 0; border: 0; }
+  .rail-label, .rail-row > span { display: none; }
+  .rail-row { padding: 0; }
+  .page-head { padding-inline: 14px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

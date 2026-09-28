@@ -194,6 +194,14 @@ async fn console_pages_are_served() -> TestResult {
         // its own module, or it renders unstyled and inert.
         assert!(body.contains("/ui/app.css"), "{path} missing stylesheet");
         assert!(
+            body.contains("/ui/theme.css"),
+            "{path} missing product palette"
+        );
+        assert!(
+            body.contains("/ui/theme.js"),
+            "{path} missing theme control"
+        );
+        assert!(
             body.contains("type=\"module\""),
             "{path} missing module script"
         );
@@ -211,7 +219,7 @@ async fn console_assets_carry_executable_content_types() -> TestResult {
         content_type.starts_with("text/css"),
         "css was {content_type}"
     );
-    assert!(body.contains("--page"));
+    assert!(body.contains("var(--page)"));
     assert!(body.contains("--font"));
     assert!(body.contains(".load-bar"), "missing the top refresh bar");
     assert!(
@@ -240,7 +248,7 @@ async fn page_modules_only_import_served_paths() -> TestResult {
         "/ui/models.js",
         "/ui/feishu.js",
         "/ui/chat.js",
-        "/ui/chrome.js",
+        "/ui/rail.js",
     ] {
         let (_, _, body) = get(path).await?;
         for line in body.lines().filter(|line| line.starts_with("import ")) {
@@ -618,7 +626,6 @@ async fn chat_page_uses_conversation_layout_and_runtime_controls() -> TestResult
         "id=\"sendBtn\"",
         "id=\"commandBtn\"",
         "id=\"commandMenu\"",
-        "id=\"recentSessions\"",
         "id=\"modelSelect\"",
         "id=\"modelMenu\"",
         "id=\"thinkingSelect\"",
@@ -639,12 +646,29 @@ async fn chat_page_uses_conversation_layout_and_runtime_controls() -> TestResult
         body.contains("IBM+Plex+Mono"),
         "chat page should load the admin typeface"
     );
-    assert!(body.contains("class=\"chat-sidebar\""));
+    // The shared rail renders during parsing (classic script in <head>), so
+    // it is painted before first paint instead of being moved in later.
+    assert!(body.contains("<evot-rail class=\"sidenav\" data-mode=\"chat\"></evot-rail>"));
+    assert!(body.contains("<script src=\"/ui/rail.js\"></script>"));
+    assert!(body.contains("/ui/rail.css"));
+    assert!(!body.contains("/ui/chrome.js"));
+    let rail = include_str!("../assets/console/ui/rail.js");
+    for id in [
+        "id=\"recentSessions\"",
+        "id=\"newChat\"",
+        "id=\"openSearch\"",
+        "id=\"authBox\"",
+    ] {
+        assert!(rail.contains(id), "rail lost {id}");
+    }
+    assert!(!body.contains("class=\"sidebar-links\""));
+    assert!(!body.contains("class=\"chat-brand\""));
     assert!(body.contains("class=\"composer-card\""));
     assert!(body.contains("aria-haspopup=\"listbox\""));
     assert!(body.contains("data-command=\"/clear\""));
     assert!(!body.contains("Attachments are not available yet"));
     assert!(body.contains("/ui/chat.js"), "chat page missing its module");
+    assert!(body.contains("/ui/chat-theme.css"));
     assert!(
         body.contains("/ui/chat.css"),
         "chat page missing its stylesheet"
@@ -658,6 +682,16 @@ async fn chat_page_uses_conversation_layout_and_runtime_controls() -> TestResult
 
 #[tokio::test]
 async fn chat_assets_are_served() -> TestResult {
+    let (status, content_type, theme) = get("/ui/theme.js").await?;
+    assert_eq!(status, StatusCode::OK);
+    assert!(content_type.starts_with("text/javascript"));
+    assert!(theme.contains("evot-theme"));
+    for path in ["/ui/theme.css", "/ui/chat-theme.css", "/ui/trace-theme.css"] {
+        let (status, content_type, body) = get(path).await?;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert!(content_type.starts_with("text/css"));
+        assert!(!body.is_empty());
+    }
     let (status, content_type, transport) = get("/ui/chat-transport.js").await?;
     assert_eq!(status, StatusCode::OK);
     assert!(content_type.starts_with("text/javascript"));
@@ -674,7 +708,6 @@ async fn chat_assets_are_served() -> TestResult {
     let (status, content_type, body) = get("/ui/chat.css").await?;
     assert_eq!(status, StatusCode::OK);
     assert!(content_type.starts_with("text/css"), "was {content_type}");
-    assert!(body.contains(".chat-sidebar"));
     assert!(body.contains(".composer-card"));
     // Conversation chrome the harness layout depends on.
     assert!(body.contains(".turn-status"));
@@ -704,11 +737,15 @@ async fn chat_assets_are_served() -> TestResult {
     assert!(body.contains("data-pending-steering"));
     // Search results show match context, not just titles.
     assert!(body.contains(".search-snippet"));
-    // Scroll-triggered page loading shows an in-list indicator, not a freeze.
-    assert!(body.contains(".recent-more"));
     assert!(body.contains(".seat-menu"));
     assert!(body.contains(".seat-group-title"));
     assert!(body.contains("mark {"));
+    let (status, content_type, rail) = get("/ui/rail.css").await?;
+    assert_eq!(status, StatusCode::OK);
+    assert!(content_type.starts_with("text/css"), "was {content_type}");
+    assert!(rail.contains(".chat-sidebar"));
+    // Scroll-triggered page loading shows an in-list indicator, not a freeze.
+    assert!(rail.contains(".recent-more"));
 
     let (status, content_type, body) = get("/ui/chat.js").await?;
     assert_eq!(status, StatusCode::OK);
@@ -1120,13 +1157,17 @@ async fn trace_page_joins_the_console_shell() -> TestResult {
             "{path} missing the shell styles"
         );
         assert!(
-            body.contains("/ui/chrome.js"),
-            "{path} missing the console chrome"
+            body.contains("<evot-rail class=\"sidenav\"></evot-rail>"),
+            "{path} missing the shared rail"
         );
+        assert!(body.contains("/ui/rail.js"), "{path} missing rail.js");
     }
     let (_, _, body) = get("/sessions/abc123/trace").await?;
+    assert!(body.contains("/ui/theme.css"));
+    assert!(body.contains("/ui/theme.js"));
+    assert!(body.contains("/ui/trace-theme.css"));
     // The page scrolls normally rather than filling the viewport like chat.
-    assert!(body.contains("data-chrome=\"page\""));
+    assert!(body.contains("<div class=\"shell\">"));
     // The iframe height protocol existed only for the SPA shell.
     assert!(
         !body.contains("postHeight"),

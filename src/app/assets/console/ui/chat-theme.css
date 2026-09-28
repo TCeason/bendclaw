@@ -1,0 +1,23 @@
+/* Chat-specific surfaces only. Palette and toggle are shared in theme.css. */
+.chat-sidebar, .code-block { background: var(--side-bg); }
+.composer-card, .message-user .bubble { background: var(--raised-bg); }
+.welcome-mark, .workspace-folder { color: var(--accent); }
+:root:not([data-theme="light"]) .welcome-mark { filter: drop-shadow(0 0 22px #5686fe80); }
+:root[data-theme="light"] .welcome-mark { filter: none; }
+.message-assistant .text-content a { color: var(--link); }
+.context-fill { stroke: var(--accent); }
+.context-segment:not([data-part]), .context-swatch:not([data-part]),
+.context-segment[data-part="system"], .context-swatch[data-part="system"] { background: var(--accent); }
+.send-btn:focus-visible { outline-color: var(--accent); }
+.send-btn, .send-btn.stop { background: var(--accent); }
+.send-btn:hover:not(:disabled) { background: var(--accent-hover); }
+.round-tool[aria-expanded="true"] { background: color-mix(in srgb, var(--fill) 78%, var(--accent) 22%); }
+.search-snippet mark, .search-open mark { background: var(--accent-soft); }
+.notice-banner { border-color: var(--accent); background: var(--accent-soft); }
+.notice-chunk.ad { color: var(--amber); }
+:root[data-theme="light"] .context-panel { box-shadow: 0 12px 32px #26314820; }
+:root[data-theme="light"] .composer-card { background: var(--bg); box-shadow: 0 12px 36px #26314820; }
+:root[data-theme="light"] .command-menu,
+:root[data-theme="light"] .seat-menu { box-shadow: 0 14px 44px #26314830; }
+:root[data-theme="light"] .search-panel { box-shadow: 0 22px 70px #26314830; }
+:root[data-theme="light"] .search-overlay { background: #0f111580; }

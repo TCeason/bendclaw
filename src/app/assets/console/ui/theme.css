@@ -1,0 +1,79 @@
+/* Console-wide semantic palette, based on deepseek-harness design-platform.
+   All pages share these tokens; page-specific components live in their own CSS. */
+:root {
+  color-scheme: dark;
+  --page: #151517;
+  --bg: #232324;
+  --fill: #353638;
+  --ink: #f9fafb;
+  --muted: #cfd3d6;
+  --faint: #adb2b8;
+  --line: #ffffff1f;
+  --btn: #7aaaff;
+  --btn-ink: #0f1115;
+  --btn-hover: #9bc0ff;
+  --green: #22c55e;
+  --green-ink: #4ed17e;
+  --red: #f25a5a;
+  --red-line: #f25a5a40;
+  --red-fill: #f25a5a1f;
+  --amber: #f59e0b;
+  --sk: #2c2c2e;
+  --sk-hi: #353638;
+  --accent: #5686fe;
+  --accent-hover: #7aaaff;
+  --accent-soft: #5686fe1f;
+  --accent-border: #5686fe66;
+  --link: #7aaaff;
+  --side-bg: #1b1b1c;
+  --raised-bg: #2c2c2e;
+  --hover-tint: #ffffff08;
+  --fine-line: #ffffff0f;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --page: #ffffff;
+  --bg: #ffffff;
+  --fill: #f1f3f5;
+  --ink: #0f1115;
+  --muted: #43454a;
+  --faint: #656970;
+  --line: #2631481a;
+  --btn: #4176e6;
+  --btn-ink: #ffffff;
+  --btn-hover: #295ec6;
+  --green: #178345;
+  --green-ink: #178345;
+  --red: #c62828;
+  --red-line: #c6282840;
+  --red-fill: #c6282812;
+  --amber: #9a590b;
+  --sk: #e9ecf2;
+  --sk-hi: #dce2ec;
+  --accent: #4176e6;
+  --accent-hover: #295ec6;
+  --accent-soft: #4176e61f;
+  --accent-border: #4176e666;
+  --link: #295ec6;
+  --side-bg: #f9fafb;
+  --raised-bg: #edf3fe;
+  --hover-tint: #2631480a;
+  --fine-line: #26314812;
+}
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  width: auto;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.theme-toggle:hover { background: var(--fill); color: var(--ink); }
+.theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

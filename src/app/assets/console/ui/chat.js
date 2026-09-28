@@ -295,7 +295,7 @@ function setSession(id, meta = {}, { locked } = {}) {
 
 /** Sidebar paging: lightweight rows, one server page at a time. */
 const RECENT_PAGE = 30;
-let sessions = [];
+let sessions = window.evotRail?.cachedSessions() || [];
 let sessionsDone = false;
 let sessionsLoading = false;
 let sessionsQueuedReset = false;
@@ -354,6 +354,7 @@ async function loadRecentPage({ reset = false } = {}) {
     sessionsDone = rows.length < RECENT_PAGE;
     if (reset) {
       sessions = rows;
+      window.evotRail?.rememberSessions(rows);
     } else {
       const known = new Set(sessions.map((session) => session.session_id));
       for (const row of rows) {
@@ -496,6 +497,7 @@ async function deleteSession(id) {
       return;
     }
     sessions = sessions.filter((session) => session.session_id !== id);
+    window.evotRail?.rememberSessions(sessions);
     if (Array.isArray(searchIndex)) {
       searchIndex = searchIndex.filter((session) => session.session_id !== id);
     }
@@ -2009,6 +2011,7 @@ async function refreshAuthBox() {
   try {
     const session = await getJson("/api/auth/session");
     signedIn = Boolean(session.logged_in);
+    window.evotRail?.rememberAccount(session.logged_in ? { email: session.email || session.name || "Account" } : {});
     if (!signedIn && !selectedModel()) {
       // An empty picker becomes the login affordance.
       $("modelLabel").textContent = "Log in to load models";
@@ -2429,6 +2432,7 @@ document.addEventListener("keydown", (event) => {
 // suggestion twice.
 bindWelcome();
 updatePrimary();
+if (sessions.length) renderRecent();
 await Promise.all([loadOptions(), loadRecentPage({ reset: true }), loadWorkspace(), refreshAuthBox(), refreshNotices()]);
 // Notices stay live: polled while the tab is visible, and refetched the
 // moment it comes back, like the TUI slot reacting to cache refreshes.
@@ -2439,4 +2443,6 @@ document.addEventListener("visibilitychange", () => {
 // Deep link back from a trace page: /chat?session=<id> reopens that session.
 const wantedSession = new URLSearchParams(location.search).get("session");
 if (wantedSession) await resumeSession(wantedSession);
+// Search from another page's rail lands here.
+if (new URLSearchParams(location.search).get("search") === "1") openSearch();
 input.focus();

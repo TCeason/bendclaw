@@ -91,102 +91,45 @@ export function toast(message, kind) {
 
 export const { getJson, postJson } = createJsonClient({ begin: beginLoad, end: endLoad });
 
-/** Mark the sidenav entry whose href matches the current path. */
-export function markActiveNav() {
-  const here = window.location.pathname.replace(/\/+$/, "") || "/";
-  document.querySelectorAll(".sidenav a").forEach((a) => {
-    const href = a.getAttribute("href") || "";
-    const path = href.replace(/\/+$/, "") || "/";
-    if (path === here) a.classList.add("active");
-  });
-}
-
-/* Nav lives here rather than in each document so adding a page is a one-line
-   change instead of copies drifting apart. Every entry must resolve to a real
-   route: a dead nav item is worse than a missing one.
-
-   The console's home is Chat; the sessions list folded into it and "/"
-   redirects there, so no nav row points at either. */
-const NAV = [
-  { href: "/chat", name: "Chat" },
-  { href: "/models", name: "Models" },
-  { href: "/feishu", name: "Feishu" },
-];
-
-/** Brand link markup. Shared with pages that build their own chrome. */
-export function brandHtml() {
-  return (
-    '<a class="brand" href="/"><span class="mark">' +
-    '<svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true">' +
-    '<rect x="1" y="1" width="16" height="16" stroke="currentColor" stroke-width="1.6"/>' +
-    '<rect x="5.5" y="5.5" width="7" height="7" fill="currentColor"/></svg>' +
-    "</span>evot <span>console</span></a>"
-  );
-}
-
 /**
- * Render the topbar + sidenav into `document.body` and return the element that
- * page content goes into. Called before any page-specific rendering.
- *
- * `title` is the page heading; `actions` is optional HTML for the header's
- * right side; `lede` is an optional one-line description under the heading.
- */
-/** Nav markup. Shared so a page that cannot use `mountShell` still gets the
- *  same entries from the same list. */
-export function navHtml() {
-  return NAV.map(
-    (item) => '<a href="' + item.href + '">' + esc(item.name) + "</a>",
-  ).join("");
-}
-
-/**
- * Render the topbar + sidenav into `document.body` and return the element that
- * page content goes into. Called before any page-specific rendering.
+ * Render the shared rail + page header into `document.body` and return the
+ * element that page content goes into. Called before any page-specific rendering.
  *
  * Not usable by a page whose markup must survive: this replaces `body`.
  *
  * `title` is the page heading; `actions` is optional HTML for the header's
  * right side; `lede` is an optional one-line description under the heading.
  *
- * `fill` gives the page the remaining viewport instead of a scrolling content
- * column, and drops the heading block — chat owns its own scrolling and needs
- * every pixel. `actions` still renders, as a compact bar above the content.
+ * `fill` gives the content the remaining viewport without padding, for pages
+ * that manage their own scrolling regions. The header bar is identical either way.
  *
  * `actions` is inserted as HTML, so it must only ever be a literal from the
  * calling page — never server data.
  */
 export function mountShell({ title, lede, actions, fill }) {
-  const nav = navHtml();
-
-  const head = fill
-    ? actions
-      ? '<div class="fill-bar">' + actions + "</div>"
-      : ""
-    : '<div class="page-head"><div><h1>' + esc(title) + "</h1>" +
-      (lede ? '<p class="lede">' + esc(lede) + "</p>" : "") +
-      '</div><div class="page-actions">' + (actions || "") + "</div></div>";
+  // Every page gets the same compact header bar as Chat's conversation header.
+  const head =
+    '<header class="page-head"><div class="page-titles"><h1>' + esc(title) + "</h1>" +
+    '<p class="page-meta"><span>' + esc(lede || "") + '</span><span class="cwd" id="shell-cwd"></span></p>' +
+    '</div><div class="page-actions">' + (actions || "") + "</div></header>";
 
   if (fill) document.documentElement.classList.add("fill");
   document.title = title + " · evot";
 
   document.body.innerHTML =
-    '<header class="topbar">' +
-    brandHtml() +
-    '<div class="topbar-right"><span class="cwd" id="shell-cwd"></span></div>' +
-    "</header>" +
     '<div class="shell' + (fill ? " fill" : "") + '">' +
-    '<aside class="sidenav"><nav>' + nav + "</nav></aside>" +
+    // rail.js (loaded in <head>) upgrades this element synchronously.
+    '<evot-rail class="sidenav"></evot-rail>' +
     '<div class="main">' +
     head +
     '<div class="' + (fill ? "fill-content" : "content") + '" id="content"></div>' +
     "</div></div>" +
     '<div class="toast" id="toast" role="status" aria-live="polite"></div>';
 
-  markActiveNav();
   return $("content");
 }
 
-/** Show the working directory in the topbar. Ignored when unavailable. */
+/** Show the config path in the page header meta line. Ignored when unavailable. */
 export function setShellCwd(text) {
   const el = $("shell-cwd");
   if (el && text) el.textContent = text;

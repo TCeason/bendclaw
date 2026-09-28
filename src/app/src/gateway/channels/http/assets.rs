@@ -86,6 +86,13 @@ pub(super) fn router() -> Router {
             )),
         ),
         (
+            "/ui/theme.js",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/console/ui/theme.js"
+            )),
+        ),
+        (
             "/ui/chat.js",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
@@ -107,10 +114,10 @@ pub(super) fn router() -> Router {
             )),
         ),
         (
-            "/ui/chrome.js",
+            "/ui/rail.js",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/assets/console/ui/chrome.js"
+                "/assets/console/ui/rail.js"
             )),
         ),
         (
@@ -139,6 +146,34 @@ pub(super) fn router() -> Router {
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/assets/console/ui/app.css"
+            )),
+        ),
+        (
+            "/ui/theme.css",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/console/ui/theme.css"
+            )),
+        ),
+        (
+            "/ui/rail.css",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/console/ui/rail.css"
+            )),
+        ),
+        (
+            "/ui/chat-theme.css",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/console/ui/chat-theme.css"
+            )),
+        ),
+        (
+            "/ui/trace-theme.css",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/console/ui/trace-theme.css"
             )),
         ),
         (

@@ -267,7 +267,9 @@ async fn delete_session_removes_only_target() -> TestResult {
 fn chat_page_embeds_session_navigation() {
     let html = include_str!("../assets/console/index.html");
     let js = include_str!("../assets/console/ui/chat.js");
-    assert!(html.contains("id=\"recentSessions\""));
+    let rail = include_str!("../assets/console/ui/rail.js");
+    assert!(rail.contains("id=\"recentSessions\""));
+    assert!(html.contains("data-mode=\"chat\""));
     assert!(html.contains("id=\"searchOverlay\""));
     assert!(html.contains("id=\"modelSelect\""));
     assert!(html.contains("id=\"thinkingSelect\""));
