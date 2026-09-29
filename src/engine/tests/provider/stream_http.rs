@@ -414,3 +414,136 @@ async fn check_error_status_truncates_oversized_bodies() {
     assert!(oversized.to_string().contains('…'));
     assert!(oversized.to_string().len() < 80_000);
 }
+
+// ---------------------------------------------------------------------------
+// send_json_stream_request: gzip only where the origin has advertised it
+// ---------------------------------------------------------------------------
+
+mod request_compression {
+    use std::io::Read;
+
+    use evotengine::provider::stream::http::origin_accepts_gzip;
+    use evotengine::provider::stream::http::send_json_stream_request;
+    use wiremock::matchers::header;
+    use wiremock::matchers::method;
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::ResponseTemplate;
+
+    fn big_body() -> serde_json::Value {
+        serde_json::json!({"model": "m", "messages": [{"role": "user", "content": "x".repeat(200_000)}]})
+    }
+
+    fn gunzip(bytes: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        flate2::read::GzDecoder::new(bytes)
+            .read_to_end(&mut out)
+            .unwrap();
+        out
+    }
+
+    async fn send(server: &MockServer, body: &serde_json::Value) -> u16 {
+        let url = format!("{}/v1/messages", server.uri());
+        let builder = reqwest::Client::new()
+            .post(&url)
+            .header("content-type", "application/json");
+        send_json_stream_request(builder, &url, body)
+            .await
+            .unwrap()
+            .status()
+            .as_u16()
+    }
+
+    fn advertising() -> ResponseTemplate {
+        ResponseTemplate::new(200).insert_header("accept-encoding", "gzip, deflate")
+    }
+
+    #[tokio::test]
+    async fn plain_until_the_origin_advertises_then_gzip() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(advertising())
+            .mount(&server)
+            .await;
+        let body = big_body();
+        send(&server, &body).await;
+        send(&server, &body).await;
+        let seen = server.received_requests().await.unwrap();
+        assert!(
+            seen[0].headers.get("content-encoding").is_none(),
+            "first request cannot know yet"
+        );
+        assert_eq!(seen[1].headers.get("content-encoding").unwrap(), "gzip");
+        assert!(
+            seen[1].body.len() * 10 < seen[0].body.len(),
+            "the upload shrinks"
+        );
+        assert_eq!(gunzip(&seen[1].body), seen[0].body, "same JSON either way");
+    }
+
+    #[tokio::test]
+    async fn an_origin_that_never_advertises_always_gets_plain_json() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let body = big_body();
+        for _ in 0..3 {
+            send(&server, &body).await;
+        }
+        let seen = server.received_requests().await.unwrap();
+        assert!(seen
+            .iter()
+            .all(|r| r.headers.get("content-encoding").is_none()));
+        assert!(!origin_accepts_gzip(&server.uri()));
+    }
+
+    #[tokio::test]
+    async fn small_bodies_are_not_compressed_even_where_accepted() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(advertising())
+            .mount(&server)
+            .await;
+        let small =
+            serde_json::json!({"model": "m", "messages": [{"role": "user", "content": "hi"}]});
+        send(&server, &small).await;
+        send(&server, &small).await;
+        let seen = server.received_requests().await.unwrap();
+        assert!(seen
+            .iter()
+            .all(|r| r.headers.get("content-encoding").is_none()));
+    }
+
+    #[tokio::test]
+    async fn a_415_to_gzip_resends_plain_and_forgets_the_origin() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(header("content-encoding", "gzip"))
+            .respond_with(ResponseTemplate::new(415))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(advertising())
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        let body = big_body();
+        assert_eq!(send(&server, &body).await, 200); // plain; origin advertises
+        assert_eq!(send(&server, &body).await, 200); // gzip -> 415 -> plain again
+        let seen = server.received_requests().await.unwrap();
+        let encodings: Vec<_> = seen
+            .iter()
+            .map(|r| {
+                r.headers
+                    .get("content-encoding")
+                    .map(|v| v.to_str().unwrap().to_string())
+            })
+            .collect();
+        assert_eq!(encodings, vec![None, Some("gzip".into()), None]);
+        // The plain resend was answered with accept-encoding again, so it is relearned;
+        // what matters is that the caller got a 200, not the 415.
+    }
+}

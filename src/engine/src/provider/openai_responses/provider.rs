@@ -123,5 +123,5 @@ async fn send(
     for (key, value) in model_config.headers() {
         builder = builder.header(key, value);
     }
-    http::send_stream_request(builder.json(body)).await
+    http::send_json_stream_request(builder, url, body).await
 }

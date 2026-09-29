@@ -48,6 +48,126 @@ pub fn classify_response(response: &reqwest::Response) -> StreamResponseKind {
 }
 
 // ---------------------------------------------------------------------------
+// Compressed request bodies (negotiated per origin)
+// ---------------------------------------------------------------------------
+
+/// Bodies smaller than this are sent as they are: compressing them saves
+/// nothing a user would notice.
+pub const COMPRESS_MIN_BYTES: usize = 32 * 1024;
+
+/// Origins (`scheme://host:port`) that have said they accept gzip request
+/// bodies, by answering with `Accept-Encoding: gzip` (RFC 7694).
+///
+/// An agent re-sends its whole context every turn; 1-4 MB of JSON over a slow
+/// uplink takes tens of seconds before the model sees the first byte. JSON
+/// compresses 5-10x. Nothing is compressed for an origin until it has
+/// advertised support, so endpoints that do not understand it keep getting
+/// plain JSON.
+fn gzip_origins() -> &'static parking_lot::Mutex<std::collections::HashSet<String>> {
+    static ORIGINS: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    ORIGINS.get_or_init(Default::default)
+}
+
+fn origin_of(url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    let host = parsed.host_str()?;
+    Some(format!(
+        "{}://{}:{}",
+        parsed.scheme(),
+        host,
+        parsed.port_or_known_default().unwrap_or(0)
+    ))
+}
+
+/// Whether gzip request bodies are known to be accepted at *url*'s origin.
+pub fn origin_accepts_gzip(url: &str) -> bool {
+    origin_of(url).is_some_and(|o| gzip_origins().lock().contains(&o))
+}
+
+/// Record what a response from *url* said about request codings.
+pub fn learn_request_encoding(url: &str, response: &reqwest::Response) {
+    let Some(origin) = origin_of(url) else { return };
+    let accepts = response
+        .headers()
+        .get_all(reqwest::header::ACCEPT_ENCODING)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .any(|coding| coding.trim().eq_ignore_ascii_case("gzip"));
+    if accepts {
+        gzip_origins().lock().insert(origin);
+    }
+}
+
+fn forget_request_encoding(url: &str) {
+    if let Some(origin) = origin_of(url) {
+        gzip_origins().lock().remove(&origin);
+    }
+}
+
+fn gzip(data: &[u8]) -> std::io::Result<Vec<u8>> {
+    use std::io::Write;
+    let mut encoder = flate2::write::GzEncoder::new(
+        Vec::with_capacity(data.len() / 6),
+        flate2::Compression::default(),
+    );
+    encoder.write_all(data)?;
+    encoder.finish()
+}
+
+/// Send *body* as JSON on *builder* (headers set, no body yet): gzipped when
+/// the origin has advertised it and the body is large, plain otherwise.
+///
+/// A 415 to a gzipped body means the origin stopped accepting it (e.g. a new
+/// deployment behind the same host): the origin is forgotten and the request
+/// is sent once more as plain JSON.
+pub async fn send_json_stream_request(
+    builder: reqwest::RequestBuilder,
+    url: &str,
+    body: &serde_json::Value,
+) -> Result<reqwest::Response, ProviderError> {
+    let plain = serde_json::to_vec(body)
+        .map_err(|e| ProviderError::Other(format!("could not encode the request: {e}")))?;
+    let fallback = builder.try_clone();
+
+    let compressed = if plain.len() >= COMPRESS_MIN_BYTES && origin_accepts_gzip(url) {
+        let bytes = plain.clone();
+        // Compressing a multi-MB body is tens of ms of CPU: keep it off the async workers.
+        tokio::task::spawn_blocking(move || gzip(&bytes))
+            .await
+            .ok()
+            .and_then(Result::ok)
+    } else {
+        None
+    };
+
+    let Some(compressed) = compressed else {
+        let response = send_stream_request(builder.body(plain)).await?;
+        learn_request_encoding(url, &response);
+        return Ok(response);
+    };
+
+    let response = send_stream_request(
+        builder
+            .header(reqwest::header::CONTENT_ENCODING, "gzip")
+            .body(compressed),
+    )
+    .await?;
+    learn_request_encoding(url, &response);
+    if response.status() != reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE {
+        return Ok(response);
+    }
+    forget_request_encoding(url);
+    let Some(fallback) = fallback else {
+        return Ok(response);
+    };
+    let response = send_stream_request(fallback.body(plain)).await?;
+    learn_request_encoding(url, &response);
+    Ok(response)
+}
+
+// ---------------------------------------------------------------------------
 // Request / status helpers
 // ---------------------------------------------------------------------------
 

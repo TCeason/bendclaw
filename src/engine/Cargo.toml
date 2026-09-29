@@ -24,6 +24,7 @@ jsonrepair = "0.1"
 unicode-normalization = "0.1"
 rand = "0.8"
 base64 = "0.22"
+flate2 = "=1.1.9"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 command-group = { version = "5", features = ["with-tokio"] }
 headless_chrome = { workspace = true, optional = true }
