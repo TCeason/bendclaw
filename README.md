@@ -1,63 +1,25 @@
-<p align="center">
-  <strong>Evot</strong>
-</p>
-
+<p align="center"><strong>Evot</strong></p>
 <p align="center"><strong>The lightest harness for agentic work.</strong></p>
-
-<p align="center">An open-source coding agent for your terminal. A short prompt, four core tools, and the model does the thinking.</p>
+<p align="center">An open-source terminal coding agent. A short prompt, four core tools, and the model does the thinking.</p>
 
 <p align="center">
   <a href=".github/assets/demo.gif"><img src=".github/assets/demo.gif" alt="evot demo" width="960" /></a>
 </p>
 
-## 📢 News
+## News
 
-- **2026-09-16** `/task` puts the agent on a schedule — cron-timed runs with push delivery.
-- **2026-09-13** `/share` turns your session into a read-only link on evot.ai.
-- **2026-09-11** `GPT-5.6 Luna` is free through Sep 18 🎉 — just `evot login`.
-- **2026-09-02** `ctrl+b` backgrounds a long-running command so you can keep talking.
-- **2026-08-24** Free model of the week: [`stealth/ox-alpha`](https://openrouter.ai/stealth/ox-alpha) — free on OpenRouter for a week.
+- **2026-09-16** `/task` — scheduled runs with push delivery.
+- **2026-09-13** `/share` — read-only session links on evot.ai.
+- **2026-09-02** `ctrl+b` — background a running command and keep talking.
 
-## Less harness. More model.
-
-- **Lightweight.** ~1k tokens, four core tools: read, bash, edit, write. You set the goal and constraints; the model chooses the path.
-- **Coordinated execution.** Shells run in the background while the model advances independent work, waits for required results, and picks up completion notifications. Less idle time between thinking and doing.
-- **Affordable.** Free and low-cost hosted models, or bring your own keys.
-
-## Jev prune
-
-Instead of summarising old context, evot deletes what no longer matters. After each run a small judge model ([TypeSafe Jev](https://typesafe.ai)) works out which of your requests are still in play, then asks of every old tool call: does the task still depend on it, and will its result be read again? Calls that fail both go; stale results are truncated. Nothing is summarised, and compaction only runs if pruning alone is not enough.
-
-## Performance
-
-Same task and environment, three agents × three models. Cost and tool calls—not wall-clock speed.
-
-<p align="center">
-  <a href=".github/assets/benchmark-agent-model-comparison.png"><img src=".github/assets/benchmark-agent-model-comparison.png" alt="Benchmark comparing evot, Claude Code, and pi" width="960" /></a>
-</p>
-
-> Task: fix a real bug in serde_json ([issue #979](https://github.com/serde-rs/json/issues/979)) end to end.
-
-All nine runs pass. In this eval, evot costs **72–78% less** than Claude Code, with **fewer tool calls** on every model.
-
-Latest models on the same task — [full eval list](https://trace.evot.ai/#comparisons) on **trace.evot.ai**:
-
-| Model | Eval |
-| --- | --- |
-| DeepSeek V4.1 Flash | [run-210](https://trace.evot.ai/#comparisons/run-210) |
-| GPT-6 Astra | [run-205](https://trace.evot.ai/#comparisons/run-205) |
-| Claude Fable 5.1 | [run-202](https://trace.evot.ai/#comparisons/run-202) |
-| GLM-5.3 Flash | [run-199](https://trace.evot.ai/#comparisons/run-199) |
-| stealth/ox-alpha | [run-194](https://trace.evot.ai/#comparisons/run-194) |
-| DeepSeek V4 Pro | [run-192](https://trace.evot.ai/#comparisons/run-192) |
-| GLM-5.3 | [run-187](https://trace.evot.ai/#comparisons/run-187) |
-| Grok 4.6 | [run-183](https://trace.evot.ai/#comparisons/run-183) |
-
-## Installation
+## Quick start
 
 ```bash
 curl -fsSL https://evot.ai/install | sh
+evot login
 ```
+
+Login opens the TUI. Use hosted models or bring your own API keys.
 
 <details>
 <summary>Build from source</summary>
@@ -70,56 +32,59 @@ make setup && make install
 
 </details>
 
-## Login
-
-```bash
-evot login     # follow the prompts; you land straight in the TUI after login
-```
-
 <details>
-<summary>Custom configuration (bring your own models via <code>~/.evotai/evot.env</code>)</summary>
+<summary>Bring your own models</summary>
+
+Configure providers in `~/.evotai/evot.env`. Examples:
 
 ```env
-# Anthropic (default)
+# Anthropic
 EVOT_LLM_ANTHROPIC_API_KEY=sk-ant-...
 EVOT_LLM_ANTHROPIC_BASE_URL=your-anthropic-base-url
 EVOT_LLM_ANTHROPIC_MODEL=claude-opus-4.8
-# Multiple models: EVOT_LLM_ANTHROPIC_MODEL=claude-sonnet-5.0,claude-opus-4.8,claude-fable-5
 
-# Or OpenAI Chat Completions
-# EVOT_LLM_OPENAI_API_KEY=sk-...
-# EVOT_LLM_OPENAI_BASE_URL=your-openai-compatible-base-url
-# EVOT_LLM_OPENAI_MODEL=gpt-5.6-sol
-# EVOT_LLM_OPENAI_PROTOCOL=openai
-
-# Or OpenAI Responses API (official OpenAI GPT/Codex models)
-# Using the official endpoint enables provider-native "remote compaction":
-# context is compacted server-side with far higher recall, taking priority
-# over the local algorithmic path (auto — falls back to local on any failure).
+# OpenAI Responses API
 # EVOT_LLM_OPENAI_API_KEY=sk-...
 # EVOT_LLM_OPENAI_MODEL=gpt-5.6-sol
 # EVOT_LLM_OPENAI_PROTOCOL=openai_responses
 
-# Or DeepSeek (Anthropic-compatible)
+# DeepSeek (Anthropic-compatible)
 # EVOT_LLM_DEEPSEEK_API_KEY=sk-...
 # EVOT_LLM_DEEPSEEK_BASE_URL=https://api.deepseek.com/anthropic
 # EVOT_LLM_DEEPSEEK_PROTOCOL=anthropic
 # EVOT_LLM_DEEPSEEK_MODEL=deepseek-v4-pro
 
-# Or Kimi Coding (Anthropic-compatible)
+# Kimi Coding (Anthropic-compatible)
 # EVOT_LLM_KIMI_API_KEY=sk-...
 # EVOT_LLM_KIMI_BASE_URL=https://api.kimi.com/coding
 # EVOT_LLM_KIMI_PROTOCOL=anthropic
 # EVOT_LLM_KIMI_MODEL=kimi-for-coding
 
-# Or OpenRouter (Anthropic-compatible)
+# OpenRouter (Anthropic-compatible)
 # EVOT_LLM_OPENROUTER_API_KEY=sk-or-...
 # EVOT_LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/
 # EVOT_LLM_OPENROUTER_PROTOCOL=anthropic
 # EVOT_LLM_OPENROUTER_MODEL=stealth/ox-alpha
 ```
 
+Use comma-separated model names to configure multiple models. For OpenAI-compatible Chat Completions, set `EVOT_LLM_OPENAI_PROTOCOL=openai` and `EVOT_LLM_OPENAI_BASE_URL` to your endpoint. The official Responses API supports server-side context compaction, with local fallback.
+
 </details>
+
+## Less harness. More model.
+
+- **Small by design.** ~1k prompt tokens and four core tools: `read`, `bash`, `edit`, `write`.
+- **Less waiting.** Long-running commands continue in the background while the agent works on independent tasks.
+- **Lean context.** [TypeSafe Jev](https://typesafe.ai) prunes obsolete tool calls and trims stale results without summarising. Compaction is a fallback.
+- **Your choice of model.** Free and low-cost hosted models, or your own provider keys.
+
+## Performance
+
+<p align="center">
+  <a href="https://trace.evot.ai/performance.html"><img src=".github/assets/benchmark-latest-models.png" alt="Evot model request comparison with pi and dsh" width="960" /></a>
+</p>
+
+[Live performance & comparisons →](https://trace.evot.ai/performance.html)
 
 ## License
 
